@@ -1,5 +1,9 @@
 const std = @import("std");
 
+pub const TokenIndex = u32;
+
+pub const TokenList = std.MultiArrayList(Token);
+
 pub const TokenError = error {
     InvalidString,
 };
@@ -10,12 +14,10 @@ pub const Token = struct {
     end: usize,
 };
 
-pub const TokenData = struct {
-    tag: Tag,
-    start: u32,
-};
-
 pub const Tag = enum {
+    // test word
+    binary,
+
     // Unique keywords
     Const,
     Var,
@@ -27,7 +29,7 @@ pub const Tag = enum {
 
     // Single Character
     Colon, // :
-    Assignment, // =
+    Assign, // =
     Equals, // ==
     Not_Equals, // !=
     Open_Paren, // (

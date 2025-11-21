@@ -1,7 +1,9 @@
 const std = @import("std");
+const tok = @import("token.zig");
 const tokenizer = @import("tokenizer.zig");
+const par = @import("parser.zig");
 
-const Timer = std.time.Timer;
+const Token = tok.Token;
 
 const FILE_NAME = "script.txt";
 var write_buf: []u8 = undefined;
@@ -22,11 +24,14 @@ pub fn main() !void {
     var reader = std.fs.File.Reader.init(file, write_buf);
 
     const line = try reader.interface.takeDelimiterInclusive('\n');
-    var tokenStream = tokenizer.Tokenizer.init(line);
+    var tokenStream = tokenizer.Tokenizer.init(allocator, line);
+    defer tokenStream.deinit();
 
-    while (tokenStream.index < tokenStream.buffer.len) {
-        const token = tokenStream.next();
+    try tokenStream.tokenize();
 
-        std.debug.print("Token: {s}\n", .{@tagName(token.tag)});
-    }
+    var parser = par.Parser.init(allocator, line, tokenStream.tokenList);
+    defer parser.deinit();
+
+    try parser.parse();
+    parser.printAllNodeTags();
 }

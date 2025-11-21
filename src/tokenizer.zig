@@ -1,6 +1,8 @@
 const std = @import("std");
 const token = @import("token.zig");
 
+const Allocator = std.mem.Allocator;
+
 const Token = token.Token;
 const Tag = token.Tag;
 const TokenError = token.TokenError;
@@ -10,14 +12,22 @@ const isAlphabetic = std.ascii.isAlphabetic;
 const isDigit = std.ascii.isDigit;
 
 pub const Tokenizer = struct {
+    allocator: Allocator,
     buffer: []const u8,
     index: usize,
+    tokenList: std.MultiArrayList(Token),
 
-    pub fn init(buffer: []const u8) Tokenizer {
+    pub fn init(allocator: Allocator, buffer: []const u8) Tokenizer {
         return .{
+            .allocator = allocator,
             .buffer = buffer,
             .index = 0,
+            .tokenList = .{},
         };
+    }
+
+    pub fn deinit(self: *Tokenizer) void {
+        self.tokenList.deinit(self.allocator);
     }
 
     pub fn isSpace(char: u8) bool {
@@ -34,6 +44,18 @@ pub const Tokenizer = struct {
         return current_tag;
     }
 
+    pub fn tokenize(self: *Tokenizer) !void {
+        while (self.index < self.buffer.len) {
+            const tok = self.next();
+
+            if (tok.tag == .EOF) return;
+
+            try self.tokenList.append(self.allocator, tok);
+
+            std.debug.print("Token: {s}\n", .{@tagName(tok.tag)});
+        }
+    }
+
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
         const len = buffer.len;
@@ -48,7 +70,14 @@ pub const Tokenizer = struct {
             .end = self.index,
         };
 
-        if (self.index >= len) return result;
+        if (self.index >= len) {
+            self.index += 1;
+            return .{
+                .tag = .EOF,
+                .start = self.index,
+                .end = self.index,
+            };
+        }
 
         const char = buffer[self.index];
 
@@ -57,11 +86,7 @@ pub const Tokenizer = struct {
             '-' => result.tag = self.isEqualAssignment(.Minus, .Minus_Equals),
             '*' => result.tag = self.isEqualAssignment(.Asterisk, .Asterisk_Equals),
             '/' => result.tag = self.isEqualAssignment(.Slash, .Slash_Equals),
-            ':' => {
-                self.index += 1;
-                result.tag = .Colon;
-            },
-            '=' => result.tag = self.isEqualAssignment(.Assignment, .Equals),
+            '=' => result.tag = self.isEqualAssignment(.Assign, .Equals),
             '!' => result.tag = self.isEqualAssignment(.Invalid, .Not_Equals),
             '(' => {
                 self.index += 1;
@@ -70,6 +95,10 @@ pub const Tokenizer = struct {
             ')' => {
                 self.index += 1;
                 result.tag = .Close_Paren;
+            },
+            ':' => {
+                self.index += 1;
+                result.tag = .Colon;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isAlphabetic(buffer[self.index])) {
@@ -87,6 +116,7 @@ pub const Tokenizer = struct {
                 while (self.index < len and isDigit(buffer[self.index])) {
                     self.index += 1;
                 }
+                // TODO: Make sure the Number does not go beyond u32.
                 result.tag = .Number;
             },
             else => {
