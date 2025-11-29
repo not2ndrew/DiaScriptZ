@@ -20,26 +20,21 @@ pub const ParserError = error {
     UnexpectedToken,
 };
 
+const Error = error{ParserError} || Allocator.Error;
+
 // Backus Naur Form:
-// <if_stmt> ::= "if" "(" <expr>  <comparison> <expr> ")"
-// <comparison> ::= "==", "!=", "<", ">", "<=", ">="
-// <dialogue> ::= <ident> : <string_literal>
 
 // This Parser uses a Recursive Decent.
 // Not Pratt Parsing.
 pub const Parser = struct {
     allocator: Allocator,
-    // Source may not be needed.
-    // No reason to get string when we already have indicies from Token.
-    source: []const u8,
     tokens: TokenList,
     nodes: NodeList,
     token_pos: u32,
 
-    pub fn init(allocator: Allocator, source: []const u8, tokens: TokenList) Parser {
+    pub fn init(allocator: Allocator, tokens: TokenList) Parser {
         return Parser{
             .allocator = allocator,
-            .source = source,
             .tokens = tokens,
             .nodes = .{},
             .token_pos = 0,
@@ -64,12 +59,13 @@ pub const Parser = struct {
         if (self.token_pos < self.tokens.len) self.token_pos += 1;
     }
 
-    fn expect(self: *Parser, tag: Tag) !TokenIndex {
+    fn expect(self: *Parser, tag: Tag) Error!TokenIndex {
         const token = self.peek();
-        if (token.tag != tag) return ParserError.UnexpectedToken;
+        if (token.tag != tag) return Error.ParserError;
 
+        const idx = self.token_pos;
         self.token_pos += 1;
-        return self.token_pos;
+        return idx;
     }
 
     fn addNode(self: *Parser, tag: Tag, main_token: TokenIndex, data: NodeData) !NodeIndex {
@@ -79,7 +75,7 @@ pub const Parser = struct {
             .data = data,
         });
 
-        const idx: u32 = @intCast(self.nodes.len);
+        const idx: u32 = @intCast(self.nodes.len - 1);
         return idx;
     }
 
@@ -90,7 +86,7 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !void {
-        while (self.token_pos < self.tokens.len) {
+        while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
             _ = try self.parseStmt();
         }
     }
@@ -99,33 +95,29 @@ pub const Parser = struct {
     //           STATEMENTS
     // ───────────────────────────────
 
-    fn parseStmt(self: *Parser) !NodeIndex {
-        const tag = self.tokens.get(self.token_pos).tag;
-
-        switch (tag) {
-            .Const, .Var => return self.parseDeclarStmt(),
-            else => return ParserError.UnexpectedToken,
-        }
+    fn parseStmt(self: *Parser) Error!NodeIndex {
+        return switch (self.peek().tag) {
+            .Const, .Var => self.parseDeclarStmt(),
+            else => Error.ParserError,
+        };
     }
 
     // <declar_stmt> ::= ("const" | "var") <ident> "=" <expr>
-    fn parseDeclarStmt(self: *Parser) !NodeIndex {
-        const decl_tok = self.token_pos;
+    fn parseDeclarStmt(self: *Parser) Error!NodeIndex {
+        const decl_pos = self.token_pos;
         self.next(); // Consume const or var
 
-        // Consume Identifier
-        const ident_tok = try self.expect(.Identifier);
+        const ident_pos = try self.expect(.Identifier);
 
-        // Consume "="
         _ = try self.expect(.Assign);
 
         const expr = try self.parseExpr();
 
-        const ident_node = try self.addNode(.Identifier, ident_tok, .{
-            .identifier = .{ .token = ident_tok },
+        const ident_node = try self.addNode(.Identifier, ident_pos, .{
+            .identifier = .{ .token = ident_pos },
         });
 
-        return try self.addNode(.Assign, decl_tok, .{
+        return try self.addNode(.Assign, decl_pos, .{
             .assign = .{
                 .target = ident_node,
                 .value = expr,
@@ -133,25 +125,15 @@ pub const Parser = struct {
         });
     }
 
-    // This is for the actual dialogue scripts.
-    //
-    // Example:
-    //
-    // Player: "I got a few choices here"
-    //     "Take the risky route"
-    //     "Take the safe route"
-    fn parseChoice() !void {}
-
     // ───────────────────────────────
     //           EXPRESSIONS
     // ───────────────────────────────
 
-    fn parseExpr(self: *Parser) !NodeIndex {
+    fn parseExpr(self: *Parser) Error!NodeIndex {
         var node = try self.parseTerm();
-        while (true) {
-            const tag = self.peek().tag;
 
-            switch (tag) {
+        while (true) {
+            switch (self.peek().tag) {
                 .Plus, .Minus => {
                     const op_tok = self.token_pos; 
                     self.next();
@@ -173,13 +155,12 @@ pub const Parser = struct {
 
     }
 
-    fn parseTerm(self: *Parser) !NodeIndex {
+    // <Term> ::= <Factor> ('*' | '/') <Factor>
+    fn parseTerm(self: *Parser) Error!NodeIndex {
         var node = try self.parseFactor();
 
         while (true) {
-            const tag = self.peek().tag;
-
-            switch (tag) {
+            switch (self.peek().tag) {
                 .Asterisk, .Slash => {
                     const op_tok = self.token_pos;
                     self.next();
@@ -200,7 +181,8 @@ pub const Parser = struct {
         return node;
     }
 
-    fn parseFactor(self: *Parser) !NodeIndex {
+    // <Factor> ::= <Number> | <Identifier>
+    fn parseFactor(self: *Parser) Error!NodeIndex {
         const token = self.peek();
         const idx = self.token_pos;
 
@@ -217,8 +199,15 @@ pub const Parser = struct {
                     .identifier = .{ .token = idx }
                 });
             },
-            else => return ParserError.UnexpectedToken,
+            .Open_Paren => {
+                self.next();
+                const expr = try self.parseExpr();
+
+                _ = try self.expect(.Close_Paren);
+
+                return expr;
+            },
+            else => return Error.ParserError,
         }
     }
-
 };

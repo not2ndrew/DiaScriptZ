@@ -12,29 +12,23 @@ const isAlphabetic = std.ascii.isAlphabetic;
 const isDigit = std.ascii.isDigit;
 
 pub const Tokenizer = struct {
-    allocator: Allocator,
     buffer: []const u8,
     index: usize,
-    tokenList: std.MultiArrayList(Token),
 
-    pub fn init(allocator: Allocator, buffer: []const u8) Tokenizer {
+    pub fn init(buffer: []const u8) Tokenizer {
         return .{
-            .allocator = allocator,
             .buffer = buffer,
             .index = 0,
-            .tokenList = .{},
         };
     }
 
-    pub fn deinit(self: *Tokenizer) void {
-        self.tokenList.deinit(self.allocator);
-    }
-
-    pub fn isSpace(char: u8) bool {
+    fn isSpace(char: u8) bool {
         return char == ' ' or char == '\r' or char == '\n';
     }
 
-    pub fn isEqualAssignment(self: *Tokenizer, current_tag: Tag, statement: Tag) Tag {
+    // Some characters require an equal character
+    // ==, !=, +=, -=, *=, /=
+    fn isAugmentedAssign(self: *Tokenizer, current_tag: Tag, statement: Tag) Tag {
         self.index += 1;
         if (self.buffer[self.index] == '=') {
             self.index += 1;
@@ -44,17 +38,6 @@ pub const Tokenizer = struct {
         return current_tag;
     }
 
-    pub fn tokenize(self: *Tokenizer) !void {
-        while (self.index < self.buffer.len) {
-            const tok = self.next();
-
-            if (tok.tag == .EOF) return;
-
-            try self.tokenList.append(self.allocator, tok);
-
-            std.debug.print("Token: {s}\n", .{@tagName(tok.tag)});
-        }
-    }
 
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
@@ -79,15 +62,15 @@ pub const Tokenizer = struct {
             };
         }
 
-        const char = buffer[self.index];
-
-        switch (char) {
-            '+' => result.tag = self.isEqualAssignment(.Plus, .Plus_Equals),
-            '-' => result.tag = self.isEqualAssignment(.Minus, .Minus_Equals),
-            '*' => result.tag = self.isEqualAssignment(.Asterisk, .Asterisk_Equals),
-            '/' => result.tag = self.isEqualAssignment(.Slash, .Slash_Equals),
-            '=' => result.tag = self.isEqualAssignment(.Assign, .Equals),
-            '!' => result.tag = self.isEqualAssignment(.Invalid, .Not_Equals),
+        switch (buffer[self.index]) {
+            '+' => result.tag = self.isAugmentedAssign(.Plus, .Plus_Equals),
+            '-' => result.tag = self.isAugmentedAssign(.Minus, .Minus_Equals),
+            '*' => result.tag = self.isAugmentedAssign(.Asterisk, .Asterisk_Equals),
+            '/' => result.tag = self.isAugmentedAssign(.Slash, .Slash_Equals),
+            '=' => result.tag = self.isAugmentedAssign(.Assign, .Equals),
+            '!' => result.tag = self.isAugmentedAssign(.Invalid, .Not_Equals),
+            '<' => result.tag = self.isAugmentedAssign(.Less, .Less_or_Equal),
+            '>' => result.tag = self.isAugmentedAssign(.Greater, .Greater_or_Equal),
             '(' => {
                 self.index += 1;
                 result.tag = .Open_Paren;

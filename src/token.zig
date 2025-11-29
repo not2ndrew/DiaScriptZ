@@ -30,14 +30,20 @@ pub const Tag = enum {
     // Single Character
     Colon, // :
     Assign, // =
-    Equals, // ==
-    Not_Equals, // !=
     Open_Paren, // (
     Close_Paren, // )
     Plus, // +
     Minus, // -
     Asterisk, // *
     Slash, // /
+
+    // Comparison
+    Equals, // ==
+    Not_Equals, // !=
+    Less, // <
+    Greater, // >
+    Less_or_Equal, // <=
+    Greater_or_Equal, // >=
 
     // Variable Names
     Identifier, // Variable Name
