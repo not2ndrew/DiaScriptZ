@@ -25,7 +25,6 @@ const Error = error{ParserError} || Allocator.Error;
 // Backus Naur Form:
 
 // This Parser uses a Recursive Decent.
-// Not Pratt Parsing.
 pub const Parser = struct {
     allocator: Allocator,
     tokens: TokenList,
@@ -98,26 +97,41 @@ pub const Parser = struct {
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
             .Const, .Var => self.parseDeclarStmt(),
+            .Identifier => self.parseAssignStmt(),
             else => Error.ParserError,
         };
     }
 
-    // <declar_stmt> ::= ("const" | "var") <ident> "=" <expr>
+    // <declar_stmt> ::= ("const" | "var") <assign_stmt>
     fn parseDeclarStmt(self: *Parser) Error!NodeIndex {
-        const decl_pos = self.token_pos;
+        const declar_pos = self.token_pos;
+        const declar_tag = self.tokens.get(declar_pos).tag;
+
         self.next(); // Consume const or var
 
-        const ident_pos = try self.expect(.Identifier);
+        const assign_node = try self.parseAssignStmt();
 
-        _ = try self.expect(.Assign);
+        return try self.addNode(declar_tag, declar_pos, .{
+            .declar = .{
+                .kind = declar_tag,
+                .assign = assign_node,
+            }
+        });
+    }
 
+    // <assign_stmt> ::= <ident> "=" <expr>
+    fn parseAssignStmt(self: *Parser) Error!NodeIndex {
+        const ident_pos = self.token_pos;
+        self.next(); // Consume Identifier
+
+        const assign_pos = try self.expect(.Assign);
         const expr = try self.parseExpr();
 
         const ident_node = try self.addNode(.Identifier, ident_pos, .{
             .identifier = .{ .token = ident_pos },
         });
 
-        return try self.addNode(.Assign, decl_pos, .{
+        return try self.addNode(.Assign, assign_pos, .{
             .assign = .{
                 .target = ident_node,
                 .value = expr,

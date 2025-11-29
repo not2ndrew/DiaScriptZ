@@ -35,4 +35,13 @@ pub const NodeData = union(enum) {
         target: NodeIndex,
         value: NodeIndex,
     },
+    declar: struct {
+        kind: Tag,
+        assign: NodeIndex,
+    },
+    compound_assign: struct {
+        op_token: TokenIndex,
+        target: NodeIndex,
+        value: NodeIndex,
+    },
 };

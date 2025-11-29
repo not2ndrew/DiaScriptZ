@@ -34,8 +34,6 @@ pub fn main() !void {
         const token = tokenStream.next();
 
         if (token.tag == Tag.EOF) break;
-
-        std.debug.print("Token: {s}\n", .{@tagName(token.tag)});
         try tokenList.append(allocator, token);
     }
 

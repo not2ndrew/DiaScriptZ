@@ -50,6 +50,7 @@ pub const Tag = enum {
     String, // ""
     Number, // unsigned 8-bit int (1 => 255)
 
+    // Combination Assign
     Plus_Equals, // +=
     Minus_Equals, // -=
     Asterisk_Equals, // *=
