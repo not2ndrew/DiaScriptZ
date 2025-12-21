@@ -102,25 +102,13 @@ pub const Parser = struct {
         };
     }
 
-    // <declar_stmt> ::= ("const" | "var") <assign_stmt>
+    // <declar_stmt> ::= ("const" | "var") <ident> "=" <expr>
     fn parseDeclarStmt(self: *Parser) Error!NodeIndex {
         const declar_pos = self.token_pos;
         const declar_tag = self.tokens.get(declar_pos).tag;
 
         self.next(); // Consume const or var
 
-        const assign_node = try self.parseAssignStmt();
-
-        return try self.addNode(declar_tag, declar_pos, .{
-            .declar = .{
-                .kind = declar_tag,
-                .assign = assign_node,
-            }
-        });
-    }
-
-    // <assign_stmt> ::= <ident> "=" <expr>
-    fn parseAssignStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = self.token_pos;
         self.next(); // Consume Identifier
 
@@ -131,7 +119,46 @@ pub const Parser = struct {
             .identifier = .{ .token = ident_pos },
         });
 
-        return try self.addNode(.Assign, assign_pos, .{
+        const assign_node = try self.addNode(.Assign, assign_pos, .{
+            .assign = .{
+                .target = ident_node,
+                .value = expr,
+            }
+        });
+
+        return try self.addNode(declar_tag, declar_pos, .{
+            .declar = .{
+                .kind = declar_tag,
+                .assign = assign_node,
+            }
+        });
+    }
+
+    // <assign_stmt> ::= <ident> "=" <expr>
+    // <compound_stmt> ::= <ident> ( "+=" | "-=" | "*=" | "/=" ) <expr>
+    fn parseAssignStmt(self: *Parser) Error!NodeIndex {
+        const ident_pos = self.token_pos;
+        self.next(); // Consume Identifier
+
+        const assign_type = switch (self.peek().tag) {
+            .Assign => .Assign,
+            .Plus_Equals => .Plus_Equals,
+            .Minus_Equals => .Minus_Equals,
+            .Asterisk_Equals => .Asterisk_Equals,
+            .Slash_Equals => .Slash_Equals,
+            else => return Error.ParserError,
+        };
+
+        const assign_pos = self.token_pos;
+        self.token_pos += 1; // Consume assign
+
+        const expr = try self.parseExpr();
+
+        const ident_node = try self.addNode(.Identifier, ident_pos, .{
+            .identifier = .{ .token = ident_pos },
+        });
+
+        return try self.addNode(assign_type, assign_pos, .{
             .assign = .{
                 .target = ident_node,
                 .value = expr,
