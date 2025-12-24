@@ -176,11 +176,12 @@ pub const Parser = struct {
 
         _ = try self.expect(.Close_Paren); // Consume ")"
 
-        // TODO: Create a <block>
+        const then = try self.parseBlock();
+
         return self.addNode(.If, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
-                .then_blck = 0,
+                .then_blck = then,
                 .else_blck = null,
             }
         });
@@ -212,7 +213,27 @@ pub const Parser = struct {
 
     // <block> ::= "{" <stmt_list> "}"
     // <stmt_list> ::= epsilon | <stmt> | <stmt> <stmt_list>
-    // fn parseBlock(self: *Parser) Error!NodeIndex {}
+    fn parseBlock(self: *Parser) Error!NodeIndex {
+        const open_brace = try self.expect(.Open_Brace);
+
+        // No need deinit since we are freeing the slice created by allocator.
+        var stmts: std.ArrayList(NodeIndex) = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
+        // defer stmts.deinit(self.allocator);
+
+        while (self.peek().tag != .Close_Brace and self.peek().tag != .EOF) {
+            const stmt = try self.parseStmt();
+            try stmts.append(self.allocator, stmt);
+        }
+
+        _ = try self.expect(.Close_Brace);
+
+        const slice = try stmts.toOwnedSlice(self.allocator);
+        defer self.allocator.free(slice);
+
+        return try self.addNode(.Block, open_brace, .{ 
+            .block = .{ .statements = slice },
+        });
+    }
 
 
     // ───────────────────────────────
