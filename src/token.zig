@@ -27,7 +27,8 @@ pub const Tag = enum {
     End,
 
     // If Statement
-    Block,
+    Then_Block,
+    Else_Block,
 
     // Single Character
     Colon, // :

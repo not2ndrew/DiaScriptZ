@@ -152,7 +152,7 @@ pub const Parser = struct {
         };
 
         const assign_pos = self.token_pos;
-        self.token_pos += 1; // Consume assign
+        self.next();// Consume assign
 
         const expr = try self.parseExpr();
 
@@ -167,7 +167,7 @@ pub const Parser = struct {
             }
         });
     }
-    // <if_stmt> ::= if <compar_expr> <block>
+    // <if_stmt> ::= if <compar_expr> <then_block> <else_blck>
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If); // Consume "if"
         _ = try self.expect(.Open_Paren); // Consume "("
@@ -176,13 +176,19 @@ pub const Parser = struct {
 
         _ = try self.expect(.Close_Paren); // Consume ")"
 
-        const then = try self.parseBlock();
+        const then = try self.parseBlock(.Then_Block);
+
+        var else_blck: ?NodeIndex = null;
+
+        if (self.peek().tag == .Else) {
+            else_blck = try self.parseElseBlock();
+        }
 
         return self.addNode(.If, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
                 .then_blck = then,
-                .else_blck = null,
+                .else_blck = else_blck,
             }
         });
     }
@@ -202,7 +208,7 @@ pub const Parser = struct {
             else => Error.ParserError,
         };
         const compare_token = self.token_pos;
-        self.token_pos += 1; // Consume compare op
+        self.next(); // Consume <compar_op> 
 
         const right_expr = try self.parseExpr();
 
@@ -213,7 +219,7 @@ pub const Parser = struct {
 
     // <block> ::= "{" <stmt_list> "}"
     // <stmt_list> ::= epsilon | <stmt> | <stmt> <stmt_list>
-    fn parseBlock(self: *Parser) Error!NodeIndex {
+    fn parseBlock(self: *Parser, block: Tag) Error!NodeIndex {
         const open_brace = try self.expect(.Open_Brace);
 
         // No need deinit since we are freeing the slice created by allocator.
@@ -230,11 +236,15 @@ pub const Parser = struct {
         const slice = try stmts.toOwnedSlice(self.allocator);
         defer self.allocator.free(slice);
 
-        return try self.addNode(.Block, open_brace, .{ 
+        return try self.addNode(block, open_brace, .{ 
             .block = .{ .statements = slice },
         });
     }
 
+    fn parseElseBlock(self: *Parser) Error!NodeIndex {
+        _ = try self.expect(.Else);
+        return try self.parseBlock(.Else_Block);
+    }
 
     // ───────────────────────────────
     //           EXPRESSIONS
