@@ -90,6 +90,7 @@ pub const Parser = struct {
         }
     }
 
+
     // ───────────────────────────────
     //           STATEMENTS
     // ───────────────────────────────
@@ -98,6 +99,7 @@ pub const Parser = struct {
         return switch (self.peek().tag) {
             .Const, .Var => self.parseDeclarStmt(),
             .Identifier => self.parseAssignStmt(),
+            .If => self.parseIfStmt(),
             else => Error.ParserError,
         };
     }
@@ -140,7 +142,7 @@ pub const Parser = struct {
         const ident_pos = self.token_pos;
         self.next(); // Consume Identifier
 
-        const assign_type = switch (self.peek().tag) {
+        const assign_type: Error!Tag = switch (self.peek().tag) {
             .Assign => .Assign,
             .Plus_Equals => .Plus_Equals,
             .Minus_Equals => .Minus_Equals,
@@ -158,13 +160,60 @@ pub const Parser = struct {
             .identifier = .{ .token = ident_pos },
         });
 
-        return try self.addNode(assign_type, assign_pos, .{
+        return try self.addNode(try assign_type, assign_pos, .{
             .assign = .{
                 .target = ident_node,
                 .value = expr,
             }
         });
     }
+    // <if_stmt> ::= if <compar_expr> <block>
+    fn parseIfStmt(self: *Parser) Error!NodeIndex {
+        const if_pos = try self.expect(.If); // Consume "if"
+        _ = try self.expect(.Open_Paren); // Consume "("
+
+        const condition = try self.parseCompareExpr();
+
+        _ = try self.expect(.Close_Paren); // Consume ")"
+
+        // TODO: Create a <block>
+        return self.addNode(.If, if_pos, .{
+            .if_stmt = .{
+                .condition = condition,
+                .then_blck = 0,
+                .else_blck = null,
+            }
+        });
+    }
+
+    // <compar_expr> ::= "(" <expr> <compar_op> <expr> ")"
+    // <compar_op> ::= "==" | "!=" | "<" | ">" | "<=" | ">="
+    fn parseCompareExpr(self: *Parser) Error!NodeIndex {
+        const left_expr = try self.parseExpr();
+
+        const compare_tag: Error!Tag = switch (self.peek().tag) {
+            .Equals => .Equals,
+            .Not_Equals => .Not_Equals,
+            .Less => .Less,
+            .Greater => .Greater,
+            .Less_or_Equal => .Less_or_Equal,
+            .Greater_or_Equal => .Greater_or_Equal,
+            else => Error.ParserError,
+        };
+        const compare_token = self.token_pos;
+        self.token_pos += 1; // Consume compare op
+
+        const right_expr = try self.parseExpr();
+
+        return self.addNode(try compare_tag, compare_token, .{
+            .binary = .{ .lhs = left_expr, .rhs = right_expr },
+        });
+    }
+
+    // <block> ::= "{" <stmt_list> "}"
+    // <stmt_list> ::= epsilon | <stmt> | <stmt> <stmt_list>
+    // fn parseBlock(self: *Parser) Error!NodeIndex {}
+
 
     // ───────────────────────────────
     //           EXPRESSIONS
@@ -176,12 +225,13 @@ pub const Parser = struct {
         while (true) {
             switch (self.peek().tag) {
                 .Plus, .Minus => {
-                    const op_tok = self.token_pos; 
+                    const tag = self.peek().tag;
+                    const op_tok = self.token_pos;
                     self.next();
 
                     const rhs = try self.parseTerm();
 
-                    node = try self.addNode(.binary, op_tok, .{
+                    node = try self.addNode(tag, op_tok, .{
                         .binary = .{
                             .lhs = node,
                             .rhs = rhs,
@@ -203,12 +253,13 @@ pub const Parser = struct {
         while (true) {
             switch (self.peek().tag) {
                 .Asterisk, .Slash => {
+                    const tag = self.peek().tag;
                     const op_tok = self.token_pos;
                     self.next();
 
                     const rhs = try self.parseFactor();
 
-                    node = try self.addNode(.binary, op_tok, .{
+                    node = try self.addNode(tag, op_tok, .{
                         .binary = .{
                             .lhs = node,
                             .rhs = rhs,

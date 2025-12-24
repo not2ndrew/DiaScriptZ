@@ -23,7 +23,7 @@ pub const Tokenizer = struct {
     }
 
     fn isSpace(char: u8) bool {
-        return char == ' ' or char == '\r' or char == '\n';
+        return char == ' ' or char == '\r' or char == '\n' or char == '\t';
     }
 
     // Some characters require an equal character
@@ -78,6 +78,14 @@ pub const Tokenizer = struct {
             ')' => {
                 self.index += 1;
                 result.tag = .Close_Paren;
+            },
+            '{' => {
+                self.index += 1;
+                result.tag = .Open_Brace;
+            },
+            '}' => {
+                self.index += 1;
+                result.tag = .Close_Brace;
             },
             ':' => {
                 self.index += 1;

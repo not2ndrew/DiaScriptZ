@@ -7,7 +7,7 @@ const Token = tok.Token;
 const Tag = tok.Tag;
 
 const FILE_NAME = "script.txt";
-var write_buf: []u8 = undefined;
+var read_buf: []u8 = undefined;
 
 var tokenList: std.MultiArrayList(Token) = .{};
 
@@ -18,23 +18,29 @@ pub fn main() !void {
     const allocator = debugAlloc.allocator();
     defer tokenList.deinit(allocator);
 
-    write_buf = try allocator.alloc(u8, 100);
-    defer allocator.free(write_buf);
+    read_buf = try allocator.alloc(u8, 100);
+    defer allocator.free(read_buf);
 
-    // Start lexer
     const file = try std.fs.cwd().openFile(FILE_NAME, .{});
     defer file.close();
 
-    var reader = std.fs.File.Reader.init(file, write_buf);
+    var reader = std.fs.File.Reader.init(file, read_buf);
+    const reader_inter: *std.Io.Reader = &reader.interface;
 
-    const line = try reader.interface.takeDelimiterInclusive('\n');
-    var tokenStream = tokenizer.Tokenizer.init(line);
+    while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
+        if (err != std.Io.Reader.DelimiterError.EndOfStream) {
+            std.debug.print("An Error has occurred {}", .{err});
+        }
+    }
+
+    var tokenStream = tokenizer.Tokenizer.init(read_buf[0..reader.pos]);
 
     while (tokenStream.index < tokenStream.buffer.len) {
         const token = tokenStream.next();
 
         if (token.tag == Tag.EOF) break;
         try tokenList.append(allocator, token);
+        // std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
     }
 
     var parser = par.Parser.init(allocator, tokenList);

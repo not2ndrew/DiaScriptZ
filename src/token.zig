@@ -15,17 +15,19 @@ pub const Token = struct {
 };
 
 pub const Tag = enum {
-    // test word
-    binary,
-
     // Unique keywords
     Const,
     Var,
+    Boolean, // true, false
+    If,
+    Else,
     Label,
     Scene,
     Choice,
     End,
-    Boolean, // true, false
+
+    // If Statement
+    Block,
 
     // Single Character
     Colon, // :
@@ -36,6 +38,8 @@ pub const Tag = enum {
     Minus, // -
     Asterisk, // *
     Slash, // /
+    Open_Brace, // {
+    Close_Brace, // }
 
     // Comparison
     Equals, // ==
@@ -65,10 +69,12 @@ pub const Tag = enum {
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "const", .Const },
     .{ "var", .Var },
+    .{ "true", .Boolean },
+    .{ "false", .Boolean },
+    .{ "if", .If },
+    .{ "else", .Else },
     .{ "label", .Label },
     .{ "scene", .Scene },
     .{ "choice", .Choice },
     .{ "end", .End },
-    .{ "true", .Boolean },
-    .{ "false", .Boolean },
 });

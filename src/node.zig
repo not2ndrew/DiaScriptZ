@@ -39,9 +39,12 @@ pub const NodeData = union(enum) {
         kind: Tag,
         assign: NodeIndex,
     },
-    compound_assign: struct {
-        op_token: TokenIndex,
-        target: NodeIndex,
-        value: NodeIndex,
+    if_stmt: struct {
+        condition: NodeIndex,
+        then_blck: NodeIndex,
+        else_blck: ?NodeIndex,
+    },
+    block: struct {
+        statements: []NodeIndex,
     },
 };
