@@ -49,6 +49,7 @@ pub const Tag = enum {
     Greater, // >
     Less_or_Equal, // <=
     Greater_or_Equal, // >=
+    Comment, // "//"
 
     // Variable Names
     Identifier, // Variable Name

@@ -26,18 +26,21 @@ pub const Tokenizer = struct {
         return char == ' ' or char == '\r' or char == '\n' or char == '\t';
     }
 
-    // Some characters require an equal character
-    // ==, !=, +=, -=, *=, /=
-    fn isAugmentedAssign(self: *Tokenizer, current_tag: Tag, statement: Tag) Tag {
-        self.index += 1;
-        if (self.buffer[self.index] == '=') {
-            self.index += 1;
-            return statement;
-        }
-
-        return current_tag;
+    fn isIdentChar(c: u8) bool {
+        return isAlphabetic(c) or isDigit(c) or c == '_';
     }
 
+    // Some characters require an equal character
+    // ==, !=, +=, -=, *=, /=
+    fn matchEquals(self: *Tokenizer, single: Tag, double: Tag) Tag {
+        self.index += 1;
+        if (self.index < self.buffer.len and self.buffer[self.index] == '=') {
+            self.index += 1;
+            return double;
+        }
+
+        return single;
+    }
 
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
@@ -48,13 +51,12 @@ pub const Tokenizer = struct {
         }
 
         var result: Token = .{
-            .tag = .EOF,
+            .tag = .Invalid,
             .start = self.index,
             .end = self.index,
         };
 
         if (self.index >= len) {
-            self.index += 1;
             return .{
                 .tag = .EOF,
                 .start = self.index,
@@ -63,14 +65,33 @@ pub const Tokenizer = struct {
         }
 
         switch (buffer[self.index]) {
-            '+' => result.tag = self.isAugmentedAssign(.Plus, .Plus_Equals),
-            '-' => result.tag = self.isAugmentedAssign(.Minus, .Minus_Equals),
-            '*' => result.tag = self.isAugmentedAssign(.Asterisk, .Asterisk_Equals),
-            '/' => result.tag = self.isAugmentedAssign(.Slash, .Slash_Equals),
-            '=' => result.tag = self.isAugmentedAssign(.Assign, .Equals),
-            '!' => result.tag = self.isAugmentedAssign(.Invalid, .Not_Equals),
-            '<' => result.tag = self.isAugmentedAssign(.Less, .Less_or_Equal),
-            '>' => result.tag = self.isAugmentedAssign(.Greater, .Greater_or_Equal),
+            '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
+            '-' => result.tag = self.matchEquals(.Minus, .Minus_Equals),
+            '*' => result.tag = self.matchEquals(.Asterisk, .Asterisk_Equals),
+            '/' => {
+                result.start = self.index;
+                self.index += 1;
+
+                if (self.index < len and buffer[self.index] == '=') {
+                    self.index += 1; // Consume '='
+                    result.tag = .Slash_Equals;
+                } else if (self.index < len and buffer[self.index] == '/') {
+                    self.index += 1; // Consume second '/'
+
+                    while (self.index < len and buffer[self.index] != '\n') {
+                        self.index += 1;
+                    }
+
+                    result.tag = .Comment;
+                } else {
+                    result.tag = .Slash;
+                }
+            },
+            '=' => result.tag = self.matchEquals(.Assign, .Equals),
+            // TODO: "!" is either logical NOT ( "!=" ) or a singleton (!bool)
+            '!' => result.tag = self.matchEquals(.Invalid, .Not_Equals),
+            '<' => result.tag = self.matchEquals(.Less, .Less_or_Equal),
+            '>' => result.tag = self.matchEquals(.Greater, .Greater_or_Equal),
             '(' => {
                 self.index += 1;
                 result.tag = .Open_Paren;
@@ -92,7 +113,7 @@ pub const Tokenizer = struct {
                 result.tag = .Colon;
             },
             'a' ... 'z', 'A' ... 'Z' => {
-                while (self.index < len and isAlphabetic(buffer[self.index])) {
+                while (self.index < len and isIdentChar(self.buffer[self.index])) {
                     self.index += 1;
                 }
 
