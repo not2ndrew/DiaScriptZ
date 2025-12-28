@@ -47,4 +47,8 @@ pub const NodeData = union(enum) {
     block: struct {
         statements: []NodeIndex,
     },
+    dialogue: struct {
+        string: NodeIndex,
+        target: ?NodeIndex,
+    },
 };

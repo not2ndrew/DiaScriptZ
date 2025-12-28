@@ -66,6 +66,7 @@ pub const Tag = enum {
     Dialogue,
     Choice_List,
     Label_List,
+    Goto, // ->
     // ...
 
     // Invalid Format

@@ -71,7 +71,7 @@ pub const Tokenizer = struct {
         if (self.expect_str) {
             self.expect_str = false;
 
-            while (self.index < len and buffer[self.index] != '\n') {
+            while (self.index < len and buffer[self.index] != '\n' and buffer[self.index] != '-') {
                 self.index += 1;
             }
 
@@ -82,16 +82,33 @@ pub const Tokenizer = struct {
 
         switch (buffer[self.index]) {
             '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
-            '-' => result.tag = self.matchEquals(.Minus, .Minus_Equals),
+            '-' => {
+                result.start = self.index;
+                self.index += 1;
+
+                const next_char = buffer[self.index];
+
+                if (next_char == '=') {
+                    self.index += 1;
+                    result.tag = .Minus_Equals;
+                } else if (next_char == '>') {
+                    self.index += 1;
+                    result.tag = .Goto;
+                } else {
+                    result.tag = .Minus;
+                }
+            }, 
             '*' => result.tag = self.matchEquals(.Asterisk, .Asterisk_Equals),
             '/' => {
                 result.start = self.index;
                 self.index += 1;
 
-                if (self.index < len and buffer[self.index] == '=') {
+                const next_char = buffer[self.index];
+
+                if (next_char == '=') {
                     self.index += 1; // Consume '='
                     result.tag = .Slash_Equals;
-                } else if (self.index < len and buffer[self.index] == '/') {
+                } else if (next_char == '/') {
                     self.index += 1; // Consume second '/'
 
                     while (self.index < len and buffer[self.index] != '\n') {

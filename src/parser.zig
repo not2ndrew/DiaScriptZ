@@ -22,9 +22,7 @@ pub const ParserError = error {
 
 const Error = error{ParserError} || Allocator.Error;
 
-// Backus Naur Form:
-
-// This Parser uses a Recursive Decent.
+// Extended Backus Naur Form:
 pub const Parser = struct {
     allocator: Allocator,
     tokens: TokenList,
@@ -100,11 +98,11 @@ pub const Parser = struct {
             .Const, .Var => self.parseDeclarStmt(),
             .Identifier => self.parseIdentStmt(),
             .If => self.parseIfStmt(),
-            else => Error.ParserError,
+            else => return Error.ParserError,
         };
     }
 
-    // <declar_stmt> ::= ("const" | "var") <ident> "=" <expr>
+    // declar_stmt = ( “const” | “var” ) ident “=” expr ;
     fn parseDeclarStmt(self: *Parser) Error!NodeIndex {
         const declar_pos = self.token_pos;
         const declar_tag = self.tokens.get(declar_pos).tag;
@@ -150,8 +148,8 @@ pub const Parser = struct {
         };
     }
 
-    // <assign_stmt> ::= <ident> "=" <expr>
-    // <compound_stmt> ::= <ident> ( "+=" | "-=" | "*=" | "/=" ) <expr>
+    // assign_stmt = ident “=” expr ;
+    // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
     fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = self.token_pos;
         self.next();// Consume assign
@@ -170,16 +168,24 @@ pub const Parser = struct {
         });
     }
 
+    // dialogue = identifier ":" string ;
+    // string = { content } [ “->” ident ] ;
     fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
         _ = try self.expect(.Colon);
         const str_pos = try self.expect(.String);
 
+        var goto: ?TokenIndex = null;
+
+        if (self.peek().tag == .Goto) {
+            self.next();
+            goto = try self.expect(.Identifier);
+        }
         return try self.addNode(.Dialogue, ident_pos, .{
-            .string = .{ .token = str_pos }
+            .dialogue = .{ .string = str_pos, .target = goto },
         });
     }
 
-    // <if_stmt> ::= if <compar_expr> <then_block> <else_blck>
+    // if_stmt = if compar_expr block [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If); // Consume "if"
         _ = try self.expect(.Open_Paren); // Consume "("
@@ -205,8 +211,8 @@ pub const Parser = struct {
         });
     }
 
-    // <compar_expr> ::= "(" <expr> <compar_op> <expr> ")"
-    // <compar_op> ::= "==" | "!=" | "<" | ">" | "<=" | ">="
+    // compar_expr = "(" expr compar_op expr ")" ;
+    // compar_op = "==" | "!=" | "<" | ">" | "<=" | ">=" | “(” boolean “)” ;
     fn parseCompareExpr(self: *Parser) Error!NodeIndex {
         const left_expr = try self.parseExpr();
 
@@ -229,8 +235,8 @@ pub const Parser = struct {
         });
     }
 
-    // <block> ::= "{" <stmt_list> "}"
-    // <stmt_list> ::= epsilon | <stmt> | <stmt> <stmt_list>
+    // block = "{" stmt_list "}" ;
+    // stmt_list = { scene_stmt } ;
     fn parseBlock(self: *Parser, block: Tag) Error!NodeIndex {
         const open_brace = try self.expect(.Open_Brace);
 
@@ -253,6 +259,7 @@ pub const Parser = struct {
         });
     }
 
+    // else_block = "else" block ;
     fn parseElseBlock(self: *Parser) Error!NodeIndex {
         _ = try self.expect(.Else);
         return try self.parseBlock(.Else_Block);
@@ -262,6 +269,7 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
+    // expr = term { ( "+" | "-" ) term } ;
     fn parseExpr(self: *Parser) Error!NodeIndex {
         var node = try self.parseTerm();
 
@@ -286,10 +294,9 @@ pub const Parser = struct {
         }
 
         return node;
-
     }
 
-    // <Term> ::= <Factor> ('*' | '/') <Factor>
+    // term = factor { ( "*" | "/" ) factor } ;
     fn parseTerm(self: *Parser) Error!NodeIndex {
         var node = try self.parseFactor();
 
@@ -316,7 +323,7 @@ pub const Parser = struct {
         return node;
     }
 
-    // <Factor> ::= <Number> | <Identifier>
+    // factor = number | ident | "(" expr ")" ;
     fn parseFactor(self: *Parser) Error!NodeIndex {
         const token = self.peek();
         const idx = self.token_pos;
