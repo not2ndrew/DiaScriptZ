@@ -98,7 +98,7 @@ pub const Parser = struct {
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
             .Const, .Var => self.parseDeclarStmt(),
-            .Identifier => self.parseAssignStmt(),
+            .Identifier => self.parseIdentStmt(),
             .If => self.parseIfStmt(),
             else => Error.ParserError,
         };
@@ -135,22 +135,24 @@ pub const Parser = struct {
             }
         });
     }
-
-    // <assign_stmt> ::= <ident> "=" <expr>
-    // <compound_stmt> ::= <ident> ( "+=" | "-=" | "*=" | "/=" ) <expr>
-    fn parseAssignStmt(self: *Parser) Error!NodeIndex {
+    
+    fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = self.token_pos;
         self.next(); // Consume Identifier
 
-        const assign_type: Error!Tag = switch (self.peek().tag) {
-            .Assign => .Assign,
-            .Plus_Equals => .Plus_Equals,
-            .Minus_Equals => .Minus_Equals,
-            .Asterisk_Equals => .Asterisk_Equals,
-            .Slash_Equals => .Slash_Equals,
+        const next_tag = self.peek().tag;
+
+        return switch (next_tag) {
+            .Assign, .Plus_Equals, .Minus_Equals,
+            .Asterisk_Equals, .Slash_Equals => self.parseAssignStmt(next_tag, ident_pos),
+            .Colon => try self.parseDialogue(ident_pos),
             else => return Error.ParserError,
         };
+    }
 
+    // <assign_stmt> ::= <ident> "=" <expr>
+    // <compound_stmt> ::= <ident> ( "+=" | "-=" | "*=" | "/=" ) <expr>
+    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = self.token_pos;
         self.next();// Consume assign
 
@@ -160,13 +162,23 @@ pub const Parser = struct {
             .identifier = .{ .token = ident_pos },
         });
 
-        return try self.addNode(try assign_type, assign_pos, .{
+        return try self.addNode(assign_tag, assign_pos, .{
             .assign = .{
                 .target = ident_node,
                 .value = expr,
             }
         });
     }
+
+    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
+        _ = try self.expect(.Colon);
+        const str_pos = try self.expect(.String);
+
+        return try self.addNode(.Dialogue, ident_pos, .{
+            .string = .{ .token = str_pos }
+        });
+    }
+
     // <if_stmt> ::= if <compar_expr> <then_block> <else_blck>
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If); // Consume "if"

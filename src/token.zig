@@ -52,8 +52,7 @@ pub const Tag = enum {
     Comment, // "//"
 
     // Variable Names
-    Identifier, // Variable Name
-    String, // ""
+    Identifier, // letter { letter | digit | "_" } 
     Number, // unsigned 8-bit int (1 => 255)
 
     // Combination Assign
@@ -62,10 +61,16 @@ pub const Tag = enum {
     Asterisk_Equals, // *=
     Slash_Equals, // /=
 
+    // Dialogue Parsing
+    String, // { content }
+    Dialogue,
+    Choice_List,
+    Label_List,
+    // ...
+
     // Invalid Format
     Invalid, // Anything that is not in here
     EOF, // End Of File
-
 };
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{

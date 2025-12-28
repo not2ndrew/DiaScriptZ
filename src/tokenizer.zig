@@ -14,11 +14,13 @@ const isDigit = std.ascii.isDigit;
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
+    expect_str: bool,
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
+            .expect_str = false,
         };
     }
 
@@ -42,10 +44,12 @@ pub const Tokenizer = struct {
         return single;
     }
 
+    // TODO: Add punctuations
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
         const len = buffer.len;
 
+        // Skip white space
         while (self.index < len and isSpace(buffer[self.index])) {
             self.index += 1;
         }
@@ -62,6 +66,18 @@ pub const Tokenizer = struct {
                 .start = self.index,
                 .end = self.index,
             };
+        }
+
+        if (self.expect_str) {
+            self.expect_str = false;
+
+            while (self.index < len and buffer[self.index] != '\n') {
+                self.index += 1;
+            }
+
+            result.tag = .String;
+            result.end = self.index;
+            return result;
         }
 
         switch (buffer[self.index]) {
@@ -111,6 +127,7 @@ pub const Tokenizer = struct {
             ':' => {
                 self.index += 1;
                 result.tag = .Colon;
+                self.expect_str = true;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {
@@ -128,7 +145,7 @@ pub const Tokenizer = struct {
                 while (self.index < len and isDigit(buffer[self.index])) {
                     self.index += 1;
                 }
-                // TODO: Make sure the Number does not go beyond u32.
+                // TODO: Make sure the Number does not go beyond u8.
                 result.tag = .Number;
             },
             else => {
