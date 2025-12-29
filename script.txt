@@ -1,1 +1,1 @@
-Bob: Hello World -> Home
+Bob: This { value } is in between string -> Home

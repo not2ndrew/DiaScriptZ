@@ -95,45 +95,14 @@ pub const Parser = struct {
 
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
-            .Const, .Var => self.parseDeclarStmt(),
             .Identifier => self.parseIdentStmt(),
             .If => self.parseIfStmt(),
             else => return Error.ParserError,
         };
     }
 
-    // declar_stmt = ( “const” | “var” ) ident “=” expr ;
-    fn parseDeclarStmt(self: *Parser) Error!NodeIndex {
-        const declar_pos = self.token_pos;
-        const declar_tag = self.tokens.get(declar_pos).tag;
-
-        self.next(); // Consume const or var
-
-        const ident_pos = self.token_pos;
-        self.next(); // Consume Identifier
-
-        const assign_pos = try self.expect(.Assign);
-        const expr = try self.parseExpr();
-
-        const ident_node = try self.addNode(.Identifier, ident_pos, .{
-            .identifier = .{ .token = ident_pos },
-        });
-
-        const assign_node = try self.addNode(.Assign, assign_pos, .{
-            .assign = .{
-                .target = ident_node,
-                .value = expr,
-            }
-        });
-
-        return try self.addNode(declar_tag, declar_pos, .{
-            .declar = .{
-                .kind = declar_tag,
-                .assign = assign_node,
-            }
-        });
-    }
-    
+    // assign_stmt = ident “=” expr ;
+    // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
     fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = self.token_pos;
         self.next(); // Consume Identifier
@@ -148,8 +117,6 @@ pub const Parser = struct {
         };
     }
 
-    // assign_stmt = ident “=” expr ;
-    // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
     fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = self.token_pos;
         self.next();// Consume assign
@@ -169,10 +136,24 @@ pub const Parser = struct {
     }
 
     // dialogue = identifier ":" string ;
-    // string = { content } [ “->” ident ] ;
+    // string = { content | “{“ ident “}” } [ “->” ident ] ;
     fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
         _ = try self.expect(.Colon);
-        const str_pos = try self.expect(.String);
+
+        var str_list: std.ArrayList(NodeIndex) = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+
+        while (self.peek().tag == .String or self.peek().tag == .Open_Brace) {
+            if (self.peek().tag == .String) {
+                try str_list.append(self.allocator, self.token_pos);
+                self.next();
+            } else {
+                self.next();
+                const ident = try self.expect(.Identifier);
+                _ = try self.expect(.Close_Brace);
+
+                try str_list.append(self.allocator, ident);
+            }
+        }
 
         var goto: ?TokenIndex = null;
 
@@ -180,8 +161,12 @@ pub const Parser = struct {
             self.next();
             goto = try self.expect(.Identifier);
         }
+
+        const slice = try str_list.toOwnedSlice(self.allocator);
+        defer self.allocator.free(slice);
+
         return try self.addNode(.Dialogue, ident_pos, .{
-            .dialogue = .{ .string = str_pos, .target = goto },
+            .dialogue = .{ .string = slice, .goto = goto },
         });
     }
 

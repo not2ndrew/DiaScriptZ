@@ -48,7 +48,7 @@ pub const NodeData = union(enum) {
         statements: []NodeIndex,
     },
     dialogue: struct {
-        string: NodeIndex,
-        target: ?NodeIndex,
+        string: []NodeIndex,
+        goto: ?NodeIndex,
     },
 };

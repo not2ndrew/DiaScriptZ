@@ -18,7 +18,7 @@ pub fn main() !void {
     const allocator = debugAlloc.allocator();
     defer tokenList.deinit(allocator);
 
-    read_buf = try allocator.alloc(u8, 100);
+    read_buf = try allocator.alloc(u8, 200);
     defer allocator.free(read_buf);
 
     const file = try std.fs.cwd().openFile(FILE_NAME, .{});

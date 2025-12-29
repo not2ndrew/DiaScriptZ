@@ -14,22 +14,26 @@ const isDigit = std.ascii.isDigit;
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
-    expect_str: bool,
+    str_mode: bool,
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
-            .expect_str = false,
+            .str_mode = false,
         };
     }
 
     fn isSpace(char: u8) bool {
-        return char == ' ' or char == '\r' or char == '\n' or char == '\t';
+        return char == ' ' or char == '\r' or char == '\t';
     }
 
     fn isIdentChar(c: u8) bool {
         return isAlphabetic(c) or isDigit(c) or c == '_';
+    }
+
+    fn isNotDialogueEnd(c: u8) bool {
+        return c != '\n' and c != '-' and c != '{';
     }
 
     // Some characters require an equal character
@@ -44,6 +48,24 @@ pub const Tokenizer = struct {
         return single;
     }
 
+    fn findStr(self: *Tokenizer) Token {
+        const start = self.index;
+        const buffer = self.buffer;
+        const len = buffer.len;
+
+        self.str_mode = false;
+
+        while (self.index < len and isNotDialogueEnd(buffer[self.index])) {
+            self.index += 1;
+        }
+
+        return .{
+            .tag = .String,
+            .start = start,
+            .end = self.index,
+        };
+    }
+
     // TODO: Add punctuations
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
@@ -52,6 +74,11 @@ pub const Tokenizer = struct {
         // Skip white space
         while (self.index < len and isSpace(buffer[self.index])) {
             self.index += 1;
+        }
+
+        if (buffer[self.index] == '\n') {
+            self.index += 1;
+            self.str_mode = false;
         }
 
         var result: Token = .{
@@ -68,17 +95,7 @@ pub const Tokenizer = struct {
             };
         }
 
-        if (self.expect_str) {
-            self.expect_str = false;
-
-            while (self.index < len and buffer[self.index] != '\n' and buffer[self.index] != '-') {
-                self.index += 1;
-            }
-
-            result.tag = .String;
-            result.end = self.index;
-            return result;
-        }
+        if (self.str_mode) return self.findStr();
 
         switch (buffer[self.index]) {
             '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
@@ -140,11 +157,12 @@ pub const Tokenizer = struct {
             '}' => {
                 self.index += 1;
                 result.tag = .Close_Brace;
+                self.str_mode = true;
             },
             ':' => {
                 self.index += 1;
                 result.tag = .Colon;
-                self.expect_str = true;
+                self.str_mode = true;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {
