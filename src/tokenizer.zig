@@ -11,16 +11,22 @@ const keywords = token.keywords;
 const isAlphabetic = std.ascii.isAlphabetic;
 const isDigit = std.ascii.isDigit;
 
+const Mode = enum {
+    Normal,
+    String,
+    Interpolation,
+};
+
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
-    str_mode: bool,
+    mode: Mode,
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
-            .str_mode = false,
+            .mode = .Normal,
         };
     }
 
@@ -53,8 +59,6 @@ pub const Tokenizer = struct {
         const buffer = self.buffer;
         const len = buffer.len;
 
-        self.str_mode = false;
-
         while (self.index < len and isNotDialogueEnd(buffer[self.index])) {
             self.index += 1;
         }
@@ -77,7 +81,7 @@ pub const Tokenizer = struct {
 
         if (buffer[self.index] == '\n') {
             self.index += 1;
-            self.str_mode = false;
+            self.mode = .Normal;
         }
 
         var result: Token = .{
@@ -94,7 +98,7 @@ pub const Tokenizer = struct {
             };
         }
 
-        if (self.str_mode) return self.findStr();
+        if (self.mode == .String and buffer[self.index] != '{') return self.findStr();
         
 
         switch (buffer[self.index]) {
@@ -151,21 +155,35 @@ pub const Tokenizer = struct {
                 result.tag = .Close_Paren;
             },
             '{' => {
-                self.index += 1;
-                result.tag = .Open_Brace;
+                switch (self.mode) {
+                    .String => {
+                        self.index += 1;
+                        self.mode = .Interpolation;
+                        result.tag = .Inter_Open;
+                    },
+                    else => {
+                        self.index += 1;
+                        result.tag = .Open_Brace;
+                    }
+                }
             },
-            // TODO: Close Brace for an if stmt / else stmt conflicts
-            // with dialogue close brace. If close brace turns on str_mode
-            // after "}", then a string token will be created.
             '}' => {
-                self.index += 1;
-                result.tag = .Close_Brace;
-                self.str_mode = true;
+                switch (self.mode) {
+                    .Interpolation => {
+                        self.index += 1;
+                        self.mode = .String;
+                        result.tag = .Inter_Close;
+                    },
+                    else => {
+                        self.index += 1;
+                        result.tag = .Close_Brace;
+                    }
+                }
             },
             ':' => {
                 self.index += 1;
                 result.tag = .Colon;
-                self.str_mode = true;
+                self.mode = .String;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {

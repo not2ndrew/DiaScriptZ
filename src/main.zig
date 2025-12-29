@@ -43,9 +43,9 @@ pub fn main() !void {
         // std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
     }
 
-    // var parser = par.Parser.init(allocator, tokenList);
-    // defer parser.deinit();
-    //
-    // try parser.parse();
-    // parser.printAllNodeTags();
+    var parser = par.Parser.init(allocator, tokenList);
+    defer parser.deinit();
+
+    try parser.parse();
+    parser.printAllNodeTags();
 }

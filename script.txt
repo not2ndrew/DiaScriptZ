@@ -1,3 +1,4 @@
 if (x > 1) {
-   i += 1
+i += 1
 }
+Bob: There are {num} of rocks here!

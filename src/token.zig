@@ -65,7 +65,8 @@ pub const Tag = enum {
     Choice_List,
     Label_List,
     Goto, // ->
-    // ...
+    Inter_Open, // string interpolation {
+    Inter_Close, // string interpolation }
 
     // Invalid Format
     Invalid, // Anything that is not in here

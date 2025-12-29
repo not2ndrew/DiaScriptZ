@@ -175,14 +175,14 @@ pub const Parser = struct {
                     try str_list.append(self.allocator, str);
                     self.next();
                 },
-                .Open_Brace => {
+                .Inter_Open => {
                     self.next();
                     const ident = try self.addNode(.Identifier, self.token_pos, .{
                         .identifier = .{ .token = self.token_pos }
                     });
 
                     self.next();
-                    _ = try self.expect(.Close_Brace);
+                    _ = try self.expect(.Inter_Close);
 
                     try str_list.append(self.allocator, ident);
                 },
