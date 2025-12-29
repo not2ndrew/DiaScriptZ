@@ -66,7 +66,6 @@ pub const Tokenizer = struct {
         };
     }
 
-    // TODO: Add punctuations
     pub fn next(self: *Tokenizer) Token {
         const buffer = self.buffer;
         const len = buffer.len;
@@ -96,6 +95,7 @@ pub const Tokenizer = struct {
         }
 
         if (self.str_mode) return self.findStr();
+        
 
         switch (buffer[self.index]) {
             '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
@@ -154,6 +154,9 @@ pub const Tokenizer = struct {
                 self.index += 1;
                 result.tag = .Open_Brace;
             },
+            // TODO: Close Brace for an if stmt / else stmt conflicts
+            // with dialogue close brace. If close brace turns on str_mode
+            // after "}", then a string token will be created.
             '}' => {
                 self.index += 1;
                 result.tag = .Close_Brace;
@@ -180,7 +183,6 @@ pub const Tokenizer = struct {
                 while (self.index < len and isDigit(buffer[self.index])) {
                     self.index += 1;
                 }
-                // TODO: Make sure the Number does not go beyond u8.
                 result.tag = .Number;
             },
             else => {

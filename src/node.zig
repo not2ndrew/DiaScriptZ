@@ -41,11 +41,11 @@ pub const NodeData = union(enum) {
     },
     if_stmt: struct {
         condition: NodeIndex,
-        then_blck: NodeIndex,
-        else_blck: ?NodeIndex,
+        then_block: NodeIndex,
+        else_block: ?NodeIndex,
     },
     block: struct {
-        statements: []NodeIndex,
+        stmts: []NodeIndex,
     },
     dialogue: struct {
         string: []NodeIndex,

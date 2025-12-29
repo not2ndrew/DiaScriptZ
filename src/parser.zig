@@ -52,6 +52,7 @@ pub const Parser = struct {
         return self.tokens.get(pos);
     }
 
+    /// Move to the next token. Does not check for tag.
     fn next(self: *Parser) void {
         if (self.token_pos < self.tokens.len) self.token_pos += 1;
     }
@@ -105,7 +106,7 @@ pub const Parser = struct {
     // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
     fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = self.token_pos;
-        self.next(); // Consume Identifier
+        self.next();
 
         const next_tag = self.peek().tag;
 
@@ -119,7 +120,7 @@ pub const Parser = struct {
 
     fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = self.token_pos;
-        self.next();// Consume assign
+        self.next();
 
         const expr = try self.parseExpr();
 
@@ -136,24 +137,12 @@ pub const Parser = struct {
     }
 
     // dialogue = identifier ":" string ;
-    // string = { content | “{“ ident “}” } [ “->” ident ] ;
+    // string = string_part { string_part } [ "->" ident ] ;
     fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
         _ = try self.expect(.Colon);
 
-        var str_list: std.ArrayList(NodeIndex) = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
-
-        while (self.peek().tag == .String or self.peek().tag == .Open_Brace) {
-            if (self.peek().tag == .String) {
-                try str_list.append(self.allocator, self.token_pos);
-                self.next();
-            } else {
-                self.next();
-                const ident = try self.expect(.Identifier);
-                _ = try self.expect(.Close_Brace);
-
-                try str_list.append(self.allocator, ident);
-            }
-        }
+        const str_part = try self.parseStrPart();
+        defer self.allocator.free(str_part);
 
         var goto: ?TokenIndex = null;
 
@@ -162,36 +151,83 @@ pub const Parser = struct {
             goto = try self.expect(.Identifier);
         }
 
-        const slice = try str_list.toOwnedSlice(self.allocator);
-        defer self.allocator.free(slice);
-
         return try self.addNode(.Dialogue, ident_pos, .{
-            .dialogue = .{ .string = slice, .goto = goto },
+            .dialogue = .{ .string = str_part, .goto = goto },
         });
+    }
+
+    // string_part = content_part | interpolation ;
+    // content_part = content { content } ;
+    // interpolation = "{" expr "}" ;
+    // content = any_character_except("{", "}", "\n") ;
+    fn parseStrPart(self: *Parser) Error![]NodeIndex {
+        var str_list = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+
+        while (true) {
+            const tag = self.peek().tag;
+
+            switch (tag) {
+                .String => {
+                    const str = try self.addNode(.String, self.token_pos, .{
+                        .string = .{ .token = self.token_pos },
+                    });
+
+                    try str_list.append(self.allocator, str);
+                    self.next();
+                },
+                .Open_Brace => {
+                    self.next();
+                    const ident = try self.addNode(.Identifier, self.token_pos, .{
+                        .identifier = .{ .token = self.token_pos }
+                    });
+
+                    self.next();
+                    _ = try self.expect(.Close_Brace);
+
+                    try str_list.append(self.allocator, ident);
+                },
+                else => break,
+            }
+        }
+
+        return try str_list.toOwnedSlice(self.allocator);
     }
 
     // if_stmt = if compar_expr block [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
-        const if_pos = try self.expect(.If); // Consume "if"
-        _ = try self.expect(.Open_Paren); // Consume "("
+        const if_pos = try self.expect(.If);
+        _ = try self.expect(.Open_Paren);
 
         const condition = try self.parseCompareExpr();
 
-        _ = try self.expect(.Close_Paren); // Consume ")"
+        _ = try self.expect(.Close_Paren);
 
-        const then = try self.parseBlock(.Then_Block);
+        const then_pos = self.token_pos;
 
-        var else_blck: ?NodeIndex = null;
+        const then = try self.parseBlock();
+        defer self.allocator.free(then);
+
+        const then_block = try self.addNode(.Then_Block, then_pos, .{
+            .block = .{ .stmts = then }
+        });
+
+        var else_block: ?NodeIndex = null;
 
         if (self.peek().tag == .Else) {
-            else_blck = try self.parseElseBlock();
+            const else_pos = self.token_pos;
+            const else_stmts = try self.parseElseBlock();
+            defer self.allocator.free(else_stmts);
+
+            else_block = try self.addNode(.Else_Block, else_pos, .{
+                .block = .{ .stmts = else_stmts }
+            });
         }
 
         return self.addNode(.If, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
-                .then_blck = then,
-                .else_blck = else_blck,
+                .then_block = then_block,
+                .else_block = else_block,
             }
         });
     }
@@ -211,7 +247,7 @@ pub const Parser = struct {
             else => Error.ParserError,
         };
         const compare_token = self.token_pos;
-        self.next(); // Consume <compar_op> 
+        self.next();
 
         const right_expr = try self.parseExpr();
 
@@ -222,12 +258,10 @@ pub const Parser = struct {
 
     // block = "{" stmt_list "}" ;
     // stmt_list = { scene_stmt } ;
-    fn parseBlock(self: *Parser, block: Tag) Error!NodeIndex {
-        const open_brace = try self.expect(.Open_Brace);
+    fn parseBlock(self: *Parser) Error![]NodeIndex {
+        _ = try self.expect(.Open_Brace);
 
-        // No need deinit since we are freeing the slice created by allocator.
-        var stmts: std.ArrayList(NodeIndex) = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
-        // defer stmts.deinit(self.allocator);
+        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
 
         while (self.peek().tag != .Close_Brace and self.peek().tag != .EOF) {
             const stmt = try self.parseStmt();
@@ -236,18 +270,13 @@ pub const Parser = struct {
 
         _ = try self.expect(.Close_Brace);
 
-        const slice = try stmts.toOwnedSlice(self.allocator);
-        defer self.allocator.free(slice);
-
-        return try self.addNode(block, open_brace, .{ 
-            .block = .{ .statements = slice },
-        });
+        return try stmts.toOwnedSlice(self.allocator);
     }
 
     // else_block = "else" block ;
-    fn parseElseBlock(self: *Parser) Error!NodeIndex {
+    fn parseElseBlock(self: *Parser) Error![]NodeIndex {
         _ = try self.expect(.Else);
-        return try self.parseBlock(.Else_Block);
+        return try self.parseBlock();
     }
 
     // ───────────────────────────────
@@ -314,6 +343,7 @@ pub const Parser = struct {
         const idx = self.token_pos;
 
         switch (token.tag) {
+            // TODO: Make sure the number is not larger than u8
             .Number => {
                 self.next();
                 return self.addNode(.Number, idx, .{
