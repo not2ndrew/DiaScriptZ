@@ -42,6 +42,15 @@ pub const Tokenizer = struct {
         return c != '\n' and c != '-' and c != '{';
     }
 
+    fn skipWhiteSpace(self: *Tokenizer) void {
+        const buffer = self.buffer;
+        const len = buffer.len;
+
+        while (self.index < len and isSpace(buffer[self.index])) {
+            self.index += 1;
+        }
+    }
+
     // Some characters require an equal character
     // ==, !=, +=, -=, *=, /=
     fn matchEquals(self: *Tokenizer, single: Tag, double: Tag) Tag {
@@ -75,12 +84,11 @@ pub const Tokenizer = struct {
         const len = buffer.len;
 
         // Skip white space
-        while (self.index < len and isSpace(buffer[self.index])) {
-            self.index += 1;
-        }
+        self.skipWhiteSpace();
 
         if (buffer[self.index] == '\n') {
-            self.index += 1;
+            self.index += 1; // Consume '\n'
+            self.skipWhiteSpace();
             self.mode = .Normal;
         }
 
