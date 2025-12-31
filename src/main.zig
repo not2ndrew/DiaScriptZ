@@ -40,12 +40,12 @@ pub fn main() !void {
 
         if (token.tag == Tag.EOF) break;
         try tokenList.append(allocator, token);
-        std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
+        // std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
     }
 
-    // var parser = par.Parser.init(allocator, tokenList);
-    // defer parser.deinit();
-    //
-    // try parser.parse();
-    // parser.printAllNodeTags();
+    var parser = par.Parser.init(allocator, tokenList);
+    defer parser.deinit();
+
+    try parser.parse();
+    parser.printAllNodeTags();
 }

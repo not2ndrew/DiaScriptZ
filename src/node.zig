@@ -47,8 +47,13 @@ pub const NodeData = union(enum) {
     block: struct {
         stmts: []NodeIndex,
     },
+    choice_list: struct {
+        string: []NodeIndex,
+        goto: ?NodeIndex,
+    },
     dialogue: struct {
         string: []NodeIndex,
         goto: ?NodeIndex,
+        choices: ?[]NodeIndex,
     },
 };

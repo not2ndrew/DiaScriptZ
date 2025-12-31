@@ -235,14 +235,19 @@ pub const Parser = struct {
         defer self.allocator.free(str_part);
 
         var goto: ?TokenIndex = null;
+        var choices: ?[]NodeIndex = null;
 
         if (self.peek().tag == .Goto) {
             self.next();
             goto = try self.expect(.Identifier);
         }
 
+        if (self.peek().tag == .Choice_Marker) {
+            choices = try self.parseChoices();
+        }
+
         return try self.addNode(.Dialogue, ident_pos, .{
-            .dialogue = .{ .string = str_part, .goto = goto },
+            .dialogue = .{ .string = str_part, .goto = goto, .choices = choices },
         });
     }
 
@@ -281,6 +286,37 @@ pub const Parser = struct {
         }
 
         return try str_list.toOwnedSlice(self.allocator);
+    }
+
+    // choice = { "*" string } (MIN = 2, MAX = 5)
+    fn parseChoices(self: *Parser) Error![]NodeIndex {
+        const MAX_CHOICES_SIZE = 5;
+        var i: usize = 0;
+        var goto: ?NodeIndex = null;
+        var choices: [MAX_CHOICES_SIZE]NodeIndex = undefined;
+
+        while (i < MAX_CHOICES_SIZE and self.peek().tag == .Choice_Marker) : (i += 1) {
+            const marker = self.token_pos;
+            self.next();
+
+            const str = try self.parseStrPart();
+            defer self.allocator.free(str);
+
+            goto = null;
+
+            if (self.peek().tag == .Goto) {
+                self.next();
+                goto = try self.expect(.Identifier);
+            }
+
+            const choice = try self.addNode(.Choice, marker, .{
+                .choice_list = .{ .string = str, .goto = goto }
+            });
+
+            choices[i] = choice;
+        }
+
+        return &choices;
     }
 
     // ───────────────────────────────
