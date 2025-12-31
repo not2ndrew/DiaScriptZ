@@ -42,7 +42,7 @@ pub const Tag = enum {
 
     // Comparison
     Equals, // ==
-    Not_Equals, // !=
+    Not_Equal, // !=
     Less, // <
     Greater, // >
     Less_or_Equal, // <=
@@ -54,10 +54,10 @@ pub const Tag = enum {
     Number, // unsigned 8-bit int (1 => 255)
 
     // Combination Assign
-    Plus_Equals, // +=
-    Minus_Equals, // -=
-    Asterisk_Equals, // *=
-    Slash_Equals, // /=
+    Plus_Equal, // +=
+    Minus_Equal, // -=
+    Asterisk_Equal, // *=
+    Slash_Equal, // /=
 
     // Dialogue Parsing
     String, // { content }

@@ -111,8 +111,8 @@ pub const Parser = struct {
         const next_tag = self.peek().tag;
 
         return switch (next_tag) {
-            .Assign, .Plus_Equals, .Minus_Equals,
-            .Asterisk_Equals, .Slash_Equals => self.parseAssignStmt(next_tag, ident_pos),
+            .Assign, .Plus_Equal, .Minus_Equal,
+            .Asterisk_Equal, .Slash_Equal => self.parseAssignStmt(next_tag, ident_pos),
             .Colon => try self.parseDialogue(ident_pos),
             else => return Error.ParserError,
         };
@@ -182,7 +182,7 @@ pub const Parser = struct {
 
         const compare_tag: Error!Tag = switch (self.peek().tag) {
             .Equals => .Equals,
-            .Not_Equals => .Not_Equals,
+            .Not_Equal => .Not_Equal,
             .Less => .Less,
             .Greater => .Greater,
             .Less_or_Equal => .Less_or_Equal,

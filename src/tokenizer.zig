@@ -32,44 +32,44 @@ pub const Tokenizer = struct {
         };
     }
 
-    fn isSpace(char: u8) bool {
-        return char == ' ' or char == '\r' or char == '\t';
-    }
-
     fn isIdentChar(c: u8) bool {
         return isAlphabetic(c) or isDigit(c) or c == '_';
     }
 
-    fn isNotDialogueEnd(c: u8) bool {
-        return c != '\n' and c != '-' and c != '{';
-    }
-
     fn skipWhiteSpace(self: *Tokenizer) void {
         const buffer = self.buffer;
-        const len = buffer.len;
 
-        while (self.index < len and isSpace(buffer[self.index])) {
-            self.index += 1;
+        while (self.index < buffer.len) {
+            switch (buffer[self.index]) {
+                ' ', '\r', '\t' => self.index += 1,
+                '\n' => {
+                    self.index += 1;
+                    self.mode = .Normal;
+                    self.line_start = true;
+                },
+                else => return,
+            }
         }
     }
 
-    // Some characters require an equal character
-    // ==, !=, +=, -=, *=, /=
-    fn matchEquals(self: *Tokenizer, single: Tag, double: Tag) Tag {
-        self.index += 1;
-        if (self.index < self.buffer.len and self.buffer[self.index] == '=') {
+    fn match(self: *Tokenizer, c: u8) bool {
+        if (self.index < self.buffer.len and self.buffer[self.index] == c) {
             self.index += 1;
-            return double;
+            return true;
         }
 
-        return single;
+        return false;
     }
 
     fn findStr(self: *Tokenizer) Token {
         const start = self.index;
+        const buffer = self.buffer;
 
-        while (self.index < self.buffer.len and isNotDialogueEnd(self.buffer[self.index])) {
-            self.index += 1;
+        while (self.index < buffer.len) {
+            switch (buffer[self.index]) {
+                '\n', '-', '{' => break,
+                else => self.index += 1,
+            }
         }
 
         if (self.buffer[self.index] == '{') {
@@ -91,13 +91,6 @@ pub const Tokenizer = struct {
 
         self.skipWhiteSpace();
 
-        if (buffer[self.index] == '\n') {
-            self.index += 1; // Consume '\n'
-            self.skipWhiteSpace();
-            self.mode = .Normal;
-            self.line_start = true;
-        }
-
         var result: Token = .{
             .tag = .Invalid,
             .start = self.index,
@@ -115,17 +108,18 @@ pub const Tokenizer = struct {
         if (self.mode == .String and buffer[self.index] != '{') return self.findStr();
         
         switch (buffer[self.index]) {
-            '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
+            '+' => {
+                self.index += 1;
+                result.tag = if (self.match('=')) .Plus_Equal else .Plus;
+            },
             '-' => {
                 result.start = self.index;
                 self.index += 1;
 
-                const next_char = buffer[self.index];
-
-                if (next_char == '=') {
+                if (self.match('=')) {
                     self.index += 1;
-                    result.tag = .Minus_Equals;
-                } else if (next_char == '>') {
+                    result.tag = .Minus_Equal;
+                } else if (self.match('>')) {
                     self.index += 1;
                     result.tag = .Goto;
                 } else {
@@ -139,21 +133,19 @@ pub const Tokenizer = struct {
                     self.index += 1;
                     result.tag = .Choice_Marker;
                 } else {
-                    result.tag = self.matchEquals(.Asterisk, .Asterisk_Equals);
+                    self.index += 1;
+                    result.tag = if (self.match('=')) .Asterisk_Equal else .Asterisk;
                 }
             },
             '/' => {
                 result.start = self.index;
                 self.index += 1;
 
-                const next_char = buffer[self.index];
-
-                if (next_char == '=') {
-                    self.index += 1; // Consume '='
-                    result.tag = .Slash_Equals;
-                } else if (next_char == '/') {
+                if (self.match('=')) {
+                    self.index += 1;
+                    result.tag = .Slash_Equal;
+                } else if (self.match('/')) {
                     self.index += 1; // Consume second '/'
-
                     while (self.index < len and buffer[self.index] != '\n') {
                         self.index += 1;
                     }
@@ -163,11 +155,23 @@ pub const Tokenizer = struct {
                     result.tag = .Slash;
                 }
             },
-            '=' => result.tag = self.matchEquals(.Assign, .Equals),
+            '=' => {
+                self.index += 1;
+                result.tag = if (self.match('=')) .Equals else .Assign;
+            },
             // TODO: "!" is either logical NOT ( "!=" ) or a singleton (!bool)
-            '!' => result.tag = self.matchEquals(.Invalid, .Not_Equals),
-            '<' => result.tag = self.matchEquals(.Less, .Less_or_Equal),
-            '>' => result.tag = self.matchEquals(.Greater, .Greater_or_Equal),
+            '!' => {
+                self.index += 1;
+                result.tag = if (self.match('=')) .Not_Equal else .Invalid;
+            },
+            '<' => {
+                self.index += 1;
+                result.tag = if (self.match('=')) .Less_or_Equal else .Less;
+            },
+            '>' => {
+                self.index += 1;
+                result.tag = if (self.match('=')) .Greater_or_Equal else .Greater;
+            },
             '(' => {
                 self.index += 1;
                 result.tag = .Open_Paren;
@@ -178,9 +182,8 @@ pub const Tokenizer = struct {
             },
             '{' => {
                 switch (self.mode) {
-                    .String => {
+                    .Interpolation => {
                         self.index += 1;
-                        self.mode = .Interpolation;
                         result.tag = .Inter_Open;
                     },
                     else => {
