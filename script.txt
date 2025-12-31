@@ -1,3 +1,5 @@
-Bob: Which path do I take?
-   * Take the left path
-   * Take the right path
+~ Title
+    Bob: Hello World
+	    * choice_1
+		* choice_2
+end

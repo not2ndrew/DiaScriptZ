@@ -98,6 +98,8 @@ pub const Parser = struct {
         return switch (self.peek().tag) {
             .Identifier => self.parseIdentStmt(),
             .If => self.parseIfStmt(),
+            .Tilde => self.parseLabel(),
+            .Hash => self.parseScene(),
             else => return Error.ParserError,
         };
     }
@@ -136,7 +138,7 @@ pub const Parser = struct {
         });
     }
 
-    // if_stmt = if compar_expr block [ else_block ] ;
+    // if_stmt = if compar_expr "{" block "}" [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If);
         _ = try self.expect(.Open_Paren);
@@ -144,11 +146,14 @@ pub const Parser = struct {
         const condition = try self.parseCompareExpr();
 
         _ = try self.expect(.Close_Paren);
+        _ = try self.expect(.Open_Brace);
 
         const then_pos = self.token_pos;
 
-        const then = try self.parseBlock();
+        const then = try self.parseStmts();
         defer self.allocator.free(then);
+
+        _ = try self.expect(.Close_Brace);
 
         const then_block = try self.addNode(.Then_Block, then_pos, .{
             .block = .{ .stmts = then }
@@ -199,27 +204,30 @@ pub const Parser = struct {
         });
     }
 
-    // block = "{" stmt_list "}" ;
     // stmt_list = { scene_stmt } ;
-    fn parseBlock(self: *Parser) Error![]NodeIndex {
-        _ = try self.expect(.Open_Brace);
-
+    fn parseStmts(self: *Parser) Error![]NodeIndex {
         var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
 
-        while (self.peek().tag != .Close_Brace and self.peek().tag != .EOF) {
-            const stmt = try self.parseStmt();
-            try stmts.append(self.allocator, stmt);
+        while (self.token_pos < self.tokens.len) {
+            switch (self.peek().tag) {
+                .Close_Brace, .End => break,
+                else => {
+                    const stmt = try self.parseStmt();
+                    try stmts.append(self.allocator, stmt);
+                }
+            }
         }
-
-        _ = try self.expect(.Close_Brace);
 
         return try stmts.toOwnedSlice(self.allocator);
     }
 
-    // else_block = "else" block ;
+    // else_block = "else" "{" block "}";
     fn parseElseBlock(self: *Parser) Error![]NodeIndex {
         _ = try self.expect(.Else);
-        return try self.parseBlock();
+        _ = try self.expect(.Open_Brace);
+        const else_block = try self.parseStmts();
+        _ = try self.expect(.Close_Brace);
+        return else_block;
     }
 
     // ───────────────────────────────
@@ -317,6 +325,30 @@ pub const Parser = struct {
         }
 
         return &choices;
+    }
+
+    fn parseBlock(self: *Parser, tag: Tag) Error!NodeIndex {
+        const ident_pos = try self.expect(.Identifier);
+        const stmts = try self.parseStmts();
+        defer self.allocator.free(stmts);
+
+        return try self.addNode(tag, ident_pos, .{
+            .block = .{ .stmts = stmts },
+        });
+    }
+
+    // label = “~” ident block “end”
+    fn parseLabel(self: *Parser) Error!NodeIndex {
+        _ = try self.expect(.Tilde);
+        const label = try self.parseBlock(.Label);
+        _ = try self.expect(.End);
+
+        return label;
+    }
+
+    fn parseScene(self: *Parser) Error!NodeIndex {
+        _ = try self.expect(.Hash);
+        return try self.parseBlock(.Scene);
     }
 
     // ───────────────────────────────

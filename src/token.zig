@@ -39,6 +39,8 @@ pub const Tag = enum {
     Slash, // /
     Open_Brace, // {
     Close_Brace, // }
+    Tilde, // ~
+    Hash, // #
 
     // Comparison
     Equals, // ==
@@ -79,6 +81,5 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "false", .Boolean },
     .{ "if", .If },
     .{ "else", .Else },
-    .{ "label", .Label },
     .{ "end", .End },
 });

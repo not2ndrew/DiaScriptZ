@@ -210,6 +210,14 @@ pub const Tokenizer = struct {
                 result.tag = .Colon;
                 self.mode = .String;
             },
+            '~' => {
+                self.index += 1;
+                result.tag = .Tilde;
+            },
+            '#' => {
+                self.index += 1;
+                result.tag = .Hash;
+            },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {
                     self.index += 1;
