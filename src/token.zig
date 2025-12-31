@@ -62,6 +62,7 @@ pub const Tag = enum {
     // Dialogue Parsing
     String, // { content }
     Dialogue,
+    Choice_Marker, // "*" at the beginning of a newline
     Choice_List,
     Label_List,
     Goto, // ->

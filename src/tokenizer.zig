@@ -21,12 +21,14 @@ pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
     mode: Mode,
+    line_start: bool,
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
             .mode = .Normal,
+            .line_start = true,
         };
     }
 
@@ -65,11 +67,15 @@ pub const Tokenizer = struct {
 
     fn findStr(self: *Tokenizer) Token {
         const start = self.index;
-        const buffer = self.buffer;
-        const len = buffer.len;
 
-        while (self.index < len and isNotDialogueEnd(buffer[self.index])) {
+        while (self.index < self.buffer.len and isNotDialogueEnd(self.buffer[self.index])) {
             self.index += 1;
+        }
+
+        if (self.buffer[self.index] == '{') {
+            self.mode = .Interpolation;
+        } else {
+            self.mode = .Normal;
         }
 
         return .{
@@ -83,13 +89,13 @@ pub const Tokenizer = struct {
         const buffer = self.buffer;
         const len = buffer.len;
 
-        // Skip white space
         self.skipWhiteSpace();
 
         if (buffer[self.index] == '\n') {
             self.index += 1; // Consume '\n'
             self.skipWhiteSpace();
             self.mode = .Normal;
+            self.line_start = true;
         }
 
         var result: Token = .{
@@ -108,7 +114,6 @@ pub const Tokenizer = struct {
 
         if (self.mode == .String and buffer[self.index] != '{') return self.findStr();
         
-
         switch (buffer[self.index]) {
             '+' => result.tag = self.matchEquals(.Plus, .Plus_Equals),
             '-' => {
@@ -127,7 +132,16 @@ pub const Tokenizer = struct {
                     result.tag = .Minus;
                 }
             }, 
-            '*' => result.tag = self.matchEquals(.Asterisk, .Asterisk_Equals),
+            '*' => {
+                if (self.line_start) {
+                    self.mode = .String;
+                    self.line_start = false;
+                    self.index += 1;
+                    result.tag = .Choice_Marker;
+                } else {
+                    result.tag = self.matchEquals(.Asterisk, .Asterisk_Equals);
+                }
+            },
             '/' => {
                 result.start = self.index;
                 self.index += 1;
@@ -217,6 +231,7 @@ pub const Tokenizer = struct {
             }
         }
 
+        self.line_start = false;
         result.end = self.index;
         return result;
     }
