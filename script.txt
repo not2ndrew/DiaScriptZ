@@ -1,4 +1,3 @@
 Bob: Which path do we take?
    * Take the left path -> Left_Path
    * Take the right path -> Right_Path
-x = i * 2

@@ -80,7 +80,5 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "if", .If },
     .{ "else", .Else },
     .{ "label", .Label },
-    .{ "scene", .Scene },
-    .{ "choice", .Choice },
     .{ "end", .End },
 });

@@ -136,63 +136,6 @@ pub const Parser = struct {
         });
     }
 
-    // dialogue = identifier ":" string ;
-    // string = string_part { string_part } [ "->" ident ] ;
-    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
-        _ = try self.expect(.Colon);
-
-        const str_part = try self.parseStrPart();
-        defer self.allocator.free(str_part);
-
-        var goto: ?TokenIndex = null;
-
-        if (self.peek().tag == .Goto) {
-            self.next();
-            goto = try self.expect(.Identifier);
-        }
-
-        return try self.addNode(.Dialogue, ident_pos, .{
-            .dialogue = .{ .string = str_part, .goto = goto },
-        });
-    }
-
-    // string_part = content_part | interpolation ;
-    // content_part = content { content } ;
-    // interpolation = "{" expr "}" ;
-    // content = any_character_except("{", "}", "\n") ;
-    fn parseStrPart(self: *Parser) Error![]NodeIndex {
-        var str_list = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
-
-        while (true) {
-            const tag = self.peek().tag;
-
-            switch (tag) {
-                .String => {
-                    const str = try self.addNode(.String, self.token_pos, .{
-                        .string = .{ .token = self.token_pos },
-                    });
-
-                    try str_list.append(self.allocator, str);
-                    self.next();
-                },
-                .Inter_Open => {
-                    self.next();
-                    const ident = try self.addNode(.Identifier, self.token_pos, .{
-                        .identifier = .{ .token = self.token_pos }
-                    });
-
-                    self.next();
-                    _ = try self.expect(.Inter_Close);
-
-                    try str_list.append(self.allocator, ident);
-                },
-                else => break,
-            }
-        }
-
-        return try str_list.toOwnedSlice(self.allocator);
-    }
-
     // if_stmt = if compar_expr block [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If);
@@ -277,6 +220,67 @@ pub const Parser = struct {
     fn parseElseBlock(self: *Parser) Error![]NodeIndex {
         _ = try self.expect(.Else);
         return try self.parseBlock();
+    }
+
+    // ───────────────────────────────
+    //           DIALOGUE
+    // ───────────────────────────────
+
+    // dialogue = identifier ":" string ;
+    // string = string_part { string_part } [ "->" ident ] ;
+    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
+        _ = try self.expect(.Colon);
+
+        const str_part = try self.parseStrPart();
+        defer self.allocator.free(str_part);
+
+        var goto: ?TokenIndex = null;
+
+        if (self.peek().tag == .Goto) {
+            self.next();
+            goto = try self.expect(.Identifier);
+        }
+
+        return try self.addNode(.Dialogue, ident_pos, .{
+            .dialogue = .{ .string = str_part, .goto = goto },
+        });
+    }
+
+    // string_part = content_part | interpolation ;
+    // content_part = content { content } ;
+    // interpolation = "{" expr "}" ;
+    // content = any_character_except("{", "}", "\n") ;
+    fn parseStrPart(self: *Parser) Error![]NodeIndex {
+        var str_list = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
+
+        while (true) {
+            const tag = self.peek().tag;
+
+            switch (tag) {
+                .String => {
+                    const str = try self.addNode(.String, self.token_pos, .{
+                        .string = .{ .token = self.token_pos },
+                    });
+
+                    try str_list.append(self.allocator, str);
+                    self.next();
+                },
+                .Inter_Open => {
+                    self.next();
+                    const ident = try self.addNode(.Identifier, self.token_pos, .{
+                        .identifier = .{ .token = self.token_pos }
+                    });
+
+                    self.next();
+                    _ = try self.expect(.Inter_Close);
+
+                    try str_list.append(self.allocator, ident);
+                },
+                else => break,
+            }
+        }
+
+        return try str_list.toOwnedSlice(self.allocator);
     }
 
     // ───────────────────────────────
