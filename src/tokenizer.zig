@@ -159,10 +159,9 @@ pub const Tokenizer = struct {
                 self.index += 1;
                 result.tag = if (self.match('=')) .Equals else .Assign;
             },
-            // TODO: "!" is either logical NOT ( "!=" ) or a singleton (!bool)
             '!' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Not_Equal else .Invalid;
+                result.tag = if (self.match('=')) .Not_Equal else .Exclamation;
             },
             '<' => {
                 self.index += 1;
@@ -217,6 +216,10 @@ pub const Tokenizer = struct {
             '#' => {
                 self.index += 1;
                 result.tag = .Hash;
+            },
+            '_' => {
+                self.index += 1;
+                result.tag = .Underscore;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {

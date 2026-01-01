@@ -7,17 +7,14 @@ const Token = tok.Token;
 const Tag = tok.Tag;
 
 const FILE_NAME = "script.txt";
-var read_buf: []u8 = undefined;
-
-var tokenList: std.MultiArrayList(Token) = .{};
 
 pub fn main() !void {
     var debugAlloc = std.heap.DebugAllocator(.{}){};
     defer _ = debugAlloc.deinit();
 
     const allocator = debugAlloc.allocator();
-    defer tokenList.deinit(allocator);
 
+    var read_buf: []u8 = undefined;
     read_buf = try allocator.alloc(u8, 200);
     defer allocator.free(read_buf);
 
@@ -33,19 +30,26 @@ pub fn main() !void {
         }
     }
 
-    var tokenStream = tokenizer.Tokenizer.init(read_buf[0..reader.pos]);
-
-    while (tokenStream.index < tokenStream.buffer.len) {
-        const token = tokenStream.next();
-
-        if (token.tag == Tag.EOF) break;
-        try tokenList.append(allocator, token);
-        std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
-    }
+    var tokenList = try tokenize(allocator, read_buf[0..reader.pos]);
+    defer tokenList.deinit(allocator);
 
     var parser = par.Parser.init(allocator, tokenList);
     defer parser.deinit();
 
     try parser.parse();
     parser.printAllNodeTags();
+}
+
+fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(Token) {
+    var tokenList: std.MultiArrayList(Token) = .{};
+    var tokenStream = tokenizer.Tokenizer.init(buf);
+
+    while (tokenStream.index < tokenStream.buffer.len) {
+        const token = tokenStream.next();
+        if (token.tag == .EOF) break;
+        try tokenList.append(allocator, token);
+        std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
+    }
+
+    return tokenList;
 }

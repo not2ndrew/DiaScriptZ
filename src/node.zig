@@ -14,6 +14,11 @@ pub const Node = struct {
     data: NodeData,
 };
 
+pub const ChoiceList = struct {
+    len: u3 = 0,
+    items: [5]NodeIndex = undefined,
+};
+
 pub const NodeData = union(enum) {
     // Literals
     number: struct { token: TokenIndex },
@@ -32,7 +37,7 @@ pub const NodeData = union(enum) {
 
     // Statements
     assign: struct {
-        target: NodeIndex,
+        target: TokenIndex,
         value: NodeIndex,
     },
     declar: struct {
@@ -54,6 +59,6 @@ pub const NodeData = union(enum) {
     dialogue: struct {
         string: []NodeIndex,
         goto: ?NodeIndex,
-        choices: ?[]NodeIndex,
+        choices: ?ChoiceList,
     },
 };

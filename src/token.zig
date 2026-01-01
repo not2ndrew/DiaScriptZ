@@ -37,6 +37,8 @@ pub const Tag = enum {
     Minus, // -
     Asterisk, // *
     Slash, // /
+    Underscore, // _
+    Exclamation, // !
     Open_Brace, // {
     Close_Brace, // }
     Tilde, // ~
