@@ -17,6 +17,8 @@ pub const Token = struct {
 pub const Tag = enum {
     // Unique keywords
     Boolean, // true, false
+    Const,
+    Var,
     If,
     Else,
     Label,
@@ -81,6 +83,8 @@ pub const Tag = enum {
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "true", .Boolean },
     .{ "false", .Boolean },
+    .{ "const", .Const },
+    .{ "var", .Var },
     .{ "if", .If },
     .{ "else", .Else },
     .{ "end", .End },

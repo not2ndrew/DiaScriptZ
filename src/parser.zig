@@ -5,15 +5,13 @@ const zig_node = @import("node.zig");
 const Allocator = std.mem.Allocator;
 
 const NodeIndex = zig_node.NodeIndex;
+const TokenIndex = tok.TokenIndex;
 
 const Token = tok.Token;
 const Tag = tok.Tag;
-const TokenList = tok.TokenList;
-const TokenIndex = tok.TokenIndex;
 
 const Node = zig_node.Node;
 const NodeData = zig_node.NodeData;
-const NodeList = zig_node.NodeList;
 const ChoiceList = zig_node.ChoiceList;
 
 pub const ParserError = error {
@@ -26,11 +24,11 @@ const Error = error{ParserError} || Allocator.Error;
 // Extended Backus Naur Form:
 pub const Parser = struct {
     allocator: Allocator,
-    tokens: TokenList,
-    nodes: NodeList,
+    tokens: std.MultiArrayList(Token),
+    nodes: std.MultiArrayList(Node),
     token_pos: u32,
 
-    pub fn init(allocator: Allocator, tokens: TokenList) Parser {
+    pub fn init(allocator: Allocator, tokens: std.MultiArrayList(Token)) Parser {
         return Parser{
             .allocator = allocator,
             .tokens = tokens,
@@ -97,7 +95,8 @@ pub const Parser = struct {
 
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
-            .Identifier, .Underscore => self.parseIdentStmt(),
+            .Const, .Var => self.parseDeclareVar(),
+            .Identifier, .Underscore => self.parseIdentStmt(false),
             .If => self.parseIfStmt(),
             .Tilde => self.parseLabel(),
             .Hash => self.parseScene(),
@@ -105,23 +104,31 @@ pub const Parser = struct {
         };
     }
 
+    // const_stmt = "const" ident "=" expr
+    // var_stmt = "var" ident "=" expr
+    fn parseDeclareVar(self: *Parser) Error!NodeIndex {
+        const is_const = self.peek().tag == .Const;
+        self.next();
+
+        return try self.parseIdentStmt(is_const);
+    }
+
     // assign_stmt = ident “=” expr ;
     // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
-    fn parseIdentStmt(self: *Parser) Error!NodeIndex {
-        const ident_pos = self.token_pos;
-        self.next();
+    fn parseIdentStmt(self: *Parser, is_const: bool) Error!NodeIndex {
+        const ident_pos = try self.parseIdent();
 
         const next_tag = self.peek().tag;
 
         return switch (next_tag) {
             .Assign, .Plus_Equal, .Minus_Equal,
-            .Asterisk_Equal, .Slash_Equal => self.parseAssignStmt(next_tag, ident_pos),
+            .Asterisk_Equal, .Slash_Equal => self.parseAssignStmt(next_tag, ident_pos, is_const),
             .Colon => try self.parseDialogue(ident_pos),
             else => return Error.ParserError,
         };
     }
 
-    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
+    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex, is_const: bool) Error!NodeIndex {
         const assign_pos = self.token_pos;
         self.next();
 
@@ -131,6 +138,7 @@ pub const Parser = struct {
             .assign = .{
                 .target = ident_pos,
                 .value = expr,
+                .is_const = is_const,
             }
         });
     }
@@ -178,7 +186,7 @@ pub const Parser = struct {
     }
 
     // compar_expr = "(" expr compar_op expr ")" ;
-    // compar_op = "==" | "!=" | "<" | ">" | "<=" | ">=" | “(” boolean “)” ;
+    // compar_op = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
     fn parseCompareExpr(self: *Parser) Error!NodeIndex {
         const left_expr = try self.parseExpr();
 
@@ -201,7 +209,16 @@ pub const Parser = struct {
         });
     }
 
-    // stmts = { scene_stmt } ;
+    // else_block = "else" "{" stmts "}";
+    fn parseElseBlock(self: *Parser) Error![]NodeIndex {
+        _ = try self.expect(.Else);
+        _ = try self.expect(.Open_Brace);
+        const else_block = try self.parseStmts();
+        _ = try self.expect(.Close_Brace);
+        return else_block;
+    }
+
+    // stmts = { stmt } ;
     fn parseStmts(self: *Parser) Error![]NodeIndex {
         var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
 
@@ -216,15 +233,6 @@ pub const Parser = struct {
         }
 
         return try stmts.toOwnedSlice(self.allocator);
-    }
-
-    // else_block = "else" "{" block "}";
-    fn parseElseBlock(self: *Parser) Error![]NodeIndex {
-        _ = try self.expect(.Else);
-        _ = try self.expect(.Open_Brace);
-        const else_block = try self.parseStmts();
-        _ = try self.expect(.Close_Brace);
-        return else_block;
     }
 
     // ───────────────────────────────
@@ -320,21 +328,6 @@ pub const Parser = struct {
         return list;
     }
 
-    // block = { stmt } ;
-    fn parseBlock(self: *Parser, tag: Tag) Error!NodeIndex {
-        const ident_pos = try self.expect(.Identifier);
-        _ = try self.addNode(.Identifier, ident_pos, .{
-            .identifier = .{ .token = ident_pos }
-        });
-
-        const stmts = try self.parseStmts();
-        defer self.allocator.free(stmts);
-
-        return try self.addNode(tag, ident_pos, .{
-            .block = .{ .stmts = stmts },
-        });
-    }
-
     // label = “~” ident block “end”
     fn parseLabel(self: *Parser) Error!NodeIndex {
         _ = try self.expect(.Tilde);
@@ -348,6 +341,21 @@ pub const Parser = struct {
     fn parseScene(self: *Parser) Error!NodeIndex {
         _ = try self.expect(.Hash);
         return try self.parseBlock(.Scene);
+    }
+
+    // block = { stmt } ;
+    fn parseBlock(self: *Parser, tag: Tag) Error!NodeIndex {
+        const ident_pos = try self.expect(.Identifier);
+        _ = try self.addNode(.Identifier, ident_pos, .{
+            .identifier = .{ .token = ident_pos }
+        });
+
+        const stmts = try self.parseStmts();
+        defer self.allocator.free(stmts);
+
+        return try self.addNode(tag, ident_pos, .{
+            .block = .{ .stmts = stmts },
+        });
     }
 
     // ───────────────────────────────
