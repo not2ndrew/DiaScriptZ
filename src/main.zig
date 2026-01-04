@@ -33,7 +33,7 @@ pub fn main() !void {
     var tokenList = try tokenize(allocator, read_buf[0..reader.pos]);
     defer tokenList.deinit(allocator);
 
-    var parser = par.Parser.init(allocator, tokenList);
+    var parser = par.Parser.init(allocator, &tokenList);
     defer parser.deinit();
 
     try parser.parse();

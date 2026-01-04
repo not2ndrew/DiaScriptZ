@@ -15,5 +15,5 @@ const NodeData = zig_node.NodeData;
 const ChoiceList = zig_node.ChoiceList;
 
 pub const Semantic = struct {
-    nodes: std.MultiArrayList(Node),
+    nodes: []Node,
 };

@@ -24,11 +24,11 @@ const Error = error{ParserError} || Allocator.Error;
 // Extended Backus Naur Form:
 pub const Parser = struct {
     allocator: Allocator,
-    tokens: std.MultiArrayList(Token),
+    tokens: *const std.MultiArrayList(Token),
     nodes: std.MultiArrayList(Node),
     token_pos: u32,
 
-    pub fn init(allocator: Allocator, tokens: std.MultiArrayList(Token)) Parser {
+    pub fn init(allocator: Allocator, tokens: *const std.MultiArrayList(Token)) Parser {
         return Parser{
             .allocator = allocator,
             .tokens = tokens,
@@ -38,7 +38,31 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
+        for (0..self.nodes.len) |i| {
+            self.deinitNode(self.nodes.get(i));
+        }
         self.nodes.deinit(self.allocator);
+    }
+
+    fn deinitNode(self: *Parser, node: Node) void {
+        switch (node.data) {
+            .block => |b| {
+                self.allocator.free(b.stmts);
+            },
+            .dialogue => |d| {
+                self.allocator.free(d.string);
+                if (d.choices) |choices| {
+                    for (choices.items[0..choices.len]) |choice_pos| {
+                        const choice = self.nodes.get(choice_pos);
+                        self.deinitNode(choice);
+                    }
+                }
+            },
+            .choice_list => |c| {
+                self.allocator.free(c.string);
+            },
+            else => {},
+        }
     }
 
     inline fn peek(self: *Parser) Token {
@@ -158,7 +182,6 @@ pub const Parser = struct {
         const then_pos = self.token_pos;
 
         const then = try self.parseStmts();
-        defer self.allocator.free(then);
 
         _ = try self.expect(.Close_Brace);
 
@@ -169,7 +192,6 @@ pub const Parser = struct {
         if (self.peek().tag == .Else) {
             const else_pos = self.token_pos;
             const else_stmts = try self.parseElseBlock();
-            defer self.allocator.free(else_stmts);
 
             else_block = try self.addNode(.Else_Block, else_pos, .{
                 .block = .{ .stmts = else_stmts }
@@ -245,7 +267,6 @@ pub const Parser = struct {
         _ = try self.expect(.Colon);
 
         const str_part = try self.parseStrPart();
-        defer self.allocator.free(str_part);
 
         var goto: ?NodeIndex = null;
         var choices: ?ChoiceList = null;
@@ -308,7 +329,6 @@ pub const Parser = struct {
             self.next();
 
             const str = try self.parseStrPart();
-            defer self.allocator.free(str);
 
             var goto: ?NodeIndex = null;
 
@@ -351,7 +371,6 @@ pub const Parser = struct {
         });
 
         const stmts = try self.parseStmts();
-        defer self.allocator.free(stmts);
 
         return try self.addNode(tag, ident_pos, .{
             .block = .{ .stmts = stmts },
