@@ -2,6 +2,7 @@ const std = @import("std");
 const tok = @import("token.zig");
 const tokenizer = @import("tokenizer.zig");
 const par = @import("parser.zig");
+const sem = @import("semantic.zig");
 
 const Token = tok.Token;
 const Tag = tok.Tag;
@@ -30,14 +31,24 @@ pub fn main() !void {
         }
     }
 
-    var tokenList = try tokenize(allocator, read_buf[0..reader.pos]);
+    const lines = read_buf[0..reader.pos];
+
+    // lines => tokens
+    var tokenList = try tokenize(allocator, lines);
     defer tokenList.deinit(allocator);
 
     var parser = par.Parser.init(allocator, &tokenList);
     defer parser.deinit();
 
-    try parser.parse();
+    // tokens => AST
+    const parsedList = try parser.parse();
     parser.printAllNodeTags();
+
+    // AST => proper AST
+    var semantic = sem.Semantic.init(allocator, lines, &parsedList, &tokenList);
+    defer semantic.deinit();
+
+    semantic.analyze();
 }
 
 fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(Token) {

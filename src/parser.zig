@@ -106,10 +106,12 @@ pub const Parser = struct {
         }
     }
 
-    pub fn parse(self: *Parser) !void {
+    pub fn parse(self: *Parser) !std.MultiArrayList(Node) {
         while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
             _ = try self.parseStmt();
         }
+
+        return self.nodes;
     }
 
 
@@ -167,7 +169,7 @@ pub const Parser = struct {
         });
     }
 
-    // if_stmt = if compar_expr "{" block "}" [ else_block ] ;
+    // if_stmt = "if" "(" compar_expr ")" "{" block "}" [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If);
         var else_block: ?NodeIndex = null;
@@ -207,7 +209,7 @@ pub const Parser = struct {
         });
     }
 
-    // compar_expr = "(" expr compar_op expr ")" ;
+    // compar_expr = expr compar_op expr ;
     // compar_op = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
     fn parseCompareExpr(self: *Parser) Error!NodeIndex {
         const left_expr = try self.parseExpr();
@@ -288,7 +290,7 @@ pub const Parser = struct {
 
     // string_part = content_part | interpolation ;
     // content_part = content { content } ;
-    // interpolation = "{" expr "}" ;
+    // interpolation = "{" ident "}" ;
     // content = any_character_except("{", "}", "\n") ;
     fn parseStrPart(self: *Parser) Error![]NodeIndex {
         var str_list = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
