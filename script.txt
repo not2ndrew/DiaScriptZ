@@ -1,1 +1,7 @@
-const i = 1
+Adam: Cats or Dogs?
+   * Cats
+   * Dog
+
+Brandon: Pancakes or Waffles?
+   * Pancake
+   * Waffles

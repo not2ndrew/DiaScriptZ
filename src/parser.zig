@@ -51,12 +51,6 @@ pub const Parser = struct {
             },
             .dialogue => |d| {
                 self.allocator.free(d.string);
-                if (d.choices) |choices| {
-                    for (choices.items[0..choices.len]) |choice_pos| {
-                        const choice = self.nodes.get(choice_pos);
-                        self.deinitNode(choice);
-                    }
-                }
             },
             .choice_list => |c| {
                 self.allocator.free(c.string);
