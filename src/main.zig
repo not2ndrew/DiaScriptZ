@@ -41,14 +41,15 @@ pub fn main() !void {
     defer parser.deinit();
 
     // tokens => AST
-    const parsedList = try parser.parse();
+    _ = try parser.parse();
+    // const parsedList = try parser.parse();
     parser.printAllNodeTags();
 
     // AST => proper AST
-    var semantic = sem.Semantic.init(allocator, lines, &parsedList, &tokenList);
-    defer semantic.deinit();
-
-    semantic.analyze();
+    // var semantic = sem.Semantic.init(allocator, lines, &parsedList, &tokenList);
+    // defer semantic.deinit();
+    //
+    // semantic.analyze();
 }
 
 fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(Token) {

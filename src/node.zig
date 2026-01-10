@@ -19,6 +19,8 @@ pub const ChoiceList = struct {
     items: [5]NodeIndex = undefined,
 };
 
+// TODO: Instead of using ?NodeIndex, assign std.math.maxInt()
+// maxInt will represent as invalid nodeIndex.
 pub const NodeData = union(enum) {
     // Literals
     number: struct { token: TokenIndex },
@@ -34,7 +36,14 @@ pub const NodeData = union(enum) {
     assign: struct {
         target: TokenIndex,
         value: NodeIndex,
-        is_const: bool,
+    },
+    const_decl: struct {
+        name: TokenIndex,
+        value: ?NodeIndex,
+    },
+    var_decl: struct {
+        name: TokenIndex,
+        value: ?NodeIndex,
     },
     if_stmt: struct {
         condition: NodeIndex,

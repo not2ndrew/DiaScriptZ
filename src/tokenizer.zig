@@ -150,7 +150,7 @@ pub const Tokenizer = struct {
                         self.index += 1;
                     }
 
-                    result.tag = .Comment;
+                    return self.next();
                 } else {
                     result.tag = .Slash;
                 }

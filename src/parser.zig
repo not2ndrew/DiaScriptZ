@@ -121,8 +121,8 @@ pub const Parser = struct {
 
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
-            .Const, .Var => self.parseDeclareVar(),
-            .Identifier, .Underscore => self.parseIdentStmt(false),
+            .Const, .Var => self.parseDeclar(),
+            .Identifier, .Underscore => self.parseIdentStmt(),
             .If => self.parseIfStmt(),
             .Tilde => self.parseLabel(),
             .Hash => self.parseScene(),
@@ -132,39 +132,49 @@ pub const Parser = struct {
 
     // const_stmt = "const" ident "=" expr
     // var_stmt = "var" ident "=" expr
-    fn parseDeclareVar(self: *Parser) Error!NodeIndex {
-        const is_const = self.peek().tag == .Const;
+    fn parseDeclar(self: *Parser) Error!NodeIndex {
+        const decl = self.peek().tag;
+        var decl_type: NodeData = undefined;
         self.next();
 
-        return try self.parseIdentStmt(is_const);
+        const ident = try self.parseIdent();
+        _ = try self.parseAssignStmt(.Assign, ident);
+
+        if (decl == .Const) {
+            decl_type = .{
+                .const_decl = .{ .name = self.token_pos, .value = ident }
+            };
+        } else {
+            decl_type = .{
+                .var_decl = .{ .name = self.token_pos, .value = ident }
+            };
+        }
+
+        return try self.addNode(decl, self.token_pos, decl_type);
     }
 
-    // assign_stmt = ident “=” expr ;
-    // compound_stmt = ident ( "+=" | "-=" | "*=" | "/=" ) expr ;
-    fn parseIdentStmt(self: *Parser, is_const: bool) Error!NodeIndex {
+    // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
+    fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = try self.parseIdent();
 
         const next_tag = self.peek().tag;
 
         return switch (next_tag) {
             .Assign, .Plus_Equal, .Minus_Equal,
-            .Asterisk_Equal, .Slash_Equal => self.parseAssignStmt(next_tag, ident_pos, is_const),
+            .Asterisk_Equal, .Slash_Equal => self.parseAssignStmt(next_tag, ident_pos),
             .Colon => try self.parseDialogue(ident_pos),
             else => return Error.ParserError,
         };
     }
 
-    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex, is_const: bool) Error!NodeIndex {
-        const assign_pos = self.token_pos;
-        self.next();
-
+    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
+        const assign_pos = try self.expect(assign_tag);
         const expr = try self.parseExpr();
 
         return try self.addNode(assign_tag, assign_pos, .{
             .assign = .{
                 .target = ident_pos,
                 .value = expr,
-                .is_const = is_const,
             }
         });
     }
@@ -383,6 +393,13 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
+    fn parseIdent(self: *Parser) Error!NodeIndex {
+        const ident_pos = try self.expect(.Identifier);
+        return try self.addNode(.Identifier, ident_pos, .{
+            .identifier = .{ .token = ident_pos }
+        });
+    }
+
     // expr = term { ( "+" | "-" ) term } ;
     fn parseExpr(self: *Parser) Error!NodeIndex {
         var node = try self.parseTerm();
@@ -454,12 +471,5 @@ pub const Parser = struct {
             },
             else => return Error.ParserError,
         }
-    }
-
-    fn parseIdent(self: *Parser) Error!NodeIndex {
-        const ident_pos = try self.expect(.Identifier);
-        return try self.addNode(.Identifier, ident_pos, .{
-            .identifier = .{ .token = ident_pos }
-        });
     }
 };

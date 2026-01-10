@@ -1,1 +1,1 @@
-Bob: How many chickens are there?
+const i = 1
