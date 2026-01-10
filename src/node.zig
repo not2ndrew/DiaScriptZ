@@ -11,7 +11,7 @@ pub const invalid_node = std.math.maxInt(NodeIndex);
 
 pub const Node = struct {
     tag: Tag,
-    main_token: TokenIndex,
+    token_pos: TokenIndex,
     data: NodeData,
 };
 
@@ -35,14 +35,11 @@ pub const NodeData = union(enum) {
     },
     // Statements
     assign: struct {
-        target: TokenIndex,
+        target: NodeIndex,
         value: NodeIndex,
     },
-    const_decl: struct {
-        name: TokenIndex,
-        value: NodeIndex = invalid_node,
-    },
     var_decl: struct {
+        kind: Tag, // Only for Var and Const
         name: TokenIndex,
         value: NodeIndex = invalid_node,
     },

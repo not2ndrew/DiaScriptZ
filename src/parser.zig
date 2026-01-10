@@ -89,10 +89,10 @@ pub const Parser = struct {
         return idx;
     }
 
-    fn addNode(self: *Parser, tag: Tag, main_token: TokenIndex, data: NodeData) !NodeIndex {
+    fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) !NodeIndex {
         try self.nodes.append(self.allocator, .{
             .tag = tag,
-            .main_token = main_token,
+            .token_pos = token_pos,
             .data = data,
         });
 
@@ -134,23 +134,16 @@ pub const Parser = struct {
     // var_stmt = "var" ident "=" expr
     fn parseDeclar(self: *Parser) Error!NodeIndex {
         const decl = self.peek().tag;
-        var decl_type: NodeData = undefined;
+        const decl_pos = self.token_pos;
         self.next();
 
+        const ident_pos = self.token_pos;
         const ident = try self.parseIdent();
         _ = try self.parseAssignStmt(.Assign, ident);
 
-        if (decl == .Const) {
-            decl_type = .{
-                .const_decl = .{ .name = self.token_pos, .value = ident }
-            };
-        } else {
-            decl_type = .{
-                .var_decl = .{ .name = self.token_pos, .value = ident }
-            };
-        }
-
-        return try self.addNode(decl, self.token_pos, decl_type);
+        return try self.addNode(decl, decl_pos, .{
+            .var_decl = .{ .kind = decl, .name = ident_pos, .value = ident }
+        });
     }
 
     // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
