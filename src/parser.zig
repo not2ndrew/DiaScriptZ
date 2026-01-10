@@ -13,6 +13,7 @@ const Tag = tok.Tag;
 const Node = zig_node.Node;
 const NodeData = zig_node.NodeData;
 const ChoiceList = zig_node.ChoiceList;
+const invalid_node = zig_node.invalid_node;
 
 pub const ParserError = error {
     EndOfTokens,
@@ -57,6 +58,11 @@ pub const Parser = struct {
             },
             else => {},
         }
+    }
+
+    // Just in case I need it for something.
+    inline fn isValid(index: NodeIndex) bool {
+        return index != invalid_node;
     }
 
     inline fn peek(self: *Parser) Token {
@@ -176,7 +182,7 @@ pub const Parser = struct {
     // if_stmt = "if" "(" compar_expr ")" "{" block "}" [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.If);
-        var else_block: ?NodeIndex = null;
+        var else_block: NodeIndex = invalid_node;
 
         _ = try self.expect(.Open_Paren);
 
@@ -274,8 +280,8 @@ pub const Parser = struct {
 
         const str_part = try self.parseStrPart();
 
-        var goto: ?NodeIndex = null;
-        var choices: ?ChoiceList = null;
+        var goto: NodeIndex = invalid_node;
+        var choices: ChoiceList = ChoiceList{};
 
         if (self.peek().tag == .Goto) {
             self.next();
@@ -336,7 +342,7 @@ pub const Parser = struct {
 
             const str = try self.parseStrPart();
 
-            var goto: ?NodeIndex = null;
+            var goto: NodeIndex = invalid_node;
 
             if (self.peek().tag == .Goto) {
                 self.next();

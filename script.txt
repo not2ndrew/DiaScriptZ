@@ -3,5 +3,3 @@ Adam: Cats or Dogs?
    * Dog
 
 Brandon: Pancakes or Waffles?
-   * Pancake
-   * Waffles

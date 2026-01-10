@@ -6,6 +6,9 @@ const TokenIndex = token.TokenIndex;
 
 pub const NodeIndex = u32;
 
+// Instead of null, we assign maxInt of NodeIndex as invalid
+pub const invalid_node = std.math.maxInt(NodeIndex);
+
 pub const Node = struct {
     tag: Tag,
     main_token: TokenIndex,
@@ -19,8 +22,6 @@ pub const ChoiceList = struct {
     items: [5]NodeIndex = undefined,
 };
 
-// TODO: Instead of using ?NodeIndex, assign std.math.maxInt()
-// maxInt will represent as invalid nodeIndex.
 pub const NodeData = union(enum) {
     // Literals
     number: struct { token: TokenIndex },
@@ -39,27 +40,27 @@ pub const NodeData = union(enum) {
     },
     const_decl: struct {
         name: TokenIndex,
-        value: ?NodeIndex,
+        value: NodeIndex = invalid_node,
     },
     var_decl: struct {
         name: TokenIndex,
-        value: ?NodeIndex,
+        value: NodeIndex = invalid_node,
     },
     if_stmt: struct {
         condition: NodeIndex,
         then_block: NodeIndex,
-        else_block: ?NodeIndex,
+        else_block: NodeIndex = invalid_node,
     },
     block: struct {
         stmts: []NodeIndex,
     },
     choice_list: struct {
         string: []NodeIndex,
-        goto: ?NodeIndex,
+        goto: NodeIndex = invalid_node,
     },
     dialogue: struct {
         string: []NodeIndex,
-        goto: ?NodeIndex,
-        choices: ?ChoiceList,
+        goto: NodeIndex = invalid_node,
+        choices: ChoiceList = ChoiceList{},
     },
 };
