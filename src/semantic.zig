@@ -13,6 +13,7 @@ const Tag = tok.Tag;
 const Node = zig_node.Node;
 const NodeData = zig_node.NodeData;
 const ChoiceList = zig_node.ChoiceList;
+const invalid_node = zig_node.invalid_node;
 
 const Nodes = std.MultiArrayList(Node);
 const Tokens = std.MultiArrayList(Token);
@@ -26,8 +27,6 @@ const SemanticError = error {
 
 const Error = error{SemanticError} || Allocator.Error;
 
-// TODO: Consider using a symbol table. Take in the nodes
-// and convert them into an multiArrayList of Symbols.
 pub const Symbol = struct {
     token_pos: TokenIndex,
     is_const: bool,
@@ -60,25 +59,30 @@ pub const Semantic = struct {
         const node = self.nodes.get(idx);
 
         switch (node.tag) {
-            // .Assign => try analyzeNode(node),
-            // .Identifier => try analyzeIdent(node),
-            // .If => try analyzeIf(node),
-            // .Block => try analyzeBlock(node),
             .Number, .String => {},
-            else => return Error.SemanticError,
+            .Const, .Var => try self.analyzeDeclar(node),
+            else => return {},
         }
     }
-    // fn analyzeAssign(node: Node) !void {
-    //     const name = tokenText(node.data.assign.target);
-    //
-    //     const symbol = symbols.get(name) orelse {
-    //         return error.UndeclaredIdentifier;
-    //     };
-    //
-    //     if (symbol.is_const) {
-    //         return error.AssignToConst;
-    //     }
-    //
-    //     try analyzeNode(node.data.assign.value);
-    // }
+
+    fn analyzeDeclar(self: *Semantic, node: Node) Error!void {
+        const is_const = node.tag == .Const;
+        const tok_pos = node.token_pos;
+        const token = self.tokens.get(tok_pos);
+        const name = self.source[token.start..token.end];
+        const value = node.data.decl.value;
+
+        if (self.symbols.contains(name)) return Error.SemanticError;
+
+        try self.symbols.put(name, .{
+            .token_pos = tok_pos,
+            .is_const = is_const,
+            .initialized = false,
+        });
+
+        if (value != invalid_node) {
+            try self.analyze(value);
+            self.symbols.getPtr(name).?.initialized = true;
+        }
+    }
 };

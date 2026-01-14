@@ -38,7 +38,7 @@ pub const NodeData = union(enum) {
         target: NodeIndex,
         value: NodeIndex,
     },
-    var_decl: struct {
+    decl: struct {
         kind: Tag, // Only for Var and Const
         name: TokenIndex,
         value: NodeIndex = invalid_node,

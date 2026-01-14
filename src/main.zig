@@ -40,16 +40,17 @@ pub fn main() !void {
     var parser = par.Parser.init(allocator, &tokenList);
     defer parser.deinit();
 
-    // tokens => AST
-    _ = try parser.parse();
-    // const parsedList = try parser.parse();
-    parser.printAllNodeTags();
+    // tokens => AST of stmt nodes
+    const stmts = try parser.parse();
+    defer allocator.free(stmts);
+    parser.printStmtNodeTags(stmts);
 
     // AST => proper AST
     // var semantic = sem.Semantic.init(allocator, lines, &parsedList, &tokenList);
     // defer semantic.deinit();
     //
-    // semantic.analyze();
+    // // TODO: Instead of using a number, I should use a list instead.
+    // try semantic.analyze(1);
 }
 
 fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(Token) {

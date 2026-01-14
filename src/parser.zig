@@ -22,10 +22,12 @@ pub const ParserError = error {
 
 const Error = error{ParserError} || Allocator.Error;
 
+
 // Extended Backus Naur Form:
 pub const Parser = struct {
     allocator: Allocator,
     tokens: *const std.MultiArrayList(Token),
+    // List of all nodes
     nodes: std.MultiArrayList(Node),
     token_pos: u32,
 
@@ -58,11 +60,6 @@ pub const Parser = struct {
             },
             else => {},
         }
-    }
-
-    // Just in case I need it for something.
-    inline fn isValid(index: NodeIndex) bool {
-        return index != invalid_node;
     }
 
     inline fn peek(self: *Parser) Token {
@@ -100,18 +97,22 @@ pub const Parser = struct {
         return idx;
     }
 
-    pub fn printAllNodeTags(self: *Parser) void {
-        for (0..self.nodes.len) |i| {
-            std.debug.print("Node Tag: {s}\n", .{@tagName(self.nodes.get(i).tag)});
+    pub fn printStmtNodeTags(self: *Parser, stmts: []NodeIndex) void {
+        for (stmts) |stmt_index| {
+            const tag = self.nodes.get(stmt_index).tag;
+            std.debug.print("Node Tag: {s}\n", .{@tagName(tag)});
         }
     }
 
-    pub fn parse(self: *Parser) !std.MultiArrayList(Node) {
+    // program = { stmt }
+    pub fn parse(self: *Parser) ![]NodeIndex {
+        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
         while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
-            _ = try self.parseStmt();
+            const stmt = try self.parseStmt();
+            try stmts.append(self.allocator, stmt);
         }
 
-        return self.nodes;
+        return try stmts.toOwnedSlice(self.allocator);
     }
 
 
@@ -119,6 +120,14 @@ pub const Parser = struct {
     //           STATEMENTS
     // ───────────────────────────────
 
+    // stmt =
+    //   declar_stmt
+    // | compound_stmt
+    // | if_stmt
+    // | label
+    // | dialogue
+    // | choices 
+    // | scene ;
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peek().tag) {
             .Const, .Var => self.parseDeclar(),
@@ -130,8 +139,7 @@ pub const Parser = struct {
         };
     }
 
-    // const_stmt = "const" ident "=" expr
-    // var_stmt = "var" ident "=" expr
+    // declar_stmt = ( "const" | "var" ) ident "=" expr
     fn parseDeclar(self: *Parser) Error!NodeIndex {
         const decl = self.peek().tag;
         const decl_pos = self.token_pos;
@@ -142,7 +150,7 @@ pub const Parser = struct {
         _ = try self.parseAssignStmt(.Assign, ident);
 
         return try self.addNode(decl, decl_pos, .{
-            .var_decl = .{ .kind = decl, .name = ident_pos, .value = ident }
+            .decl = .{ .kind = decl, .name = ident_pos, .value = ident }
         });
     }
 
