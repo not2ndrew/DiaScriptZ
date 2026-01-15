@@ -45,7 +45,7 @@ pub const NodeData = union(enum) {
     },
     if_stmt: struct {
         condition: NodeIndex,
-        then_block: NodeIndex,
+        then_block: NodeIndex = invalid_node,
         else_block: NodeIndex = invalid_node,
     },
     block: struct {

@@ -45,6 +45,7 @@ pub fn main() !void {
     const stmts = try parser.parse();
     defer allocator.free(stmts);
     parser.printStmtNodeTags(stmts);
+    parser.printNodeErrors();
 
     // AST => proper AST
     // var semantic = sem.Semantic.init(allocator, lines, &parser.nodes, &tokenList);

@@ -66,7 +66,7 @@ pub const Parser = struct {
         }
     }
 
-    inline fn reportError(self: *Parser, expected: Tag, found: Tag) void {
+    fn reportError(self: *Parser, expected: Tag, found: Tag) void {
         self.errors.append(self.allocator, .{
             .expected = expected,
             .found = found,
@@ -74,7 +74,7 @@ pub const Parser = struct {
         }) catch {};
     }
 
-    inline fn peek(self: *Parser) Token {
+    fn peek(self: *Parser) Token {
         const pos = self.token_pos;
 
         if (pos >= self.tokens.len) {
@@ -84,19 +84,19 @@ pub const Parser = struct {
         return self.tokens.get(pos);
     }
 
-    /// Move to the next token. Does not check for tag.
-    inline fn next(self: *Parser) void {
+    fn next(self: *Parser) void {
         if (self.token_pos < self.tokens.len) self.token_pos += 1;
     }
 
-    inline fn expect(self: *Parser, tag: Tag) TokenIndex {
+    fn expect(self: *Parser, tag: Tag) TokenIndex {
+        const idx = self.token_pos;
         const token = self.peek();
+
         if (token.tag != tag) {
             self.reportError(tag, token.tag);
-            return self.token_pos;
+            return idx;
         }
 
-        const idx = self.token_pos;
         self.token_pos += 1;
         return idx;
     }
@@ -119,20 +119,20 @@ pub const Parser = struct {
         }
     }
 
+    pub fn printNodeErrors(self: *Parser) void {
+        for (self.errors.items) |err| {
+            std.debug.print("Expected: {s}, Found: {s}, Token Position: {d}\n", .{
+                @tagName(err.expected), @tagName(err.found), err.token_pos,
+            });
+        }
+    }
+
     // program = { stmt }
     pub fn parse(self: *Parser) Error![]NodeIndex {
         var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
         while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
             const stmt = try self.parseStmt();
             try stmts.append(self.allocator, stmt);
-        }
-
-        if (self.errors.items.len > 0) {
-            for (self.errors.items) |err| {
-                std.debug.print("Expected: {s}, Found: {s}, Token Position: {d}\n", .{
-                    @tagName(err.expected), @tagName(err.found), err.token_pos,
-                });
-            }
         }
 
         return try stmts.toOwnedSlice(self.allocator);
@@ -215,6 +215,7 @@ pub const Parser = struct {
     // if_stmt = "if" "(" compar_expr ")" "{" block "}" [ else_block ] ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = self.expect(.If);
+        var then_block: NodeIndex = invalid_node;
         var else_block: NodeIndex = invalid_node;
 
         _ = self.expect(.Open_Paren);
@@ -230,7 +231,7 @@ pub const Parser = struct {
 
         _ = self.expect(.Close_Brace);
 
-        const then_block = try self.addNode(.Then_Block, then_pos, .{
+        then_block = try self.addNode(.Then_Block, then_pos, .{
             .block = .{ .stmts = then }
         });
 
@@ -317,8 +318,6 @@ pub const Parser = struct {
 
         const str_part = try self.parseStrPart();
 
-        if (str_part.len == 0) self.reportError(.String, self.peek().tag);
-
         var goto: NodeIndex = invalid_node;
         var choices: ChoiceList = ChoiceList{};
 
@@ -367,6 +366,8 @@ pub const Parser = struct {
                 else => break,
             }
         }
+
+        if (str_list.items.len == 0) self.reportError(.String, self.peek().tag);
 
         return try str_list.toOwnedSlice(self.allocator);
     }
