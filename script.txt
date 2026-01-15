@@ -1,1 +1,2 @@
-const i = 0
+dog: 
+const i = 1

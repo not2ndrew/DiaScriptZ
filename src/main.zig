@@ -47,11 +47,11 @@ pub fn main() !void {
     parser.printStmtNodeTags(stmts);
 
     // AST => proper AST
-    var semantic = sem.Semantic.init(allocator, lines, &parser.nodes, &tokenList);
-    defer semantic.deinit();
-    for (stmts) |node_pos| {
-        try semantic.analyze(node_pos);
-    }
+    // var semantic = sem.Semantic.init(allocator, lines, &parser.nodes, &tokenList);
+    // defer semantic.deinit();
+    // for (stmts) |node_pos| {
+    //     try semantic.analyze(node_pos);
+    // }
 }
 
 fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
@@ -62,6 +62,7 @@ fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
         const token = tokenStream.next();
         if (token.tag == .EOF) break;
         try tokenList.append(allocator, token);
+        // std.debug.print("Token: {s}\n", .{@tagName(token.tag)});
     }
 
     return tokenList;
