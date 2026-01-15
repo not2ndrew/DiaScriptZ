@@ -7,6 +7,7 @@ const sem = @import("semantic.zig");
 const Token = tok.Token;
 const Tag = tok.Tag;
 
+const Allocator = std.mem.Allocator;
 const FILE_NAME = "script.txt";
 
 pub fn main() !void {
@@ -46,14 +47,14 @@ pub fn main() !void {
     parser.printStmtNodeTags(stmts);
 
     // AST => proper AST
-    // var semantic = sem.Semantic.init(allocator, lines, &parsedList, &tokenList);
-    // defer semantic.deinit();
-    //
-    // // TODO: Instead of using a number, I should use a list instead.
-    // try semantic.analyze(1);
+    var semantic = sem.Semantic.init(allocator, lines, &parser.nodes, &tokenList);
+    defer semantic.deinit();
+    for (stmts) |node_pos| {
+        try semantic.analyze(node_pos);
+    }
 }
 
-fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(Token) {
+fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
     var tokenList: std.MultiArrayList(Token) = .{};
     var tokenStream = tokenizer.Tokenizer.init(buf);
 
@@ -61,7 +62,6 @@ fn tokenize(allocator: std.mem.Allocator, buf: []const u8) !std.MultiArrayList(T
         const token = tokenStream.next();
         if (token.tag == .EOF) break;
         try tokenList.append(allocator, token);
-        std.debug.print("Token: {s} \n", .{@tagName(token.tag)});
     }
 
     return tokenList;

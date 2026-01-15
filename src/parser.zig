@@ -27,7 +27,6 @@ const Error = error{ParserError} || Allocator.Error;
 pub const Parser = struct {
     allocator: Allocator,
     tokens: *const std.MultiArrayList(Token),
-    // List of all nodes
     nodes: std.MultiArrayList(Node),
     token_pos: u32,
 
