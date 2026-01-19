@@ -16,75 +16,72 @@ pub const Token = struct {
 
 pub const Tag = enum {
     // Unique keywords
-    Boolean, // true, false
-    Const,
-    Var,
-    If,
-    Else,
-    Label,
-    Scene,
-    Choice,
-    End,
+    keyword_const,
+    keyword_var,
+    keyword_if,
+    keyword_else,
+    keyword_end,
+    label,
+    scene,
+    choice,
 
     // If Statement
-    Then_Block,
-    Else_Block,
+    then_block,
+    else_block,
 
     // Single Character
-    Colon, // :
-    Assign, // =
-    Open_Paren, // (
-    Close_Paren, // )
-    Plus, // +
-    Minus, // -
-    Asterisk, // *
-    Slash, // /
-    Underscore, // _
-    Exclamation, // !
-    Open_Brace, // {
-    Close_Brace, // }
-    Tilde, // ~
-    Hash, // #
+    colon, // :
+    assign, // =
+    open_paren, // (
+    close_paren, // )
+    plus, // +
+    minus, // -
+    asterisk, // *
+    slash, // /
+    underscore, // _
+    exclamation, // !
+    open_brace, // {
+    close_brace, // }
+    tilde, // ~
+    hash, // #
 
     // Comparison
-    Equals, // ==
-    Not_Equal, // !=
-    Less, // <
-    Greater, // >
-    Less_or_Equal, // <=
-    Greater_or_Equal, // >=
+    equals, // ==
+    not_equal, // !=
+    less, // <
+    greater, // >
+    less_or_equal, // <=
+    greater_or_equal, // >=
 
     // Variable Names
-    Identifier, // letter { letter | digit | "_" } 
-    Number, // unsigned 8-bit int (1 => 255)
+    identifier, // letter { letter | digit | "_" } 
+    number, // unsigned 8-bit int (1 => 255)
 
     // Combination Assign
-    Plus_Equal, // +=
-    Minus_Equal, // -=
-    Asterisk_Equal, // *=
-    Slash_Equal, // /=
+    plus_equal, // +=
+    minus_equal, // -=
+    asterisk_equal, // *=
+    slash_equal, // /=
 
     // Dialogue Parsing
-    String, // { content }
-    Dialogue,
-    Choice_Marker, // "*" at the beginning of a newline
-    Choice_List,
-    Label_List,
-    Goto, // ->
-    Inter_Open, // string interpolation {
-    Inter_Close, // string interpolation }
+    string, // { content }
+    dialogue,
+    choice_marker, // "*" at the beginning of a newline
+    choice_list,
+    label_list,
+    goto, // ->
+    inter_open, // string interpolation {
+    inter_close, // string interpolation }
 
     // Invalid Format
-    Invalid, // Anything that is not in here
+    invalid, // Anything that is not in here
     EOF, // End Of File
 };
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
-    .{ "true", .Boolean },
-    .{ "false", .Boolean },
-    .{ "const", .Const },
-    .{ "var", .Var },
-    .{ "if", .If },
-    .{ "else", .Else },
-    .{ "end", .End },
+    .{ "const", .keyword_const },
+    .{ "var", .keyword_var },
+    .{ "if", .keyword_if },
+    .{ "else", .keyword_else },
+    .{ "end", .keyword_end },
 });

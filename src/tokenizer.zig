@@ -12,9 +12,9 @@ const isAlphabetic = std.ascii.isAlphabetic;
 const isDigit = std.ascii.isDigit;
 
 const Mode = enum {
-    Normal,
-    String,
-    Interpolation,
+    normal,
+    string,
+    interpolation,
 };
 
 pub const Tokenizer = struct {
@@ -27,7 +27,7 @@ pub const Tokenizer = struct {
         return .{
             .buffer = buffer,
             .index = 0,
-            .mode = .Normal,
+            .mode = .normal,
             .line_start = true,
         };
     }
@@ -44,7 +44,7 @@ pub const Tokenizer = struct {
                 ' ', '\r', '\t' => self.index += 1,
                 '\n' => {
                     self.index += 1;
-                    self.mode = .Normal;
+                    self.mode = .normal;
                     self.line_start = true;
                 },
                 else => return,
@@ -73,13 +73,13 @@ pub const Tokenizer = struct {
         }
 
         if (self.buffer[self.index] == '{') {
-            self.mode = .Interpolation;
+            self.mode = .interpolation;
         } else {
-            self.mode = .Normal;
+            self.mode = .normal;
         }
 
         return .{
-            .tag = .String,
+            .tag = .string,
             .start = start,
             .end = self.index,
         };
@@ -92,7 +92,7 @@ pub const Tokenizer = struct {
         self.skipWhiteSpace();
 
         var result: Token = .{
-            .tag = .Invalid,
+            .tag = .invalid,
             .start = self.index,
             .end = self.index,
         };
@@ -105,12 +105,12 @@ pub const Tokenizer = struct {
             };
         }
 
-        if (self.mode == .String and buffer[self.index] != '{') return self.findStr();
+        if (self.mode == .string and buffer[self.index] != '{') return self.findStr();
         
         switch (buffer[self.index]) {
             '+' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Plus_Equal else .Plus;
+                result.tag = if (self.match('=')) .plus_equal else .plus;
             },
             '-' => {
                 result.start = self.index;
@@ -118,23 +118,23 @@ pub const Tokenizer = struct {
 
                 if (self.match('=')) {
                     self.index += 1;
-                    result.tag = .Minus_Equal;
+                    result.tag = .minus_equal;
                 } else if (self.match('>')) {
                     self.index += 1;
-                    result.tag = .Goto;
+                    result.tag = .goto;
                 } else {
-                    result.tag = .Minus;
+                    result.tag = .minus;
                 }
             }, 
             '*' => {
                 if (self.line_start) {
-                    self.mode = .String;
+                    self.mode = .string;
                     self.line_start = false;
                     self.index += 1;
-                    result.tag = .Choice_Marker;
+                    result.tag = .choice_marker;
                 } else {
                     self.index += 1;
-                    result.tag = if (self.match('=')) .Asterisk_Equal else .Asterisk;
+                    result.tag = if (self.match('=')) .asterisk_equal else .asterisk;
                 }
             },
             '/' => {
@@ -143,7 +143,7 @@ pub const Tokenizer = struct {
 
                 if (self.match('=')) {
                     self.index += 1;
-                    result.tag = .Slash_Equal;
+                    result.tag = .slash_equal;
                 } else if (self.match('/')) {
                     self.index += 1; // Consume second '/'
                     while (self.index < len and buffer[self.index] != '\n') {
@@ -152,74 +152,74 @@ pub const Tokenizer = struct {
 
                     return self.next();
                 } else {
-                    result.tag = .Slash;
+                    result.tag = .slash;
                 }
             },
             '=' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Equals else .Assign;
+                result.tag = if (self.match('=')) .equals else .assign;
             },
             '!' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Not_Equal else .Exclamation;
+                result.tag = if (self.match('=')) .not_equal else .exclamation;
             },
             '<' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Less_or_Equal else .Less;
+                result.tag = if (self.match('=')) .less_or_equal else .less;
             },
             '>' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .Greater_or_Equal else .Greater;
+                result.tag = if (self.match('=')) .greater_or_equal else .greater;
             },
             '(' => {
                 self.index += 1;
-                result.tag = .Open_Paren;
+                result.tag = .open_paren;
             },
             ')' => {
                 self.index += 1;
-                result.tag = .Close_Paren;
+                result.tag = .close_paren;
             },
             '{' => {
                 switch (self.mode) {
-                    .Interpolation => {
+                    .interpolation => {
                         self.index += 1;
-                        result.tag = .Inter_Open;
+                        result.tag = .inter_open;
                     },
                     else => {
                         self.index += 1;
-                        result.tag = .Open_Brace;
+                        result.tag = .open_brace;
                     }
                 }
             },
             '}' => {
                 switch (self.mode) {
-                    .Interpolation => {
+                    .interpolation => {
                         self.index += 1;
-                        self.mode = .String;
-                        result.tag = .Inter_Close;
+                        self.mode = .string;
+                        result.tag = .inter_close;
                     },
                     else => {
                         self.index += 1;
-                        result.tag = .Close_Brace;
+                        result.tag = .close_brace;
                     }
                 }
             },
             ':' => {
                 self.index += 1;
-                result.tag = .Colon;
-                self.mode = .String;
+                result.tag = .colon;
+                self.mode = .string;
             },
             '~' => {
                 self.index += 1;
-                result.tag = .Tilde;
+                result.tag = .tilde;
             },
             '#' => {
                 self.index += 1;
-                result.tag = .Hash;
+                result.tag = .hash;
             },
             '_' => {
                 self.index += 1;
-                result.tag = .Underscore;
+                result.tag = .underscore;
             },
             'a' ... 'z', 'A' ... 'Z' => {
                 while (self.index < len and isIdentChar(self.buffer[self.index])) {
@@ -230,18 +230,18 @@ pub const Tokenizer = struct {
                 if (keywords.get(buffer[result.start..self.index])) |uniqueId| {
                     result.tag = uniqueId;
                 } else {
-                    result.tag = .Identifier;
+                    result.tag = .identifier;
                 }
             },
             '0' ... '9' => {
                 while (self.index < len and isDigit(buffer[self.index])) {
                     self.index += 1;
                 }
-                result.tag = .Number;
+                result.tag = .number;
             },
             else => {
                 self.index += 1;
-                result.tag = .Invalid;
+                result.tag = .invalid;
             }
         }
 
