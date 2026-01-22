@@ -6,7 +6,8 @@ const TokenIndex = token.TokenIndex;
 
 pub const NodeIndex = u32;
 
-// Instead of null, we assign maxInt of NodeIndex as invalid
+// invalid_node represents an invalid subtree
+// AST consumer must handle it explicitly.
 pub const invalid_node = std.math.maxInt(NodeIndex);
 
 // TODO: Use a different tag for Nodes.
@@ -62,12 +63,17 @@ pub const Node = struct {
 
 // ChoiceList has a MAX of 5 choices
 // u3 = 0..7
-pub const ChoiceList = struct {
-    len: u3 = 0,
-    items: [5]NodeIndex = undefined,
+// pub const ChoiceList = struct {
+//     len: u3 = 0,
+//     items: [5]NodeIndex = undefined,
+// };
+
+pub const NodeRange = struct {
+    start: u32,
+    len: u32,
 };
 
-pub const NodeData = union(enum) {
+pub const NodeData = union {
     // Literals
     number: struct { token: TokenIndex },
     string: struct { token: TokenIndex },
@@ -92,16 +98,14 @@ pub const NodeData = union(enum) {
         then_block: NodeIndex = invalid_node,
         else_block: NodeIndex = invalid_node,
     },
-    block: struct {
-        stmts: []NodeIndex,
-    },
+    block: NodeRange,
     choice_list: struct {
-        string: []NodeIndex,
+        str: NodeRange,
         goto: NodeIndex = invalid_node,
     },
     dialogue: struct {
-        string: []NodeIndex,
+        str: NodeRange,
         goto: NodeIndex = invalid_node,
-        choices: ChoiceList = ChoiceList{},
+        choices: NodeRange,
     },
 };

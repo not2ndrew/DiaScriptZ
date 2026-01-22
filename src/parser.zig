@@ -12,7 +12,7 @@ const Tag = tok.Tag;
 
 const Node = zig_node.Node;
 const NodeData = zig_node.NodeData;
-const ChoiceList = zig_node.ChoiceList;
+const NodeRange = zig_node.NodeRange;
 const invalid_node = zig_node.invalid_node;
 
 pub const ParseError = struct {
@@ -28,42 +28,32 @@ pub const Parser = struct {
     allocator: Allocator,
     tokens: *const std.MultiArrayList(Token),
     nodes: std.MultiArrayList(Node),
-    token_pos: u32,
-
+    stmts: std.ArrayList(NodeIndex),
+    str_parts: std.ArrayList(NodeIndex),
+    choices: std.ArrayList(NodeIndex),
     errors: std.ArrayList(ParseError),
+
+    token_pos: u32,
 
     pub fn init(allocator: Allocator, tokens: *const std.MultiArrayList(Token)) Parser {
         return Parser{
             .allocator = allocator,
             .tokens = tokens,
             .nodes = .{},
-            .token_pos = 0,
+            .stmts = .{},
+            .str_parts = .{},
+            .choices = .{},
             .errors = .{},
+            .token_pos = 0,
         };
     }
 
     pub fn deinit(self: *Parser) void {
-        for (0..self.nodes.len) |i| {
-            self.deinitNode(self.nodes.get(i));
-        }
-
-        self.errors.deinit(self.allocator);
         self.nodes.deinit(self.allocator);
-    }
-
-    fn deinitNode(self: *Parser, node: Node) void {
-        switch (node.data) {
-            .block => |b| {
-                self.allocator.free(b.stmts);
-            },
-            .dialogue => |d| {
-                self.allocator.free(d.string);
-            },
-            .choice_list => |c| {
-                self.allocator.free(c.string);
-            },
-            else => {},
-        }
+        self.stmts.deinit(self.allocator);
+        self.str_parts.deinit(self.allocator);
+        self.choices.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 
     fn reportError(self: *Parser, expected: Tag, found: Tag) void {
@@ -94,7 +84,6 @@ pub const Parser = struct {
 
         if (token.tag != tag) {
             self.reportError(tag, token.tag);
-            return idx;
         }
 
         self.token_pos += 1;
@@ -227,20 +216,22 @@ pub const Parser = struct {
 
         const then_pos = self.token_pos;
 
-        const then = try self.parseStmts();
+        const then_start: u32 = @intCast(self.stmts.items.len);
+        const then_len = try self.parseStmts();
 
         _ = self.expect(.close_brace);
 
         then_block = try self.addNode(.then_block, then_pos, .{
-            .block = .{ .stmts = then }
+            .block = .{ .start = then_start, .len = then_len }
         });
 
         if (self.peek().tag == .keyword_else) {
             const else_pos = self.token_pos;
-            const else_stmts = try self.parseElseBlock();
+            const else_start: u32 = @intCast(self.stmts.items.len);
+            const else_len = try self.parseElseBlock();
 
             else_block = try self.addNode(.else_block, else_pos, .{
-                .block = .{ .stmts = else_stmts }
+                .block = .{ .start = else_start, .len = else_len }
             });
         }
 
@@ -282,7 +273,7 @@ pub const Parser = struct {
     }
 
     // else_block = "else" "{" stmts "}";
-    fn parseElseBlock(self: *Parser) Error![]NodeIndex {
+    fn parseElseBlock(self: *Parser) Error!u32 {
         _ = self.expect(.keyword_else);
         _ = self.expect(.open_brace);
         const else_block = try self.parseStmts();
@@ -291,20 +282,21 @@ pub const Parser = struct {
     }
 
     // stmts = { stmt } ;
-    fn parseStmts(self: *Parser) Error![]NodeIndex {
-        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 5);
+    fn parseStmts(self: *Parser) Error!u32 {
+        const start_len = self.stmts.items.len;
 
         while (self.token_pos < self.tokens.len) {
             switch (self.peek().tag) {
                 .close_brace, .keyword_end, .hash => break,
                 else => {
                     const stmt = try self.parseStmt();
-                    try stmts.append(self.allocator, stmt);
+                    try self.stmts.append(self.allocator, stmt);
                 }
             }
         }
 
-        return try stmts.toOwnedSlice(self.allocator);
+        const stmts_len: u32 = @intCast(self.stmts.items.len - start_len);
+        return stmts_len;
     }
 
     // ───────────────────────────────
@@ -316,10 +308,15 @@ pub const Parser = struct {
     fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
         _ = self.expect(.colon);
 
-        const str_part = try self.parseStrPart();
+        const str_start: u32 = @intCast(self.str_parts.items.len);
+        const choice_start: u32 = @intCast(self.choices.items.len);
+
+        const str_len = try self.parseStrPart();
 
         var goto: NodeIndex = invalid_node;
-        var choices: ChoiceList = ChoiceList{};
+        var choices: NodeRange = .{
+            .start = choice_start, .len = 0,
+        };
 
         if (self.peek().tag == .goto) {
             self.next();
@@ -328,11 +325,15 @@ pub const Parser = struct {
         }
 
         if (self.peek().tag == .choice_marker) {
-            choices = try self.parseChoices();
+            choices.len = try self.parseChoices();
         }
 
         return try self.addNode(.dialogue, ident_pos, .{
-            .dialogue = .{ .string = str_part, .goto = goto, .choices = choices },
+            .dialogue = .{
+                .str = .{ .start = str_start, .len = str_len },
+                .goto = goto,
+                .choices = choices,
+            }
         });
     }
 
@@ -340,9 +341,8 @@ pub const Parser = struct {
     // content_part = content { content } ;
     // interpolation = "{" ident "}" ;
     // content = any_character_except("{", "}", "\n") ;
-    fn parseStrPart(self: *Parser) Error![]NodeIndex {
-        var str_list = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
-
+    fn parseStrPart(self: *Parser) Error!u32 {
+        const start = self.str_parts.items.len;
         while (true) {
             const tag = self.peek().tag;
 
@@ -352,7 +352,7 @@ pub const Parser = struct {
                         .string = .{ .token = self.token_pos },
                     });
 
-                    try str_list.append(self.allocator, str);
+                    try self.str_parts.append(self.allocator, str);
                     self.next();
                 },
                 .inter_open => {
@@ -361,26 +361,30 @@ pub const Parser = struct {
 
                     _ = self.expect(.inter_close);
 
-                    try str_list.append(self.allocator, ident);
+                    try self.str_parts.append(self.allocator, ident);
                 },
                 else => break,
             }
         }
 
-        if (str_list.items.len == 0) self.reportError(.string, self.peek().tag);
+        const str_len: u32 = @intCast(self.str_parts.items.len - start);
 
-        return try str_list.toOwnedSlice(self.allocator);
+        if (str_len == 0) self.reportError(.string, self.peek().tag);
+
+        return str_len;
     }
 
     // choice = { "*" string } (MIN = 2, MAX = 5)
-    fn parseChoices(self: *Parser) !ChoiceList {
-        var list = ChoiceList{};
+    fn parseChoices(self: *Parser) !u32 {
+        const choices_start = self.choices.items.len;
+        var i: usize = 0;
 
-        while (list.len < 5 and self.peek().tag == .choice_marker) {
+        while (i < 5 and self.peek().tag == .choice_marker) {
             const marker = self.token_pos;
             self.next();
 
-            const str = try self.parseStrPart();
+            const start: u32 = @intCast(self.str_parts.items.len);
+            const len = try self.parseStrPart();
 
             var goto: NodeIndex = invalid_node;
 
@@ -390,14 +394,18 @@ pub const Parser = struct {
             }
 
             const choice = try self.addNode(.choice, marker, .{
-                .choice_list = .{ .string = str, .goto = goto }
+                .choice_list = .{
+                    .str = .{ .start = start, .len = len },
+                    .goto = goto,
+                }
             });
 
-            list.items[list.len] = choice;
-            list.len += 1;
+            try self.choices.append(self.allocator, choice);
+            i += 1;
         }
 
-        return list;
+        const choices_len: u32 = @intCast(self.choices.items.len - choices_start);
+        return choices_len;
     }
 
     // label = “~” ident block “end”
@@ -422,10 +430,11 @@ pub const Parser = struct {
             .identifier = .{ .token = ident_pos }
         });
 
-        const stmts = try self.parseStmts();
+        const start: u32 = @intCast(self.stmts.items.len);
+        const len = try self.parseStmts();
 
         return try self.addNode(tag, ident_pos, .{
-            .block = .{ .stmts = stmts },
+            .block = .{ .start = start, .len = len },
         });
     }
 
