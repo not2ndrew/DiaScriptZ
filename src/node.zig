@@ -12,6 +12,7 @@ pub const invalid_node = std.math.maxInt(NodeIndex);
 
 // TODO: Use a different tag for Nodes.
 // Tags from Token and Nodes are slightly different.
+// I could use std.EnumMap to convert Token tags to Node Tags.
 pub const NodeTag = enum {
     // Stmts
     declar_stmt,
@@ -31,12 +32,12 @@ pub const NodeTag = enum {
     else_block,
 
     // Single characters
-    assign,
+    assign, // =
 
     // Comparison
     equals, // ==
     not_equal, // !=
-    kess, // <
+    less, // <
     greater, // >
     less_or_equal, // <=
     greater_or_equal, // >=
@@ -44,29 +45,60 @@ pub const NodeTag = enum {
     // Combination Assign
     plus_equal, // +=
     minus_equal, // -=
-    asterisk_equal, // *=
-    slash_equal, // /=
+    mult_equal, // *=
+    div_equal, // /=
+
+    // binary operations
+    add,
+    sub,
+    mult,
+    div,
 
     // Variable Names
     identifier,
     number,
+    string,
+    choice,
 };
-// TODO: Reduce size of node. It is currently 64 bytes
-//
-// 1) Not every dialogue will contain a choiceList.
-// Maybe try using AutoHashMap as sparse data.
+
+pub fn nodeTagFromAssign(token_tag: Tag) NodeTag {
+    return switch (token_tag) {
+        .assign => .assign,
+        .plus_equal => .plus_equal,
+        .minus_equal => .minus_equal,
+        .asterisk_equal => .mult_equal,
+        .slash_equal => .div_equal,
+        else => unreachable,
+    };
+}
+
+pub fn nodeTagFromCompare(token_tag: Tag) NodeTag {
+    return switch (token_tag) {
+        .equals => .equals,
+        .not_equal => .not_equal,
+        .greater => .greater,
+        .less => .less,
+        .greater_or_equal => .greater_or_equal,
+        .less_or_equal => .less_or_equal,
+        else => unreachable,
+    };
+}
+
+pub fn nodeTagFromBinary(token_tag: Tag) NodeTag {
+    return switch (token_tag) {
+        .plus => .add,
+        .minus => .sub,
+        .asterisk => .mult,
+        .slash => .div,
+        else => unreachable,
+    };
+}
+
 pub const Node = struct {
-    tag: Tag,
+    tag: NodeTag,
     token_pos: TokenIndex,
     data: NodeData,
 };
-
-// ChoiceList has a MAX of 5 choices
-// u3 = 0..7
-// pub const ChoiceList = struct {
-//     len: u3 = 0,
-//     items: [5]NodeIndex = undefined,
-// };
 
 pub const NodeRange = struct {
     start: u32,

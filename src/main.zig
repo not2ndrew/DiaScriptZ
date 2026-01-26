@@ -1,5 +1,6 @@
 const std = @import("std");
 const tok = @import("token.zig");
+const zig_node = @import("node.zig");
 const tokenizer = @import("tokenizer.zig");
 const par = @import("parser.zig");
 const sem = @import("semantic.zig");
@@ -7,8 +8,14 @@ const sem = @import("semantic.zig");
 const Token = tok.Token;
 const Tag = tok.Tag;
 
+const Node = zig_node.Node;
+const NodeIndex = zig_node.NodeIndex;
+
 const Allocator = std.mem.Allocator;
 const FILE_NAME = "script.txt";
+
+const TokenList = std.MultiArrayList(Token);
+// const NodeList = std.MultiArrayList(Node);
 
 pub fn main() !void {
     var debugAlloc = std.heap.DebugAllocator(.{}){};
@@ -38,24 +45,19 @@ pub fn main() !void {
     var tokenList = try tokenize(allocator, lines);
     defer tokenList.deinit(allocator);
 
-    var parser = par.Parser.init(allocator, &tokenList);
-    defer parser.deinit();
-
     // tokens => AST of stmt nodes
-    const stmts = try parser.parse();
-    defer allocator.free(stmts);
-    parser.printStmtNodeTags(stmts);
-    parser.printNodeErrors();
+    const parsed_list = try parse(allocator, &tokenList);
+    defer allocator.free(parsed_list);
 
     // AST => proper AST
-    // var semantic = sem.Semantic.init(allocator, lines, &parser.nodes, &tokenList);
+    // var semantic = sem.Semantic.init(allocator, lines, parsed_list, &tokenList);
     // defer semantic.deinit();
     // for (stmts) |node_pos| {
     //     try semantic.analyze(node_pos);
     // }
 }
 
-fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
+fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
     var tokenList: std.MultiArrayList(Token) = .{};
     var tokenStream = tokenizer.Tokenizer.init(buf);
 
@@ -63,8 +65,18 @@ fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
         const token = tokenStream.next();
         if (token.tag == .EOF) break;
         try tokenList.append(allocator, token);
-        // std.debug.print("Token: {s}\n", .{@tagName(token.tag)});
     }
 
     return tokenList;
+}
+
+fn parse(allocator: Allocator, token_list: *TokenList) ![]NodeIndex {
+    var parser = par.Parser.init(allocator, token_list);
+    defer parser.deinit();
+
+    const stmts = try parser.parse();
+    parser.printStmtNodeTags(stmts);
+    parser.printNodeErrors();
+
+    return stmts;
 }

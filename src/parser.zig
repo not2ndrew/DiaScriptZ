@@ -8,16 +8,21 @@ const NodeIndex = zig_node.NodeIndex;
 const TokenIndex = tok.TokenIndex;
 
 const Token = tok.Token;
-const Tag = tok.Tag;
+const TokenTag = tok.Tag;
 
+const Tag = zig_node.NodeTag;
 const Node = zig_node.Node;
 const NodeData = zig_node.NodeData;
 const NodeRange = zig_node.NodeRange;
 const invalid_node = zig_node.invalid_node;
 
+const nodeTagFromAssign = zig_node.nodeTagFromAssign;
+const nodeTagFromCompare = zig_node.nodeTagFromCompare;
+const nodeTagFromBinary = zig_node.nodeTagFromBinary;
+
 pub const ParseError = struct {
-    expected: Tag,
-    found: Tag,
+    expected: TokenTag,
+    found: TokenTag,
     token_pos: TokenIndex,
 };
 
@@ -48,15 +53,15 @@ pub const Parser = struct {
         };
     }
 
+    // No need to deinit stmts since that is done in parse().
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
-        self.stmts.deinit(self.allocator);
         self.str_parts.deinit(self.allocator);
         self.choices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
     }
 
-    fn reportError(self: *Parser, expected: Tag, found: Tag) void {
+    fn reportError(self: *Parser, expected: TokenTag, found: TokenTag) void {
         self.errors.append(self.allocator, .{
             .expected = expected,
             .found = found,
@@ -78,7 +83,7 @@ pub const Parser = struct {
         if (self.token_pos < self.tokens.len) self.token_pos += 1;
     }
 
-    fn expect(self: *Parser, tag: Tag) TokenIndex {
+    fn expect(self: *Parser, tag: TokenTag) TokenIndex {
         const idx = self.token_pos;
         const token = self.peek();
 
@@ -104,27 +109,26 @@ pub const Parser = struct {
     pub fn printStmtNodeTags(self: *Parser, stmts: []NodeIndex) void {
         for (stmts) |stmt_index| {
             const tag = self.nodes.get(stmt_index).tag;
-            std.debug.print("Node Tag: {s}\n", .{@tagName(tag)});
+            std.debug.print("Node Tag: {t}\n", .{tag});
         }
     }
 
     pub fn printNodeErrors(self: *Parser) void {
         for (self.errors.items) |err| {
-            std.debug.print("Expected: {s}, Found: {s}, Token Position: {d}\n", .{
-                @tagName(err.expected), @tagName(err.found), err.token_pos,
+            std.debug.print("Expected: {t}, Found: {t}, Token Position: {d}\n", .{
+                err.expected, err.found, err.token_pos,
             });
         }
     }
 
     // program = { stmt }
     pub fn parse(self: *Parser) Error![]NodeIndex {
-        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 4);
         while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
             const stmt = try self.parseStmt();
-            try stmts.append(self.allocator, stmt);
+            try self.stmts.append(self.allocator, stmt);
         }
 
-        return try stmts.toOwnedSlice(self.allocator);
+        return self.stmts.toOwnedSlice(self.allocator);
     }
 
 
@@ -158,7 +162,7 @@ pub const Parser = struct {
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr
     fn parseDeclar(self: *Parser) Error!NodeIndex {
-        const decl = self.peek().tag;
+        // const decl = self.peek().tag;
         const decl_pos = self.token_pos;
         self.next();
 
@@ -166,7 +170,7 @@ pub const Parser = struct {
         const ident = try self.parseIdent();
         _ = try self.parseAssignStmt(.assign, ident);
 
-        return try self.addNode(decl, decl_pos, .{
+        return try self.addNode(.declar_stmt, decl_pos, .{
             .decl = .{ .name = ident_pos, .value = ident }
         });
     }
@@ -189,11 +193,13 @@ pub const Parser = struct {
         };
     }
 
-    fn parseAssignStmt(self: *Parser, assign_tag: Tag, ident_pos: NodeIndex) Error!NodeIndex {
+    fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = self.expect(assign_tag);
         const expr = try self.parseExpr();
 
-        return try self.addNode(assign_tag, assign_pos, .{
+        const node_tag = nodeTagFromAssign(assign_tag);
+
+        return try self.addNode(node_tag, assign_pos, .{
             .assign = .{
                 .target = ident_pos,
                 .value = expr,
@@ -235,7 +241,7 @@ pub const Parser = struct {
             });
         }
 
-        return self.addNode(.keyword_if, if_pos, .{
+        return self.addNode(.if_stmt, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
                 .then_block = then_block,
@@ -251,10 +257,10 @@ pub const Parser = struct {
 
         const op_tag = self.peek().tag;
 
-        const compare_tag: Tag = switch (op_tag) {
+        const compare_tag = switch (op_tag) {
             .equals, .not_equal, .less,
             .greater, .less_or_equal,
-            .greater_or_equal => op_tag,
+            .greater_or_equal => nodeTagFromCompare(op_tag),
             else => {
                 self.reportError(.equals, op_tag);
                 self.next();
@@ -455,15 +461,15 @@ pub const Parser = struct {
 
         while (true) {
             const tag = self.peek().tag;
-
             if (tag != .plus and tag != .minus) break;
 
+            const binary_tag = nodeTagFromCompare(tag);
             const op_tok = self.token_pos;
             self.next();
 
             const rhs = try self.parseTerm();
 
-            node = try self.addNode(tag, op_tok, .{
+            node = try self.addNode(binary_tag, op_tok, .{
                 .binary = .{ .lhs = node, .rhs = rhs }
             });
         }
@@ -477,15 +483,15 @@ pub const Parser = struct {
 
         while (true) {
             const tag = self.peek().tag;
-
             if (tag != .asterisk and tag != .slash) break;
 
+            const binary_tag = nodeTagFromCompare(tag);
             const op_tok = self.token_pos;
             self.next();
 
             const rhs = try self.parseFactor();
 
-            node = try self.addNode(tag, op_tok, .{
+            node = try self.addNode(binary_tag, op_tok, .{
                 .binary = .{ .lhs = node, .rhs = rhs }
             });
         }

@@ -36,12 +36,12 @@ pub const Symbol = struct {
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
-    nodes: *const Nodes,
+    nodes: []const NodeIndex,
     tokens: *const Tokens,
     symbols: std.StringArrayHashMap(Symbol),
 
     pub fn init(allocator: Allocator, source: []const u8,
-                nodes: *const Nodes, tokens: *const Tokens) Semantic {
+                nodes: []const NodeIndex, tokens: *const Tokens) Semantic {
         return .{
             .allocator = allocator,
             .source = source,
