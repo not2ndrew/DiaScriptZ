@@ -15,7 +15,6 @@ const Allocator = std.mem.Allocator;
 const FILE_NAME = "script.txt";
 
 const TokenList = std.MultiArrayList(Token);
-// const NodeList = std.MultiArrayList(Node);
 
 pub fn main() !void {
     var debugAlloc = std.heap.DebugAllocator(.{}){};
@@ -46,15 +45,25 @@ pub fn main() !void {
     defer tokenList.deinit(allocator);
 
     // tokens => AST of stmt nodes
-    const parsed_list = try parse(allocator, &tokenList);
+    // const parsed_list = try parse(allocator, &tokenList);
+    // defer allocator.free(parsed_list);
+    var parser = par.Parser.init(allocator, &tokenList);
+    defer parser.deinit();
+
+    const parsed_list = try parser.parse();
     defer allocator.free(parsed_list);
 
+    parser.printStmtNodeTags(parsed_list);
+    parser.printNodeErrors();
+
     // AST => proper AST
-    // var semantic = sem.Semantic.init(allocator, lines, parsed_list, &tokenList);
-    // defer semantic.deinit();
-    // for (stmts) |node_pos| {
-    //     try semantic.analyze(node_pos);
-    // }
+    var semantic = sem.Semantic.init(allocator, lines, parsed_list, &parser.nodes, &tokenList);
+    defer semantic.deinit();
+    for (parsed_list) |node_pos| {
+        try semantic.analyze(node_pos);
+    }
+
+    semantic.printAllSemanticError(FILE_NAME);
 }
 
 fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
@@ -70,13 +79,13 @@ fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
     return tokenList;
 }
 
-fn parse(allocator: Allocator, token_list: *TokenList) ![]NodeIndex {
-    var parser = par.Parser.init(allocator, token_list);
-    defer parser.deinit();
-
-    const stmts = try parser.parse();
-    parser.printStmtNodeTags(stmts);
-    parser.printNodeErrors();
-
-    return stmts;
-}
+// fn parse(allocator: Allocator, token_list: *TokenList) ![]NodeIndex {
+//     var parser = par.Parser.init(allocator, token_list);
+//     defer parser.deinit();
+//
+//     const stmts = try parser.parse();
+//     parser.printStmtNodeTags(stmts);
+//     parser.printNodeErrors();
+//
+//     return stmts;
+// }

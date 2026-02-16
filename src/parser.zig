@@ -33,6 +33,7 @@ pub const Parser = struct {
     allocator: Allocator,
     tokens: *const std.MultiArrayList(Token),
     nodes: std.MultiArrayList(Node),
+    
     stmts: std.ArrayList(NodeIndex),
     str_parts: std.ArrayList(NodeIndex),
     choices: std.ArrayList(NodeIndex),
@@ -162,7 +163,6 @@ pub const Parser = struct {
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr
     fn parseDeclar(self: *Parser) Error!NodeIndex {
-        // const decl = self.peek().tag;
         const decl_pos = self.token_pos;
         self.next();
 

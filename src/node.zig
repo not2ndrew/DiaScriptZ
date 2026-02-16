@@ -10,9 +10,6 @@ pub const NodeIndex = u32;
 // AST consumer must handle it explicitly.
 pub const invalid_node = std.math.maxInt(NodeIndex);
 
-// TODO: Use a different tag for Nodes.
-// Tags from Token and Nodes are slightly different.
-// I could use std.EnumMap to convert Token tags to Node Tags.
 pub const NodeTag = enum {
     // Stmts
     declar_stmt,
