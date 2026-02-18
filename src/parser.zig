@@ -36,7 +36,6 @@ pub const Parser = struct {
     
     stmts: std.ArrayList(NodeIndex),
     str_parts: std.ArrayList(NodeIndex),
-    choices: std.ArrayList(NodeIndex),
     errors: std.ArrayList(ParseError),
 
     token_pos: u32,
@@ -48,7 +47,6 @@ pub const Parser = struct {
             .nodes = .{},
             .stmts = .{},
             .str_parts = .{},
-            .choices = .{},
             .errors = .{},
             .token_pos = 0,
         };
@@ -58,7 +56,6 @@ pub const Parser = struct {
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
         self.str_parts.deinit(self.allocator);
-        self.choices.deinit(self.allocator);
         self.errors.deinit(self.allocator);
     }
 
@@ -151,6 +148,7 @@ pub const Parser = struct {
             .keyword_const, .keyword_var => self.parseDeclar(),
             .identifier, .underscore => self.parseIdentStmt(),
             .keyword_if => self.parseIfStmt(),
+            .choice_marker => self.parseChoice(),
             .tilde => self.parseLabel(),
             .hash => self.parseScene(),
             else => {
@@ -315,30 +313,27 @@ pub const Parser = struct {
         _ = self.expect(.colon);
 
         const str_start: u32 = @intCast(self.str_parts.items.len);
-        const choice_start: u32 = @intCast(self.choices.items.len);
-
         const str_len = try self.parseStrPart();
 
         var goto: NodeIndex = invalid_node;
-        var choices: NodeRange = .{
-            .start = choice_start, .len = 0,
-        };
 
         if (self.peek().tag == .goto) {
             self.next();
 
             goto = try self.parseIdent();
-        }
 
-        if (self.peek().tag == .choice_marker) {
-            choices.len = try self.parseChoices();
+            return try self.addNode(.dialogue, ident_pos, .{
+                .dialogue = .{
+                    .str = .{ .start = str_start, .len = str_len },
+                    .branch = .{ .goto = goto },
+                }
+            });
         }
 
         return try self.addNode(.dialogue, ident_pos, .{
             .dialogue = .{
                 .str = .{ .start = str_start, .len = str_len },
-                .goto = goto,
-                .choices = choices,
+                .branch = .none,
             }
         });
     }
@@ -380,38 +375,34 @@ pub const Parser = struct {
         return str_len;
     }
 
-    // choice = { "*" string } (MIN = 2, MAX = 5)
-    fn parseChoices(self: *Parser) !u32 {
-        const choices_start = self.choices.items.len;
-        var i: usize = 0;
+    // choice = { "*" string }
+    fn parseChoice(self: *Parser) Error!NodeIndex {
+        const marker = self.token_pos;
+        self.next();
 
-        while (i < 5 and self.peek().tag == .choice_marker) {
-            const marker = self.token_pos;
+        const start: u32 = @intCast(self.str_parts.items.len);
+        const len = try self.parseStrPart();
+
+        var goto: NodeIndex = invalid_node;
+
+        if (self.peek().tag == .goto) {
             self.next();
+            goto = try self.parseIdent();
 
-            const start: u32 = @intCast(self.str_parts.items.len);
-            const len = try self.parseStrPart();
-
-            var goto: NodeIndex = invalid_node;
-
-            if (self.peek().tag == .goto) {
-                self.next();
-                goto = try self.parseIdent();
-            }
-
-            const choice = try self.addNode(.choice, marker, .{
-                .choice_list = .{
+            return try self.addNode(.choice, marker, .{
+                .dialogue = .{
                     .str = .{ .start = start, .len = len },
-                    .goto = goto,
+                    .branch = .{ .goto = goto },
                 }
             });
-
-            try self.choices.append(self.allocator, choice);
-            i += 1;
         }
 
-        const choices_len: u32 = @intCast(self.choices.items.len - choices_start);
-        return choices_len;
+        return try self.addNode(.choice, marker, .{
+            .dialogue = .{
+                .str = .{ .start = start, .len = len },
+                .branch = .none,
+            }
+        });
     }
 
     // label = “~” ident block “end”

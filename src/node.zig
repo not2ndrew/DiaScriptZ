@@ -128,13 +128,11 @@ pub const NodeData = union {
         else_block: NodeIndex = invalid_node,
     },
     block: NodeRange,
-    choice_list: struct {
-        str: NodeRange,
-        goto: NodeIndex = invalid_node,
-    },
     dialogue: struct {
         str: NodeRange,
-        goto: NodeIndex = invalid_node,
-        choices: NodeRange,
+        branch: union(enum) {
+            none,
+            goto: NodeIndex,
+        },
     },
 };

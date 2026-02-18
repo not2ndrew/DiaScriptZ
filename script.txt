@@ -1,1 +1,3 @@
-i = 0
+Andrew: There are 4 apples!
+    * Go to the apple tree -> apple_tree
+	* Go to the banana tree -> banana_tree

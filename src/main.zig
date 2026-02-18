@@ -57,11 +57,18 @@ pub fn main() !void {
     parser.printNodeErrors();
 
     // AST => proper AST
-    var semantic = sem.Semantic.init(allocator, lines, parsed_list, &parser.nodes, &tokenList);
+    var semantic = sem.Semantic.init(
+        allocator, lines, parsed_list, 
+        &parser.nodes, &parser.str_parts, 
+        &tokenList
+    );
     defer semantic.deinit();
-    for (parsed_list) |node_pos| {
-        try semantic.analyze(node_pos);
-    }
+
+    try semantic.analyze();
+
+    // for (parsed_list) |node_pos| {
+    //     try semantic.analyze(node_pos);
+    // }
 
     semantic.printAllSemanticError(FILE_NAME);
 }
@@ -78,14 +85,3 @@ fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
 
     return tokenList;
 }
-
-// fn parse(allocator: Allocator, token_list: *TokenList) ![]NodeIndex {
-//     var parser = par.Parser.init(allocator, token_list);
-//     defer parser.deinit();
-//
-//     const stmts = try parser.parse();
-//     parser.printStmtNodeTags(stmts);
-//     parser.printNodeErrors();
-//
-//     return stmts;
-// }
