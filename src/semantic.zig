@@ -195,35 +195,26 @@ pub const Semantic = struct {
 
     pub fn analyze(self: *Semantic) Error!void {
         for (self.stmt_nodes, 0..self.stmt_nodes.len) |node_index, i| {
-            const node = self.nodes.get(node_index);
+            try self.analyzeNode(node_index);
             self.stmt_pos = @intCast(i);
 
-            switch (node.tag) {
-                .number, .string => {},
-                .identifier => try self.analyzeIdent(node),
-                .declar_stmt => try self.analyzeDeclar(node),
-                .if_stmt => try self.analyzeIfStmt(node),
-                .assign, .plus_equal, .minus_equal,
-                .mult_equal, .div_equal => try self.analyzeAssign(node),
-                .dialogue => try self.analyzeDialogue(node),
-                .choice => try self.analyzeChoice(node),
-                else => {
-                    self.active_dialogue_choices = 0;
-                },
-            }
         }
     }
 
     fn analyzeNode(self: *Semantic, node_index: NodeIndex) Error!void {
         const node = self.nodes.get(node_index);
-
         switch (node.tag) {
+            .number, .string => {},
             .identifier => try self.analyzeIdent(node),
-            // .binary => {
-            //     try self.analyzeNode(node.data.binary.lhs);
-            //     try self.analyzeNode(node.data.binary.rhs);
-            // },
-            else => {},
+            .declar_stmt => try self.analyzeDeclar(node),
+            .if_stmt => try self.analyzeIfStmt(node),
+            .assign, .plus_equal, .minus_equal,
+            .mult_equal, .div_equal => try self.analyzeAssign(node),
+            .dialogue => try self.analyzeDialogue(node),
+            .choice => try self.analyzeChoice(node),
+            else => {
+                self.active_dialogue_choices = 0;
+            },
         }
     }
 
@@ -238,19 +229,20 @@ pub const Semantic = struct {
 
     fn analyzeDeclar(self: *Semantic, node: Node) Error!void {
         const ident_pos = node.data.decl.name;
-        const ident_name = self.getTokenName(ident_pos);
+        const ident_node = self.nodes.get(ident_pos);
+        const name = self.getTokenName(ident_node.token_pos);
         const value = node.data.decl.value;
 
         const decl_pos = node.token_pos;
         const decl_type = self.getTokenName(decl_pos);
         const is_const: bool = std.mem.eql(u8, decl_type, "const");
 
-        if (self.symbols.contains(ident_name)) {
+        if (self.symbols.contains(name)) {
             try self.report(Kind.duplicate_var, decl_pos);
             return;
         } 
 
-        try self.symbols.put(ident_name, .{
+        try self.symbols.put(name, .{
             .token_pos = ident_pos,
             .is_const = is_const,
         });
@@ -264,6 +256,7 @@ pub const Semantic = struct {
         const ident_node = self.nodes.get(ident_pos);
 
         const name = self.getTokenName(ident_node.token_pos);
+
         const sym = self.symbols.getPtr(name) orelse {
             try self.report(Kind.undeclared_var, ident_node.token_pos);
             return;
@@ -277,12 +270,15 @@ pub const Semantic = struct {
     }
 
     fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
-        const compar_pos = node.data.if_stmt.condition;
+        const if_stmt = node.data.if_stmt;
+        const compar_pos = if_stmt.condition;
+
         const compar_node = self.nodes.get(compar_pos);
 
         // Semantic analyze the nodes inside the compare_node.
         try self.analyzeNode(compar_node.data.binary.lhs);
         try self.analyzeNode(compar_node.data.binary.rhs);
+
     }
 
     // DIALOGUES

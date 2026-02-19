@@ -119,7 +119,7 @@ pub const NodeData = union {
         value: NodeIndex,
     },
     decl: struct {
-        name: TokenIndex,
+        name: NodeIndex,
         value: NodeIndex = invalid_node,
     },
     if_stmt: struct {

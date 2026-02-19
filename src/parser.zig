@@ -159,17 +159,17 @@ pub const Parser = struct {
         };
     }
 
-    // declar_stmt = ( "const" | "var" ) ident "=" expr
+    // declar_stmt = ( "const" | "var" ) ident "=" expr ;
     fn parseDeclar(self: *Parser) Error!NodeIndex {
         const decl_pos = self.token_pos;
         self.next();
 
-        const ident_pos = self.token_pos;
         const ident = try self.parseIdent();
-        _ = try self.parseAssignStmt(.assign, ident);
+        _ = self.expect(.assign);
+        const value = try self.parseExpr();
 
         return try self.addNode(.declar_stmt, decl_pos, .{
-            .decl = .{ .name = ident_pos, .value = ident }
+            .decl = .{ .name = ident, .value = value }
         });
     }
 

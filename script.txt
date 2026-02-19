@@ -1,3 +1,8 @@
-Andrew: There are 4 apples!
-    * Go to the apple tree -> apple_tree
-	* Go to the banana tree -> banana_tree
+var x = 1
+
+if (x > 0) {
+	const i = 0
+	x = 2
+} else {
+	x = 3
+}
