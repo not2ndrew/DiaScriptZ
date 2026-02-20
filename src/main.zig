@@ -1,6 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
+const diagnostic = @import("diagnostic.zig");
 const tokenizer = @import("tokenizer.zig");
 const par = @import("parser.zig");
 const sem = @import("semantic.zig");
@@ -10,6 +11,8 @@ const Tag = tok.Tag;
 
 const Node = zig_node.Node;
 const NodeIndex = zig_node.NodeIndex;
+
+const DiagnosticSink = diagnostic.DiagnosticSink;
 
 const Allocator = std.mem.Allocator;
 const FILE_NAME = "script.txt";
@@ -40,37 +43,35 @@ pub fn main() !void {
 
     const lines = read_buf[0..reader.pos];
 
+    var diag_sink = DiagnosticSink.init(allocator, lines);
+    defer diag_sink.deinit();
+
     // lines => tokens
     var tokenList = try tokenize(allocator, lines);
     defer tokenList.deinit(allocator);
 
     // tokens => AST of stmt nodes
-    // const parsed_list = try parse(allocator, &tokenList);
-    // defer allocator.free(parsed_list);
-    var parser = par.Parser.init(allocator, &tokenList);
+    var parser = par.Parser.init(&tokenList, &diag_sink);
     defer parser.deinit();
 
     const parsed_list = try parser.parse();
     defer allocator.free(parsed_list);
+    //
+    // parser.printStmtNodeTags(parsed_list);
+    // parser.printNodeErrors();
+    //
+    // // AST => proper AST
+    // var semantic = sem.Semantic.init(
+    //     allocator, lines, parsed_list, 
+    //     &parser.nodes, &parser.str_parts, 
+    //     &tokenList
+    // );
+    // defer semantic.deinit();
+    //
+    // try semantic.analyze();
+    // semantic.printAllSemanticError(FILE_NAME);
 
-    parser.printStmtNodeTags(parsed_list);
-    parser.printNodeErrors();
-
-    // AST => proper AST
-    var semantic = sem.Semantic.init(
-        allocator, lines, parsed_list, 
-        &parser.nodes, &parser.str_parts, 
-        &tokenList
-    );
-    defer semantic.deinit();
-
-    try semantic.analyze();
-
-    // for (parsed_list) |node_pos| {
-    //     try semantic.analyze(node_pos);
-    // }
-
-    semantic.printAllSemanticError(FILE_NAME);
+    diag_sink.printErrors(FILE_NAME);
 }
 
 fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {

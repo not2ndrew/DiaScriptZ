@@ -1,6 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
+const diagnostic = @import("diagnostic.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -19,51 +20,53 @@ const invalid_node = zig_node.invalid_node;
 const nodeTagFromAssign = zig_node.nodeTagFromAssign;
 const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
+const nodeTagFromScene = zig_node.nodeTagFromScene;
 
-pub const ParseError = struct {
-    expected: TokenTag,
-    found: TokenTag,
-    token_pos: TokenIndex,
-};
+const DiagnosticSink = diagnostic.DiagnosticSink;
 
 const Error = Allocator.Error;
+const Tokens = std.MultiArrayList(Token);
 
 // Extended Backus Naur Form:
 pub const Parser = struct {
-    allocator: Allocator,
+    diag_sink: *DiagnosticSink,
     tokens: *const std.MultiArrayList(Token),
     nodes: std.MultiArrayList(Node),
     
     stmts: std.ArrayList(NodeIndex),
     str_parts: std.ArrayList(NodeIndex),
-    errors: std.ArrayList(ParseError),
 
     token_pos: u32,
 
-    pub fn init(allocator: Allocator, tokens: *const std.MultiArrayList(Token)) Parser {
+    pub fn init(tokens: *const Tokens, diag_sink: *DiagnosticSink) Parser {
         return Parser{
-            .allocator = allocator,
+            .diag_sink = diag_sink,
             .tokens = tokens,
             .nodes = .{},
             .stmts = .{},
             .str_parts = .{},
-            .errors = .{},
             .token_pos = 0,
         };
     }
 
     // No need to deinit stmts since that is done in parse().
     pub fn deinit(self: *Parser) void {
-        self.nodes.deinit(self.allocator);
-        self.str_parts.deinit(self.allocator);
-        self.errors.deinit(self.allocator);
+        self.nodes.deinit(self.diag_sink.allocator);
+        self.str_parts.deinit(self.diag_sink.allocator);
     }
 
-    fn reportError(self: *Parser, expected: TokenTag, found: TokenTag) void {
-        self.errors.append(self.allocator, .{
-            .expected = expected,
-            .found = found,
-            .token_pos = self.token_pos,
+    // TODO: make start and end adaptable to all parser errors.
+    fn reportError(self: *Parser, expected: TokenTag) void {
+        const token = self.tokens.get(self.token_pos);
+        self.diag_sink.report(.{
+            .severity = .note,
+            .err = .{
+                .unexpected_token = .{
+                    .expected = expected, .found = token.tag 
+                } 
+            },
+            .start = @intCast(token.start),
+            .end = @intCast(token.end),
         }) catch {};
     }
 
@@ -86,7 +89,7 @@ pub const Parser = struct {
         const token = self.peek();
 
         if (token.tag != tag) {
-            self.reportError(tag, token.tag);
+            self.reportError(tag);
         }
 
         self.token_pos += 1;
@@ -94,7 +97,7 @@ pub const Parser = struct {
     }
 
     fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) !NodeIndex {
-        try self.nodes.append(self.allocator, .{
+        try self.nodes.append(self.diag_sink.allocator, .{
             .tag = tag,
             .token_pos = token_pos,
             .data = data,
@@ -111,22 +114,14 @@ pub const Parser = struct {
         }
     }
 
-    pub fn printNodeErrors(self: *Parser) void {
-        for (self.errors.items) |err| {
-            std.debug.print("Expected: {t}, Found: {t}, Token Position: {d}\n", .{
-                err.expected, err.found, err.token_pos,
-            });
-        }
-    }
-
     // program = { stmt }
     pub fn parse(self: *Parser) Error![]NodeIndex {
         while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
             const stmt = try self.parseStmt();
-            try self.stmts.append(self.allocator, stmt);
+            try self.stmts.append(self.diag_sink.allocator, stmt);
         }
 
-        return self.stmts.toOwnedSlice(self.allocator);
+        return self.stmts.toOwnedSlice(self.diag_sink.allocator);
     }
 
 
@@ -152,7 +147,7 @@ pub const Parser = struct {
             .tilde => self.parseLabel(),
             .hash => self.parseScene(),
             else => {
-                self.reportError(.identifier, tag);
+                self.reportError(.identifier);
                 self.next();
                 return invalid_node;
             },
@@ -184,7 +179,7 @@ pub const Parser = struct {
             .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
             .colon => try self.parseDialogue(ident_pos),
             else => {
-                self.reportError(.assign, next_tag);
+                self.reportError(.assign);
                 self.next();
                 return invalid_node;
             } 
@@ -260,7 +255,7 @@ pub const Parser = struct {
             .greater, .less_or_equal,
             .greater_or_equal => nodeTagFromCompare(op_tag),
             else => {
-                self.reportError(.equals, op_tag);
+                self.reportError(.equals);
                 self.next();
                 return invalid_node;
             },
@@ -294,7 +289,7 @@ pub const Parser = struct {
                 .close_brace, .keyword_end, .hash => break,
                 else => {
                     const stmt = try self.parseStmt();
-                    try self.stmts.append(self.allocator, stmt);
+                    try self.stmts.append(self.diag_sink.allocator, stmt);
                 }
             }
         }
@@ -353,7 +348,7 @@ pub const Parser = struct {
                         .string = .{ .token = self.token_pos },
                     });
 
-                    try self.str_parts.append(self.allocator, str);
+                    try self.str_parts.append(self.diag_sink.allocator, str);
                     self.next();
                 },
                 .inter_open => {
@@ -362,7 +357,7 @@ pub const Parser = struct {
 
                     _ = self.expect(.inter_close);
 
-                    try self.str_parts.append(self.allocator, ident);
+                    try self.str_parts.append(self.diag_sink.allocator, ident);
                 },
                 else => break,
             }
@@ -370,7 +365,7 @@ pub const Parser = struct {
 
         const str_len: u32 = @intCast(self.str_parts.items.len - start);
 
-        if (str_len == 0) self.reportError(.string, self.peek().tag);
+        if (str_len == 0) self.reportError(.string);
 
         return str_len;
     }
@@ -408,7 +403,7 @@ pub const Parser = struct {
     // label = “~” ident block “end”
     fn parseLabel(self: *Parser) Error!NodeIndex {
         _ = self.expect(.tilde);
-        const label = try self.parseBlock(.label);
+        const label = try self.parseBlock(.tilde);
         _ = self.expect(.keyword_end);
 
         return label;
@@ -417,20 +412,22 @@ pub const Parser = struct {
     // scene = "#" ident block
     fn parseScene(self: *Parser) Error!NodeIndex {
         _ = self.expect(.hash);
-        return try self.parseBlock(.scene);
+        return try self.parseBlock(.hash);
     }
 
     // block = { stmt } ;
-    fn parseBlock(self: *Parser, tag: Tag) Error!NodeIndex {
+    fn parseBlock(self: *Parser, tag: TokenTag) Error!NodeIndex {
         const ident_pos = self.expect(.identifier);
         _ = try self.addNode(.identifier, ident_pos, .{
             .identifier = .{ .token = ident_pos }
         });
 
+        const new_tag = nodeTagFromScene(tag);
+
         const start: u32 = @intCast(self.stmts.items.len);
         const len = try self.parseStmts();
 
-        return try self.addNode(tag, ident_pos, .{
+        return try self.addNode(new_tag, ident_pos, .{
             .block = .{ .start = start, .len = len },
         });
     }
@@ -516,7 +513,7 @@ pub const Parser = struct {
                 return expr;
             },
             else => return {
-                self.reportError(.number, self.peek().tag);
+                self.reportError(.number);
                 self.next();
                 return invalid_node;
             },

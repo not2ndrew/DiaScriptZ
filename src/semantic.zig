@@ -31,9 +31,9 @@ pub const Kind = error {
     undeclared_var,
     duplicate_var,
     modified_const,
+
     // Dialogue Errors
-    // undeclared dialogue vars
-    // dialogue vars and programming vars have same name
+    duplicate_var_sym,
     undeclared_dialogue,
     ambiguous_jump,
 };
@@ -47,6 +47,11 @@ pub const Symbol = struct {
     is_const: bool,
 };
 
+// IMPORTANT!!!
+//
+// 1) REWORK HOW SEMANTIC ANALYSIS IS DONE
+// 2) ALL ERRORS IN PHASES ARE SHARED THROUGH A DIAGNOSTIC STRUCT
+//    CREATE A DIAGNOSTICS FILE
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
@@ -54,6 +59,7 @@ pub const Semantic = struct {
     nodes: *const Nodes,
     str_parts: *const std.ArrayList(NodeIndex),
     tokens: *const Tokens,
+
     symbols: std.StringArrayHashMap(Symbol),
     dia_syms: std.StringArrayHashMap(NodeIndex),
 
@@ -101,11 +107,11 @@ pub const Semantic = struct {
         const name = self.getTokenName(goto_node.token_pos);
 
         if (self.symbols.contains(name)) {
-            try self.report(Kind.duplicate_var, goto_node.token_pos);
+            try self.report(Kind.duplicate_var_sym, goto_node.token_pos);
         }
 
         if (!self.dia_syms.contains(name)) {
-            try self.report(Kind.undeclared_var, goto_node.token_pos);
+            try self.report(Kind.undeclared_dialogue, goto_node.token_pos);
         }
     }
 
@@ -152,6 +158,7 @@ pub const Semantic = struct {
             Kind.int_underflow => "integer underflow",
             Kind.undeclared_dialogue => "use of undeclared dialogue",
             Kind.ambiguous_jump => "cannot have multiple jumps",
+            Kind.duplicate_var_sym => "duplicate variable from dialogue and declaration",
         };
     }
 
@@ -193,12 +200,22 @@ pub const Semantic = struct {
         }
     }
 
+    /// Analyze uses a two pass approach for dialogue block declaration
     pub fn analyze(self: *Semantic) Error!void {
-        for (self.stmt_nodes, 0..self.stmt_nodes.len) |node_index, i| {
-            try self.analyzeNode(node_index);
-            self.stmt_pos = @intCast(i);
+        // PASS 1 - Collect dialogue blocks
+        for (self.stmt_nodes) |node_index| {
+            const node = self.nodes.get(node_index);
 
+            if (node.tag == .scene or node.tag == .label) {
+                try self.analyzeDialogueBlock(node_index);
+            }
         }
+
+        // PASS 2 - full semantic analysis
+        // for (self.stmt_nodes, 0..self.stmt_nodes.len) |node_index, i| {
+        //     try self.analyzeNode(node_index);
+        //     self.stmt_pos = @intCast(i);
+        // }
     }
 
     fn analyzeNode(self: *Semantic, node_index: NodeIndex) Error!void {
@@ -212,6 +229,7 @@ pub const Semantic = struct {
             .mult_equal, .div_equal => try self.analyzeAssign(node),
             .dialogue => try self.analyzeDialogue(node),
             .choice => try self.analyzeChoice(node),
+            .scene, .label => try self.analyzeDialogueBlock(node_index),
             else => {
                 self.active_dialogue_choices = 0;
             },
@@ -272,7 +290,6 @@ pub const Semantic = struct {
     fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
         const if_stmt = node.data.if_stmt;
         const compar_pos = if_stmt.condition;
-
         const compar_node = self.nodes.get(compar_pos);
 
         // Semantic analyze the nodes inside the compare_node.
@@ -282,6 +299,32 @@ pub const Semantic = struct {
     }
 
     // DIALOGUES
+    // TOOD: Need to do two pass approach on dialogue blocks and variables
+    //
+    // var a = 1
+    // a = 2
+    //
+    // Andrew: Choose which path go.
+    //    * Go to path A -> Path_A
+    //    * Go to path B -> Path_B
+    //
+    // ~ Path_A
+    //    Andrew: You have chosen path A.
+    // end
+    //
+    // ~ Path_B
+    //    Andrew: You have chosen path B.
+    // end
+    //
+    // The programming variables are backward reference.
+    // You must declare a variable before using it.
+    //
+    // Whereas the dialogue variables doesn't matter in placement.
+    // As long as they are referenced, then the variables are satisfied.
+    // 
+    // Scan the entire AST twice, 1 for declarations, and 2 for scanning.
+    // 1) Scan entire AST and collect dialogue block declarations into table
+    // 2) When you encounter a jump, check if it exist in table
     fn analyzeDialogue(self: *Semantic, node: Node) Error!void {
         // Each dialogue has the possibility of containing a choice node
         // A dialogue node can own up to 4 choices nodes.
@@ -320,7 +363,25 @@ pub const Semantic = struct {
             return;
         }
 
-        try self.analyzeNode(node.data.dialogue.branch.goto);
+        try self.isValidDialogueIdent(node.data.dialogue.branch.goto);
         self.active_dialogue_choices -= 1;
+    }
+
+    fn analyzeDialogueBlock(self: *Semantic, node_index: NodeIndex) Error!void {
+        const node = self.nodes.get(node_index);
+        const token_pos = node.token_pos;
+        const name = self.getTokenName(token_pos);
+
+        if (self.dia_syms.contains(name)) {
+            try self.report(Kind.duplicate_var, token_pos);
+            return;
+        }
+
+        if (self.symbols.contains(name)) {
+            try self.report(Kind.duplicate_var_sym, token_pos);
+            return;
+        }
+
+        try self.dia_syms.put(name, node_index);
     }
 };
