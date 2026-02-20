@@ -146,8 +146,14 @@ pub const DiagnosticSink = struct {
     }
 
     fn getLineSlice(self: *DiagnosticSink, byte_pos: usize) []const u8 {
-        var start = byte_pos;
-        var end = byte_pos;
+        var pos = byte_pos;
+
+        if (pos >= self.source.len and self.source.len > 0) {
+            pos = self.source.len - 1;
+        }
+
+        var start = pos;
+        var end = pos;
 
         while (start > 0 and self.source[start - 1] != '\n') {
             start -= 1;

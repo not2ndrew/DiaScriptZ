@@ -60,8 +60,15 @@ pub const Parser = struct {
         self.str_parts.deinit(self.diag_sink.allocator);
     }
 
-    fn reportError(self: *Parser, expected: TokenTag) void {
-        const token = self.peek();
+    fn reportUnexpected(self: *Parser, expected: TokenTag) void {
+        var token = self.peek();
+
+        if (token.tag == .EOF) {
+            const prev = self.tokens.get(self.token_pos - 1);
+            token.start = prev.end;
+            token.end = prev.end;
+        }
+
         self.diag_sink.report(.{
             .severity = .note,
             .err = .{
@@ -92,7 +99,7 @@ pub const Parser = struct {
         const idx = self.token_pos;
         const token = self.peek();
 
-        if (token.tag != tag) self.reportError(tag);
+        if (token.tag != tag) self.reportUnexpected(tag);
 
         self.next();
         return idx;
@@ -180,7 +187,7 @@ pub const Parser = struct {
             .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
             .colon => try self.parseDialogue(ident_pos),
             else => {
-                self.reportError(.assign);
+                self.reportUnexpected(.assign);
                 return Error.ParseError;
             } 
         };
@@ -260,21 +267,28 @@ pub const Parser = struct {
     }
 
     // stmt_block = "{" { stmt } "}" ;
-    // TODO: Add a parameter TokenTag to
-    // distinguish between then_block and else_block
-    //
-    // TODO: Create DialogueBlock()
     fn parseStmtBlock(self: *Parser) Error!NodeIndex {
         const start: u32 = @intCast(self.stmts.items.len);
 
-        const block_pos = self.expect(.open_brace);
+        if (self.peek().tag != .open_brace) {
+            self.reportUnexpected(.open_brace);
+            return Error.ParseError;
+        }
 
-        while (self.peek().tag != .close_brace and self.token_pos < self.tokens.len) {
+        const block_pos = self.token_pos;
+        self.next();
+
+        while (self.peek().tag != .close_brace and self.token_pos < self.tokens.len - 1) {
             const stmt = try self.parseStmt();
             try self.stmts.append(self.diag_sink.allocator, stmt);
         }
 
-        _ = self.expect(.close_brace);
+        if (self.peek().tag != .close_brace) {
+            self.reportUnexpected(.close_brace);
+            return Error.ParseError;
+        }
+
+        self.next();
         const len: u32 = @intCast(self.stmts.items.len - start);
 
         return try self.addNode(.block, block_pos, .{
@@ -349,7 +363,7 @@ pub const Parser = struct {
 
         const str_len: u32 = @intCast(self.str_parts.items.len - start);
 
-        if (str_len == 0) self.reportError(.string);
+        if (str_len == 0) self.reportUnexpected(.string);
 
         return str_len;
     }
