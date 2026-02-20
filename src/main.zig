@@ -58,7 +58,6 @@ pub fn main() !void {
     defer allocator.free(parsed_list);
     //
     // parser.printStmtNodeTags(parsed_list);
-    // parser.printNodeErrors();
     //
     // // AST => proper AST
     // var semantic = sem.Semantic.init(
@@ -80,8 +79,8 @@ fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
 
     while (tokenStream.index < tokenStream.buffer.len) {
         const token = tokenStream.next();
-        if (token.tag == .EOF) break;
         try tokenList.append(allocator, token);
+        if (token.tag == .EOF) break;
     }
 
     return tokenList;
