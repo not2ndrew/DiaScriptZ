@@ -89,27 +89,13 @@ pub const Parser = struct {
     }
 
     fn expect(self: *Parser, tag: TokenTag) TokenIndex {
+        const idx = self.token_pos;
         const token = self.peek();
 
-        if (token.tag != tag) {
-            // PANIC, skip until safe point has been reached
-            self.reportError(tag);
-            self.synchronize();
-            return self.token_pos;
-        }
+        if (token.tag != tag) self.reportError(tag);
 
-        const idx = self.token_pos;
         self.next();
         return idx;
-    }
-
-    fn synchronize(self: *Parser) void {
-        while (self.token_pos < self.tokens.len) {
-            switch (self.peek().tag) {
-                .close_brace, .assign, .EOF => break,
-                else => self.token_pos += 1,
-            }
-        }
     }
 
     fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) !NodeIndex {
@@ -163,9 +149,8 @@ pub const Parser = struct {
             .tilde => self.parseLabel(),
             .hash => self.parseScene(),
             else => {
-                self.reportError(.identifier);
-                self.next();
-                return invalid_node;
+                _ = self.expect(.identifier);
+                return Error.ParseError;
             },
         };
     }
@@ -196,7 +181,6 @@ pub const Parser = struct {
             .colon => try self.parseDialogue(ident_pos),
             else => {
                 self.reportError(.assign);
-                self.synchronize();
                 return Error.ParseError;
             } 
         };
@@ -254,9 +238,8 @@ pub const Parser = struct {
             .greater, .less_or_equal,
             .greater_or_equal => nodeTagFromCompare(op_tag),
             else => {
-                self.reportError(.equals);
-                self.next();
-                return invalid_node;
+                _ = self.expect(.compare_op);
+                return Error.ParseError;
             },
         };
 
@@ -514,9 +497,8 @@ pub const Parser = struct {
                 return expr;
             },
             else => return {
-                self.reportError(.number);
-                self.next();
-                return invalid_node;
+                _ = self.expect(.number);
+                return Error.ParseError;
             },
         }
     }
