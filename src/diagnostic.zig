@@ -75,7 +75,7 @@ pub const DiagnosticSink = struct {
             const pos = self.getLineCol(diag.start);
 
             std.debug.print(
-                \\ error: {s}:{d}:{d}
+                \\{s}:{d}:{d} error: 
                 \\     |
                 \\{d:4} | {s}
                 \\     |
@@ -126,7 +126,7 @@ pub const DiagnosticSink = struct {
     // The reason is there are x * y total bytes to scan
     // where x is col and y is line
     fn getLineCol(self: *DiagnosticSink, byte_pos: usize) struct { line: usize, col: usize } {
-        var line: usize = 0;
+        var line: usize = 1;
         var col: usize = 1;
 
         var i: usize = 0;

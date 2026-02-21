@@ -58,7 +58,7 @@ pub const NodeTag = enum {
     choice,
 };
 
-pub fn nodeTagFromAssign(token_tag: Tag) NodeTag {
+pub fn nodeTagFromArithmetic(token_tag: Tag) NodeTag {
     return switch (token_tag) {
         .assign => .assign,
         .plus_equal => .plus_equal,
