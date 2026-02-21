@@ -70,19 +70,18 @@ pub const DiagnosticSink = struct {
 
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
         for (self.list.items) |diag| {
-            const message = getErrorMessage(diag.err);
+            // const message = getErrorMessage(diag.err);
             const line_slice = self.getLineSlice(diag.start);
             const pos = self.getLineCol(diag.start);
 
             std.debug.print(
-                \\error: {s}
-                \\ --> {s}, line: {d}, col: {d}
+                \\ error: {s}:{d}:{d}
                 \\     |
                 \\{d:4} | {s}
                 \\     |
                 ,
                 .{
-                    message,
+                    // message,
                     file_name, pos.line, pos.col,
                     pos.line, line_slice
                 }

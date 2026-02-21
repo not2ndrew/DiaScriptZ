@@ -46,7 +46,6 @@ pub const Tag = enum {
     hash, // #
 
     // Comparison
-    compare_op,
     equals, // ==
     not_equal, // !=
     less, // <
