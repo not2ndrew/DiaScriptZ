@@ -43,7 +43,6 @@ pub const Tag = enum {
     open_brace, // {
     close_brace, // }
     tilde, // ~
-    hash, // #
 
     // Comparison
     equals, // ==

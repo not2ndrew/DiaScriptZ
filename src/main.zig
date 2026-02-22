@@ -57,8 +57,8 @@ pub fn main() !void {
     const parsed_list = try parser.parse();
     defer allocator.free(parsed_list);
 
-    parser.printStmtNodeTags(parsed_list);
-
+    // parser.printStmtNodeTags(parsed_list);
+    //
     // AST => proper AST
     // var semantic = sem.Semantic.init(
     //     &diag_sink, parsed_list,

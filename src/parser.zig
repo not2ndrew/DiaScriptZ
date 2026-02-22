@@ -160,7 +160,6 @@ pub const Parser = struct {
     // | label
     // | dialogue
     // | choices 
-    // | scene ;
     fn parseStmt(self: *Parser) Error!NodeIndex {
         const tag = self.peek().tag;
         return switch (tag) {
@@ -169,7 +168,6 @@ pub const Parser = struct {
             .keyword_if => self.parseIfStmt(),
             .choice_marker => self.parseChoice(),
             .tilde => self.parseLabel(),
-            .hash => self.parseScene(),
             else => return try self.expect(.identifier),
         };
     }
@@ -375,26 +373,12 @@ pub const Parser = struct {
 
     // label = “~” ident block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
-        _ = try self.expect(.tilde);
-        const label = try self.parseDialogueBody();
-
-        return label;
-    }
-
-    // TODO: Scene also takes in a dialogue block,
-    // but does not require a closing keyword.
-    // It should be based on indentation.
-    // scene = "#" ident block ;
-    fn parseScene(self: *Parser) Error!NodeIndex {
-        _ = try self.expect(.hash);
-        return invalid_node;
-    }
-
-    fn parseDialogueBody(self: *Parser) Error!NodeIndex {
-        const block_pos = self.token_pos;
         const start: u32 = @intCast(self.stmts.items.len);
+        _ = try self.expect(.tilde);
+        const ident_pos = self.token_pos;
+        _ = try self.parseIdent();
 
-        while (self.peek().tag != .keyword_end and self.token_pos < self.tokens.len) {
+        while (self.peek().tag != .keyword_end and self.token_pos < self.tokens.len - 1) {
             const stmt = self.parseStmt() catch {
                 self.synchronize();
                 continue;
@@ -405,10 +389,9 @@ pub const Parser = struct {
         _ = try self.expect(.keyword_end);
         const len: u32 = @intCast(self.stmts.items.len - start);
 
-        return try self.addNode(.block, block_pos, .{
+        return try self.addNode(.block, ident_pos, .{
             .block = .{ .start = start, .len = len }
         });
-
     }
 
     // ───────────────────────────────

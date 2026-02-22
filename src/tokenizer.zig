@@ -213,10 +213,6 @@ pub const Tokenizer = struct {
                 self.index += 1;
                 result.tag = .tilde;
             },
-            '#' => {
-                self.index += 1;
-                result.tag = .hash;
-            },
             '_' => {
                 self.index += 1;
                 result.tag = .underscore;

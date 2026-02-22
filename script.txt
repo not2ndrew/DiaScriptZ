@@ -1,4 +1,4 @@
-var x = 4
-Andrew: There are { x } apples
-   * Path 1 -> Path_1
-   * Path 2 -> Path_2
+~ Scene
+	const x = 1
+end	
+
