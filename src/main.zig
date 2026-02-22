@@ -56,19 +56,17 @@ pub fn main() !void {
 
     const parsed_list = try parser.parse();
     defer allocator.free(parsed_list);
-    //
-    // parser.printStmtNodeTags(parsed_list);
-    //
-    // // AST => proper AST
+
+    parser.printStmtNodeTags(parsed_list);
+
+    // AST => proper AST
     // var semantic = sem.Semantic.init(
-    //     allocator, lines, parsed_list, 
-    //     &parser.nodes, &parser.str_parts, 
-    //     &tokenList
+    //     &diag_sink, parsed_list,
+    //     &parser.nodes, &tokenList
     // );
     // defer semantic.deinit();
     //
     // try semantic.analyze();
-    // semantic.printAllSemanticError(FILE_NAME);
 
     diag_sink.printErrors(FILE_NAME);
 }

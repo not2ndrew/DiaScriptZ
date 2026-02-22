@@ -167,9 +167,9 @@ pub const Parser = struct {
             .keyword_const, .keyword_var => self.parseDeclar(),
             .identifier, .underscore => self.parseIdentStmt(),
             .keyword_if => self.parseIfStmt(),
-            // .choice_marker => self.parseChoice(),
-            // .tilde => self.parseLabel(),
-            // .hash => self.parseScene(),
+            .choice_marker => self.parseChoice(),
+            .tilde => self.parseLabel(),
+            .hash => self.parseScene(),
             else => return try self.expect(.identifier),
         };
     }
@@ -376,15 +376,39 @@ pub const Parser = struct {
     // label = “~” ident block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
         _ = try self.expect(.tilde);
-        _ = try self.expect(.keyword_end);
+        const label = try self.parseDialogueBody();
 
-        return invalid_node;
+        return label;
     }
 
+    // TODO: Scene also takes in a dialogue block,
+    // but does not require a closing keyword.
+    // It should be based on indentation.
     // scene = "#" ident block ;
     fn parseScene(self: *Parser) Error!NodeIndex {
         _ = try self.expect(.hash);
         return invalid_node;
+    }
+
+    fn parseDialogueBody(self: *Parser) Error!NodeIndex {
+        const block_pos = self.token_pos;
+        const start: u32 = @intCast(self.stmts.items.len);
+
+        while (self.peek().tag != .keyword_end and self.token_pos < self.tokens.len) {
+            const stmt = self.parseStmt() catch {
+                self.synchronize();
+                continue;
+            };
+            try self.stmts.append(self.diag_sink.allocator, stmt);
+        }
+
+        _ = try self.expect(.keyword_end);
+        const len: u32 = @intCast(self.stmts.items.len - start);
+
+        return try self.addNode(.block, block_pos, .{
+            .block = .{ .start = start, .len = len }
+        });
+
     }
 
     // ───────────────────────────────
