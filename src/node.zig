@@ -17,11 +17,10 @@ pub const NodeTag = enum {
     if_stmt,
     label,
     dialogue,
-    scene,
+    choice,
     
     // choices
     choice_marker,
-    choice_list,
 
     // If stmts
     block,
@@ -39,13 +38,13 @@ pub const NodeTag = enum {
     less_or_equal, // <=
     greater_or_equal, // >=
 
-    // Combination Assign
+    // Combination Arithmetic
     plus_equal, // +=
     minus_equal, // -=
     mult_equal, // *=
     div_equal, // /=
 
-    // binary operations
+    // Arithmetic operations
     add,
     sub,
     mult,
@@ -55,7 +54,6 @@ pub const NodeTag = enum {
     identifier,
     number,
     string,
-    choice,
 };
 
 pub fn nodeTagFromArithmetic(token_tag: Tag) NodeTag {

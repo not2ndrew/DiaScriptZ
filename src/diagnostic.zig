@@ -9,11 +9,6 @@ const invalid_node = zig_node.invalid_node;
 
 const Allocator = std.mem.Allocator;
 
-pub const unexpected_token = struct {
-    expected: Tag,
-    found: Tag,
-};
-
 pub const DiagnosticError = union(enum) {
     unexpected_token: struct {
         expected: Tag,

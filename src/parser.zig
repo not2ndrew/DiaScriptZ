@@ -58,7 +58,7 @@ pub const Parser = struct {
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
-        var token = self.peek();
+        var token = self.peekToken();
 
         // Prev only copies the token, it does not modify it
         if (token.tag == .EOF) {
@@ -81,7 +81,7 @@ pub const Parser = struct {
 
     fn synchronize(self: *Parser) void {
         while (self.token_pos < self.tokens.len) {
-            switch (self.peek().tag) {
+            switch (self.peekTag()) {
                 .keyword_const, .keyword_var,
                 .keyword_if, .keyword_else,
                 .identifier, .EOF => return,
@@ -90,14 +90,12 @@ pub const Parser = struct {
         }
     }
 
-    fn peek(self: *Parser) Token {
-        const pos = self.token_pos;
+    fn peekToken(self: *Parser) Token {
+        return self.tokens.get(self.token_pos);
+    }
 
-        if (self.token_pos < self.tokens.len) {
-            return self.tokens.get(pos);
-        }
-
-        return self.tokens.get(self.tokens.len - 1);
+    fn peekTag(self: *Parser) TokenTag {
+        return self.tokens.get(self.token_pos).tag;
     }
 
     fn next(self: *Parser) void {
@@ -106,9 +104,8 @@ pub const Parser = struct {
 
     fn expect(self: *Parser, tag: TokenTag) Error!TokenIndex {
         const idx = self.token_pos;
-        const token = self.peek();
 
-        if (token.tag != tag) {
+        if (self.peekTag() != tag) {
             try self.reportUnexpected(tag);
             return Error.ParseError;
         }
@@ -137,7 +134,7 @@ pub const Parser = struct {
 
     // program = { stmt } ;
     pub fn parse(self: *Parser) Error![]NodeIndex {
-        while (self.token_pos < self.tokens.len and self.peek().tag != .EOF) {
+        while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
             const stmt = self.parseStmt() catch {
                 self.synchronize();
                 continue;
@@ -161,14 +158,16 @@ pub const Parser = struct {
     // | dialogue
     // | choices 
     fn parseStmt(self: *Parser) Error!NodeIndex {
-        const tag = self.peek().tag;
-        return switch (tag) {
+        return switch (self.peekTag()) {
             .keyword_const, .keyword_var => self.parseDeclar(),
             .identifier, .underscore => self.parseIdentStmt(),
             .keyword_if => self.parseIfStmt(),
             .choice_marker => self.parseChoice(),
             .tilde => self.parseLabel(),
-            else => return try self.expect(.identifier),
+            else => {
+                try self.reportUnexpected(.identifier);
+                return Error.ParseError;
+            }
         };
     }
 
@@ -190,7 +189,7 @@ pub const Parser = struct {
     fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = try self.parseIdent();
 
-        const next_tag = self.peek().tag;
+        const next_tag = self.peekTag();
 
         return switch (next_tag) {
             .assign, .plus_equal, .minus_equal,
@@ -225,7 +224,7 @@ pub const Parser = struct {
 
         const then_block = try self.parseStmtBlock();
 
-        if (self.peek().tag == .keyword_else) {
+        if (self.peekTag() == .keyword_else) {
             else_block = try self.parseElseBlock();
         }
 
@@ -249,13 +248,16 @@ pub const Parser = struct {
     fn parseCompareExpr(self: *Parser) Error!NodeIndex {
         const left_expr = try self.parseExpr();
 
-        const op_tag = self.peek().tag;
+        const op_tag = self.peekTag();
 
         const compare_tag = switch (op_tag) {
             .equals, .not_equal, .less,
             .greater, .less_or_equal,
             .greater_or_equal => nodeTagFromCompare(op_tag),
-            else => return try self.expect(.equals),
+            else => {
+                try self.reportUnexpected(.equals);
+                return Error.ParseError;
+            }
         };
 
         const compare_token = self.token_pos;
@@ -273,20 +275,27 @@ pub const Parser = struct {
         const start: u32 = @intCast(self.stmts.items.len);
         const block_pos = try self.expect(.open_brace);
 
-        while (self.peek().tag != .close_brace and self.token_pos < self.tokens.len - 1) {
+        const len = try self.parseStmtListUntil(.close_brace);
+
+        _ = try self.expect(.close_brace);
+
+        return try self.addNode(.block, block_pos, .{
+            .block = .{ .start = start, .len = len }
+        });
+    }
+
+    fn parseStmtListUntil(self: *Parser, end_tag: TokenTag) Error!u32 {
+        var len: u32 = 0;
+        while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
             const stmt = self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
             try self.stmts.append(self.diag_sink.allocator, stmt);
+            len += 1;
         }
 
-        _ = try self.expect(.close_brace);
-        const len: u32 = @intCast(self.stmts.items.len - start);
-
-        return try self.addNode(.block, block_pos, .{
-            .block = .{ .start = start, .len = len }
-        });
+        return len;
     }
 
     // ───────────────────────────────
@@ -308,16 +317,14 @@ pub const Parser = struct {
         return try self.parseGoto(marker, .choice);
     }
 
-    // string_part = content_part | interpolation ;
+    // string = content_part | interpolation ;
     // content_part = content { content } ;
     // interpolation = "{" ident "}" ;
     // content = any_character_except("{", "}", "\n") ;
-    fn parseStrPart(self: *Parser) Error!u32 {
-        const start = self.nodes.len;
-        while (true) {
-            const tag = self.peek().tag;
-
-            switch (tag) {
+    fn parseString(self: *Parser) Error!u32 {
+        var i: u32 = 0;
+        while (true) : (i += 1) {
+            switch (self.peekTag()) {
                 .string => {
                     _ = try self.addNode(.string, self.token_pos, .{
                         .string = .{ .token = self.token_pos }
@@ -339,18 +346,20 @@ pub const Parser = struct {
             }
         }
 
-        const new_len: u32 = @intCast(self.nodes.len - start);
-        if (new_len == 0) return try self.expect(.string);
+        if (i == 0) {
+            try self.reportUnexpected(.string);
+            return Error.ParseError;
+        }
 
-        return new_len;
+        return i;
     }
 
     // string = string_part { string_part } [ "->" ident ] ;
     fn parseGoto(self: *Parser, ident_pos: TokenIndex, tag: Tag) Error!NodeIndex {
         const start: u32 = @intCast(self.nodes.len);
-        const len: u32 = try self.parseStrPart();
+        const len: u32 = try self.parseString();
 
-        if (self.peek().tag == .goto) {
+        if (self.peekTag() == .goto) {
             self.next();
 
             const goto = try self.parseIdent();
@@ -378,18 +387,11 @@ pub const Parser = struct {
         const ident_pos = self.token_pos;
         _ = try self.parseIdent();
 
-        while (self.peek().tag != .keyword_end and self.token_pos < self.tokens.len - 1) {
-            const stmt = self.parseStmt() catch {
-                self.synchronize();
-                continue;
-            };
-            try self.stmts.append(self.diag_sink.allocator, stmt);
-        }
+        const len = try self.parseStmtListUntil(.keyword_end);
 
         _ = try self.expect(.keyword_end);
-        const len: u32 = @intCast(self.stmts.items.len - start);
 
-        return try self.addNode(.block, ident_pos, .{
+        return try self.addNode(.label, ident_pos, .{
             .block = .{ .start = start, .len = len }
         });
     }
@@ -410,7 +412,7 @@ pub const Parser = struct {
         var node = try self.parseTerm();
 
         while (true) {
-            const tag = self.peek().tag;
+            const tag = self.peekTag();
             if (tag != .plus and tag != .minus) break;
 
             const binary_tag = nodeTagFromCompare(tag);
@@ -432,7 +434,7 @@ pub const Parser = struct {
         var node = try self.parseFactor();
 
         while (true) {
-            const tag = self.peek().tag;
+            const tag = self.peekTag();
             if (tag != .asterisk and tag != .slash) break;
 
             const binary_tag = nodeTagFromCompare(tag);
@@ -453,7 +455,7 @@ pub const Parser = struct {
     fn parseFactor(self: *Parser) Error!NodeIndex {
         const idx = self.token_pos;
 
-        switch (self.peek().tag) {
+        switch (self.peekTag()) {
             .number => {
                 self.next();
                 return self.addNode(.number, idx, .{
@@ -474,7 +476,10 @@ pub const Parser = struct {
 
                 return expr;
             },
-            else => return try self.expect(.number),
+            else => {
+                try self.reportUnexpected(.number);
+                return Error.ParseError;
+            },
         }
     }
 };
