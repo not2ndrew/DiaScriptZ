@@ -1,0 +1,6 @@
+const i = 0
+var x = 1
+
+x += i
+
+if (x > 1) {}
