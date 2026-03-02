@@ -1,6 +1,8 @@
-const i = 0
-var x = 1
+~ Scene_A
+end
 
-x += i
+~ Scene_B
+end
 
-if (x > 1) {}
+~ Scene_A
+end

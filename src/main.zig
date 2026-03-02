@@ -24,26 +24,12 @@ pub fn main() !void {
     defer _ = debugAlloc.deinit();
     const allocator = debugAlloc.allocator();
 
-    var read_buf: []u8 = undefined;
+    try compileFile(allocator, FILE_NAME);
+}
 
-    const file = try std.fs.cwd().openFile(FILE_NAME, .{});
-    defer file.close();
-
-    const stat = try file.stat();
-    const size = stat.size;
-    read_buf = try allocator.alloc(u8, size);
-    defer allocator.free(read_buf);
-
-    var reader = std.fs.File.Reader.init(file, read_buf);
-    const reader_inter: *std.Io.Reader = &reader.interface;
-
-    while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
-        if (err != std.Io.Reader.DelimiterError.EndOfStream) {
-            std.debug.print("An Error has occurred {}", .{err});
-        }
-    }
-
-    const lines = read_buf[0..reader.pos];
+fn compileFile(allocator: Allocator, file_name: []const u8) !void {
+    const lines = try readFile(allocator, file_name);
+    defer allocator.free(lines);
 
     var diag_sink = DiagnosticSink.init(allocator, lines);
     defer diag_sink.deinit();
@@ -60,7 +46,7 @@ pub fn main() !void {
     defer allocator.free(parsed_list);
 
     // AST => proper AST
-    var semantic = try sem.Semantic.init(
+    var semantic = sem.Semantic.init(
         &diag_sink, parsed_list,
         &parser.nodes, &tokenList
     );
@@ -69,6 +55,29 @@ pub fn main() !void {
     try semantic.analyze();
 
     diag_sink.printErrors(FILE_NAME);
+}
+
+/// Make sure to free memory from the string!!!
+fn readFile(allocator: Allocator, file_name: []const u8) ![]const u8 {
+    var read_buf: []u8 = undefined;
+
+    const file = try std.fs.cwd().openFile(file_name, .{});
+    defer file.close();
+
+    const stat = try file.stat();
+    const size = stat.size;
+    read_buf = try allocator.alloc(u8, size);
+
+    var reader = std.fs.File.Reader.init(file, read_buf);
+    const reader_inter: *std.Io.Reader = &reader.interface;
+
+    while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
+        if (err != std.Io.Reader.DelimiterError.EndOfStream) {
+            std.debug.print("An Error has occurred {}", .{err});
+        }
+    }
+
+    return read_buf[0..reader.pos];
 }
 
 fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {

@@ -1,14 +1,14 @@
 const std = @import("std");
 const token = @import("token.zig");
 
-const Tag = token.Tag;
-const TokenIndex = token.TokenIndex;
-
 pub const NodeIndex = u32;
 
 // invalid_node represents an invalid subtree
 // AST consumer must handle it explicitly.
 pub const invalid_node = std.math.maxInt(NodeIndex);
+
+const Tag = token.Tag;
+const TokenIndex = token.TokenIndex;
 
 pub const NodeTag = enum {
     // Stmts

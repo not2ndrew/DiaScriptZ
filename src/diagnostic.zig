@@ -23,7 +23,7 @@ pub const DiagnosticError = union(enum) {
     modified_const,
 
     // Dialogue Errors
-    duplicate_var_dialogue,
+    duplicate_dialogue,
     undeclared_dialogue_block,
     ambiguous_jump,
 };
@@ -65,19 +65,19 @@ pub const DiagnosticSink = struct {
 
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
         for (self.list.items) |diag| {
-            // const message = getErrorMessage(diag.err);
+            const message = getErrorMessage(diag.err);
             const line_slice = self.getLineSlice(diag.start);
             const pos = self.getLineCol(diag.start);
 
             std.debug.print(
-                \\{s}:{d}:{d} error: 
+                \\{s}:{d}:{d} error: {s}
                 \\     |
                 \\{d:4} | {s}
                 \\     |
                 ,
                 .{
                     // message,
-                    file_name, pos.line, pos.col,
+                    file_name, pos.line, pos.col, message,
                     pos.line, line_slice
                 }
             );
@@ -103,13 +103,13 @@ pub const DiagnosticSink = struct {
     fn getErrorMessage(err: DiagnosticError) []const u8 {
         return switch (err) {
             .undeclared_var => "use of undeclared variable",
-            .duplicate_var => "duplicate variable declaration",
+            .duplicate_var => "duplicate variable declaration name",
             .modified_const => "cannot modify constant",
             .int_overflow => "integer overflow",
             .int_underflow => "integer underflow",
             .undeclared_dialogue_block => "use of undeclared dialogue block",
             .ambiguous_jump => "dialogue jumps too ambiguous",
-            .duplicate_var_dialogue => "duplicate dialogue and declaration",
+            .duplicate_dialogue => "duplicate dialogue struct name",
             else => "unknown error",
         };
     }
