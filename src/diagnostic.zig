@@ -103,7 +103,7 @@ pub const DiagnosticSink = struct {
     fn getErrorMessage(err: DiagnosticError) []const u8 {
         return switch (err) {
             .undeclared_var => "use of undeclared variable",
-            .duplicate_var => "duplicate variable declaration name",
+            .duplicate_var => "duplicate variable name",
             .modified_const => "cannot modify constant",
             .int_overflow => "integer overflow",
             .int_underflow => "integer underflow",

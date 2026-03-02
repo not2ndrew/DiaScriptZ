@@ -21,14 +21,18 @@ const Tokens = std.MultiArrayList(Token);
 
 const MAX_NUM_CHOICES = 4;
 
-pub const Symbol = struct {
+pub const ProgramSymbol = struct {
     token_pos: TokenIndex,
-    extra_index: u32,
+    mutability: Mutability,
 
-    const Mutability = enum {
+    pub const Mutability = enum {
         keyword_const,
         keyword_var,
     };
+};
+
+pub const DialogueSymbol = struct {
+    token_pos: TokenIndex,
 };
 
 pub const Semantic = struct {
@@ -37,12 +41,8 @@ pub const Semantic = struct {
     nodes: *const Nodes,
     tokens: *const Tokens,
 
-    program_vars: std.StringArrayHashMap(Symbol),
-    dialogue_vars: std.StringArrayHashMap(Symbol),
-
-    // Mutabilities is a one-to-one relationship with
-    // program vars.
-    mutabilities: std.ArrayList(Symbol.Mutability),
+    program_vars: std.StringArrayHashMap(ProgramSymbol),
+    dialogue_vars: std.StringArrayHashMap(DialogueSymbol),
 
     pub fn init(
         diag_sink: *DiagnosticSink, stmts: []const NodeIndex,
@@ -53,16 +53,14 @@ pub const Semantic = struct {
             .stmts = stmts,
             .nodes = nodes,
             .tokens = tokens,
-            .program_vars = std.StringArrayHashMap(Symbol).init(diag_sink.allocator),
-            .dialogue_vars = std.StringArrayHashMap(Symbol).init(diag_sink.allocator),
-            .mutabilities = .{},
+            .program_vars = std.StringArrayHashMap(ProgramSymbol).init(diag_sink.allocator),
+            .dialogue_vars = std.StringArrayHashMap(DialogueSymbol).init(diag_sink.allocator),
         };
     }
 
     pub fn deinit(self: *Semantic) void {
         self.program_vars.deinit();
         self.dialogue_vars.deinit();
-        self.mutabilities.deinit(self.diag_sink.allocator);
     }
 
     fn report(self: *Semantic, diag_err: DiagnosticError, node_index: NodeIndex) !void {
@@ -85,9 +83,8 @@ pub const Semantic = struct {
 
     pub fn analyze(self: *Semantic) !void {
         // PASS 1: Scan for all declared names
-        for (self.stmts) |i| {
-            const node_index: u32 = @intCast(i);
-            try self.analyzeName(node_index);
+        for (self.stmts) |node_index| {
+            try self.collectDeclName(node_index);
         }
 
         // PASS 2: Semantic Analysis
@@ -100,7 +97,7 @@ pub const Semantic = struct {
     // ───────────────────────────────
     //             PASS 1
     // ───────────────────────────────
-    fn analyzeName(self: *Semantic, node_index: NodeIndex) !void {
+    fn collectDeclName(self: *Semantic, node_index: NodeIndex) !void {
         const node = self.nodes.get(node_index);
 
         switch (node.tag) {
@@ -111,26 +108,25 @@ pub const Semantic = struct {
     }
 
     fn storeDeclar(self: *Semantic, node: Node) !void {
-        const ident_pos = node.data.decl.name;
-        const ident_node = self.nodes.get(ident_pos);
+        const ident_index = node.data.decl.name;
+        const ident_node = self.nodes.get(ident_index);
         const name = self.getNameFromNode(ident_node);
 
-        const decl = self.getNameFromNode(node);
-        const is_const = std.mem.eql(u8, decl, "const");
-        var decl_type: Symbol.Mutability = .keyword_var;
+        const mut_type = self.tokens.get(node.token_pos).tag;
+        var mutability: ProgramSymbol.Mutability = .keyword_var;
+        if (mut_type == .keyword_const) mutability = .keyword_const;
 
-        if (self.program_vars.contains(name)) {
-            try self.report(.duplicate_var, ident_pos);
+        const entry = try self.program_vars.getOrPut(name);
+
+        if (entry.found_existing) {
+            try self.report(.duplicate_var, ident_index);
             return;
         }
 
-        if (is_const) decl_type = .keyword_const;
-
-        try self.mutabilities.append(self.diag_sink.allocator, decl_type);
-        try self.program_vars.putNoClobber(name, .{
+        entry.value_ptr.* = .{
             .token_pos = ident_node.token_pos,
-            .extra_index = @intCast(self.mutabilities.items.len),
-        });
+            .mutability = mutability,
+        };
     }
 
     fn storeLabel(self: *Semantic, node_index: NodeIndex) !void {
@@ -142,22 +138,16 @@ pub const Semantic = struct {
             return;
         }
 
-        if (self.dialogue_vars.contains(name)) {
+        const entry = try self.dialogue_vars.getOrPut(name);
+
+        if (entry.found_existing) {
             try self.report(.duplicate_dialogue, node_index);
             return;
         }
 
-        // self.dialogue_vars.put(name, .{
-        //     .token_pos = node.token_pos,
-        //     .extra_index = invalid_node,
-        // });
-
-        // TODO: Replace invalid_node with void.
-        // No reason to store extra index.
-        try self.dialogue_vars.putNoClobber(name, .{
+        entry.value_ptr.* = .{
             .token_pos = node.token_pos,
-            .extra_index = invalid_node,
-        });
+        };
     }
     // ───────────────────────────────
     //             PASS 2

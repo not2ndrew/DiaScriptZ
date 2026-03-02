@@ -1,8 +1,2 @@
-~ Scene_A
-end
-
-~ Scene_B
-end
-
-~ Scene_A
-end
+const i = 0
+const i = 0
