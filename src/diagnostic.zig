@@ -24,7 +24,7 @@ pub const DiagnosticError = union(enum) {
 
     // Dialogue Errors
     duplicate_dialogue,
-    undeclared_dialogue_block,
+    undeclared_dialogue,
     ambiguous_jump,
 };
 
@@ -107,7 +107,7 @@ pub const DiagnosticSink = struct {
             .modified_const => "cannot modify constant",
             .int_overflow => "integer overflow",
             .int_underflow => "integer underflow",
-            .undeclared_dialogue_block => "use of undeclared dialogue block",
+            .undeclared_dialogue => "use of undeclared dialogue block",
             .ambiguous_jump => "dialogue jumps too ambiguous",
             .duplicate_dialogue => "duplicate dialogue struct name",
             else => "unknown error",

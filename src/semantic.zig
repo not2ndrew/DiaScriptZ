@@ -76,11 +76,55 @@ pub const Semantic = struct {
         });
     }
 
+    // TODO: Change function name to be more clearer.
     fn getNameFromNode(self: *Semantic, node: Node) []const u8 {
         const token = self.tokens.get(node.token_pos);
         return self.diag_sink.source[token.start..token.end];
     }
 
+    // TODO: Don't consider numbers as variables.
+    fn findProgramVar(self: *Semantic, node_index: NodeIndex) !void {
+        const ident_node = self.nodes.get(node_index);
+        const node_name = self.getNameFromNode(ident_node);
+
+        if (!self.program_vars.contains(node_name)) {
+            try self.report(.undeclared_var, node_index);
+            return;
+        }
+    }
+
+    fn analyzeProgramIdent(self: *Semantic, node_index: NodeIndex) ?ProgramSymbol {
+        const ident_node = self.nodes.get(node_index);
+        const node_name = self.getNameFromNode(ident_node);
+
+        return self.program_vars.get(node_name);
+    }
+
+    // fn analyzeExpr(self: *Semantic, node_index: NodeIndex) !void {
+    //     const node = self.nodes.get(node_index);
+    //
+    //     switch (node.tag) {
+    //         .identifier => {},
+    //         .number => try self.analyzeNumber(node),
+    //         else => unreachable,
+    //     }
+    // }
+
+    /// By default, the maximum will be u8 (256).
+    fn analyzeNumber(self: *Semantic, node_index: NodeIndex) !void {
+        const node = self.nodes.get(node_index);
+        const name = self.getNameFromNode(node);
+
+        // 10 is the default base for parseInt.
+        _ = std.fmt.parseInt(u8, name, 10) catch {
+            try self.report(.int_overflow, node_index);
+            return;
+        };
+    }
+
+    /// analyze function uses two scan appraoch:
+    /// 1) Collecting Declaration Names
+    /// 2) Validation analysis.
     pub fn analyze(self: *Semantic) !void {
         // PASS 1: Scan for all declared names
         for (self.stmts) |node_index| {
@@ -88,10 +132,9 @@ pub const Semantic = struct {
         }
 
         // PASS 2: Semantic Analysis
-        // for (self.stmts) |i| {
-        //     const node_index: u32 = @intCast(i);
-        //     try self.analyzeStmt(node_index);
-        // }
+        for (self.stmts) |node_index| {
+            try self.analyzeStmt(node_index);
+        }
     }
 
     // ───────────────────────────────
@@ -152,4 +195,43 @@ pub const Semantic = struct {
     // ───────────────────────────────
     //             PASS 2
     // ───────────────────────────────
+    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) !void {
+        const node = self.nodes.get(node_index);
+
+        switch (node.tag) {
+            .assign, .plus_equal,
+            .minus_equal, .mult_equal,
+            .div_equal => try self.analyzeArithmetic(node),
+            // .if_stmt => self.analyzeIfStmt(node) catch {},
+            else => {},
+        }
+    }
+
+    fn analyzeArithmetic(self: *Semantic, node: Node) !void {
+        const assign = node.data.assign;
+        const target_index = assign.target;
+        // const value_index = assign.value;
+
+        const symbol = self.analyzeProgramIdent(target_index) orelse {
+            try self.report(.undeclared_var, target_index);
+            return;
+        };
+
+        if (symbol.mutability == .keyword_const) {
+            try self.report(.modified_const, target_index);
+            return;
+        }
+    }
+
+    // fn analyzeIfStmt(self: *Semantic, node: Node) !void {
+    //     const condition = node.data.if_stmt.condition;
+    //     const comparison_node = self.nodes.get(condition);
+    //     const binary = comparison_node.data.binary;
+    //
+    //     const left_index = binary.lhs;
+    //     const right_index = binary.rhs;
+    //
+    //     try self.findProgramVar(left_index);
+    //     try self.findProgramVar(right_index);
+    // }
 };
