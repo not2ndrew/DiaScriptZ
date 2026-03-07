@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const diagnostic = @import("diagnostic.zig");
+const sink = @import("diagnostic.zig").DiagnosticSink;
 
 const Allocator = std.mem.Allocator;
 
@@ -22,8 +22,6 @@ const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
 const nodeTagFromScene = zig_node.nodeTagFromScene;
 
-const DiagnosticSink = diagnostic.DiagnosticSink;
-
 const Tokens = std.MultiArrayList(Token);
 
 const ParserError = error {
@@ -34,7 +32,7 @@ const Error = ParserError || Allocator.Error;
 
 // Extended Backus Naur Form:
 pub const Parser = struct {
-    diag_sink: *DiagnosticSink,
+    diag_sink: *sink,
     tokens: *const std.MultiArrayList(Token),
     nodes: std.MultiArrayList(Node),
     
@@ -42,7 +40,7 @@ pub const Parser = struct {
 
     token_pos: u32,
 
-    pub fn init(tokens: *const Tokens, diag_sink: *DiagnosticSink) !Parser {
+    pub fn init(tokens: *const Tokens, diag_sink: *sink) !Parser {
         // Empirically, there is a 2 : 1 ratio
         // of tokens to nodes.
         const estimated_node_count = (tokens.len + 2) / 2;

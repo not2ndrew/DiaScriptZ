@@ -13,7 +13,7 @@ const Token = tok.Token;
 const Node = zig_node.Node;
 const invalid_node = zig_node.invalid_node;
 
-const DiagnosticSink = diagnostic.DiagnosticSink;
+const sink = diagnostic.DiagnosticSink;
 const DiagnosticError = diagnostic.DiagnosticError;
 
 const Nodes = std.MultiArrayList(Node);
@@ -36,7 +36,7 @@ pub const DialogueSymbol = struct {
 };
 
 pub const Semantic = struct {
-    diag_sink: *DiagnosticSink,
+    diag_sink: *sink,
     stmts: []const NodeIndex,
     nodes: *const Nodes,
     tokens: *const Tokens,
@@ -45,7 +45,7 @@ pub const Semantic = struct {
     dialogue_vars: std.StringArrayHashMap(DialogueSymbol),
 
     pub fn init(
-        diag_sink: *DiagnosticSink, stmts: []const NodeIndex,
+        diag_sink: *sink, stmts: []const NodeIndex,
         nodes: *const Nodes, tokens: *const Tokens
     ) Semantic {
         return .{

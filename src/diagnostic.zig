@@ -1,8 +1,6 @@
 const std = @import("std");
-const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-
-const Tag = tok.Tag;
+const Tag = @import("token.zig").Tag;
 
 const NodeIndex = zig_node.NodeIndex;
 const invalid_node = zig_node.invalid_node;

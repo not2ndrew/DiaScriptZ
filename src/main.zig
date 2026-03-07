@@ -1,23 +1,8 @@
 const std = @import("std");
-const tok = @import("token.zig");
-const zig_node = @import("node.zig");
-const diagnostic = @import("diagnostic.zig");
-const tokenizer = @import("tokenizer.zig");
-const par = @import("parser.zig");
-const sem = @import("semantic.zig");
-
-const Token = tok.Token;
-const Tag = tok.Tag;
-
-const Node = zig_node.Node;
-const NodeIndex = zig_node.NodeIndex;
-
-const DiagnosticSink = diagnostic.DiagnosticSink;
+const compileFile = @import("compile.zig").compileFile;
 
 const Allocator = std.mem.Allocator;
 const FILE_NAME = "script.txt";
-
-const TokenList = std.MultiArrayList(Token);
 
 pub fn main() !void {
     var debugAlloc = std.heap.DebugAllocator(.{}){};
@@ -25,70 +10,4 @@ pub fn main() !void {
     const allocator = debugAlloc.allocator();
 
     try compileFile(allocator, FILE_NAME);
-}
-
-fn compileFile(allocator: Allocator, file_name: []const u8) !void {
-    const lines = try readFile(allocator, file_name);
-    defer allocator.free(lines);
-
-    var diag_sink = DiagnosticSink.init(allocator, lines);
-    defer diag_sink.deinit();
-
-    // lines => tokens
-    var tokenList = try tokenize(allocator, lines);
-    defer tokenList.deinit(allocator);
-
-    // tokens => AST of stmt nodes
-    var parser = try par.Parser.init(&tokenList, &diag_sink);
-    defer parser.deinit();
-
-    const parsed_list = try parser.parse();
-    defer allocator.free(parsed_list);
-
-    // AST => proper AST
-    var semantic = sem.Semantic.init(
-        &diag_sink, parsed_list,
-        &parser.nodes, &tokenList
-    );
-    defer semantic.deinit();
-
-    try semantic.analyze();
-
-    diag_sink.printErrors(FILE_NAME);
-}
-
-/// Make sure to free memory from the string!!!
-fn readFile(allocator: Allocator, file_name: []const u8) ![]const u8 {
-    var read_buf: []u8 = undefined;
-
-    const file = try std.fs.cwd().openFile(file_name, .{});
-    defer file.close();
-
-    const stat = try file.stat();
-    const size = stat.size;
-    read_buf = try allocator.alloc(u8, size);
-
-    var reader = std.fs.File.Reader.init(file, read_buf);
-    const reader_inter: *std.Io.Reader = &reader.interface;
-
-    while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
-        if (err != std.Io.Reader.DelimiterError.EndOfStream) {
-            std.debug.print("An Error has occurred {}", .{err});
-        }
-    }
-
-    return read_buf[0..reader.pos];
-}
-
-fn tokenize(allocator: Allocator, buf: []const u8) !TokenList {
-    var tokenList: std.MultiArrayList(Token) = .{};
-    var tokenStream = tokenizer.Tokenizer.init(buf);
-
-    while (tokenStream.index < tokenStream.buffer.len) {
-        const token = tokenStream.next();
-        try tokenList.append(allocator, token);
-        if (token.tag == .EOF) break;
-    }
-
-    return tokenList;
 }
