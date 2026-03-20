@@ -8,22 +8,46 @@ const invalid_node = zig_node.invalid_node;
 const Allocator = std.mem.Allocator;
 
 pub const DiagnosticError = union(enum) {
-    unexpected_token: struct {
+    unexpected_token: UnexpectedToken,
+    simple: SimpleError,
+
+    pub const UnexpectedToken = struct {
         expected: Tag,
         found: Tag,
-    },
-    undetermined_string,
-    // Programming Errors
-    int_overflow,
-    int_underflow,
-    undeclared_var,
-    duplicate_var,
-    modified_const,
+    };
 
-    // Dialogue Errors
-    duplicate_dialogue,
-    undeclared_dialogue,
-    ambiguous_jump,
+    pub const SimpleError = enum {
+        undetermined_string,
+        // Programming Errors
+        int_overflow,
+        int_underflow,
+        undeclared_var,
+        duplicate_var,
+        modified_const,
+
+        // Dialogue Errors
+        duplicate_dialogue,
+        undeclared_dialogue,
+        ambiguous_jump,
+    };
+
+    pub fn message(err: DiagnosticError) []const u8 {
+        return switch (err) {
+            .unexpected_token => "unexpected token",
+            .simple => |e| switch (e) {
+                .undeclared_var => "use of undeclared variable",
+                .duplicate_var => "duplicate variable name",
+                .modified_const => "cannot modify constant",
+                .int_overflow => "integer overflow",
+                .int_underflow => "integer underflow",
+                .undeclared_dialogue => "use of undeclared dialogue block",
+                .ambiguous_jump => "dialogue jumps too ambiguous",
+                .duplicate_dialogue => "duplicate dialogue struct name",
+                .undetermined_string => "undetermined string",
+            },
+        };
+    }
+
 };
 
 pub const Severity = enum {
@@ -63,7 +87,6 @@ pub const DiagnosticSink = struct {
 
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
         for (self.list.items) |diag| {
-            const message = getErrorMessage(diag.err);
             const line_slice = self.getLineSlice(diag.start);
             const pos = self.getLineCol(diag.start);
 
@@ -75,41 +98,17 @@ pub const DiagnosticSink = struct {
                 ,
                 .{
                     // message,
-                    file_name, pos.line, pos.col, message,
+                    file_name, pos.line, pos.col, diag.err.message(),
                     pos.line, line_slice
                 }
             );
-            // TODO: Repeatedly printing a singular space is bad.
-            var i: usize = 0;
-            while (i < pos.col) : (i += 1) {
-                std.debug.print(" ", .{});
-            }
 
-            if (diag.severity == .note) {
-                const token = diag.err.unexpected_token;
-                std.debug.print(
-                    "^\n --> Expected {t}, Found {t}\n\n",
-                    .{token.expected, token.found}
-                );
-            } else {
-                std.debug.print("^\n\n", .{});
-            }
-
+            // Assume some amount of spaces in empty line
+            var buf: [100]u8 = undefined;
+            const spaces = buf[0..@min(pos.col, buf.len)];
+            @memset(spaces, ' ');
+            std.debug.print("{s}^\n", .{spaces});
         }
-    }
-
-    fn getErrorMessage(err: DiagnosticError) []const u8 {
-        return switch (err) {
-            .undeclared_var => "use of undeclared variable",
-            .duplicate_var => "duplicate variable name",
-            .modified_const => "cannot modify constant",
-            .int_overflow => "integer overflow",
-            .int_underflow => "integer underflow",
-            .undeclared_dialogue => "use of undeclared dialogue block",
-            .ambiguous_jump => "dialogue jumps too ambiguous",
-            .duplicate_dialogue => "duplicate dialogue struct name",
-            else => "unknown error",
-        };
     }
 
     // TODO: Search for every '\n' during init,

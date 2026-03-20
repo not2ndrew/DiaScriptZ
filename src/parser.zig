@@ -213,7 +213,10 @@ pub const Parser = struct {
         const assign_pos = try self.expect(assign_tag);
         const expr = try self.parseExpr();
 
-        const node_tag = nodeTagFromArithmetic(assign_tag);
+        const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
+            try self.reportUnexpected(.assign);
+            return ParserError.ParseError;
+        };
 
         return try self.addNode(node_tag, assign_pos, .{
             .assign = .{
@@ -260,14 +263,9 @@ pub const Parser = struct {
 
         const op_tag = self.peekTag();
 
-        const compare_tag = switch (op_tag) {
-            .equals, .not_equal, .less,
-            .greater, .less_or_equal,
-            .greater_or_equal => nodeTagFromCompare(op_tag),
-            else => {
-                try self.reportUnexpected(.equals);
-                return Error.ParseError;
-            }
+        const compare_tag = nodeTagFromCompare(op_tag) orelse {
+            try self.reportUnexpected(.equals);
+            return Error.ParseError;
         };
 
         const compare_token = self.token_pos;
@@ -338,7 +336,7 @@ pub const Parser = struct {
             switch (self.peekTag()) {
                 .string => {
                     _ = try self.addNode(.string, self.token_pos, .{
-                        .string = .{ .token = self.token_pos }
+                        .string = self.token_pos,
                     });
 
                     self.next();
@@ -350,7 +348,7 @@ pub const Parser = struct {
                     _ = try self.expect(.inter_close);
 
                     _ = try self.addNode(.identifier, ident, .{
-                        .identifier = .{ .token = ident }
+                        .identifier = self.token_pos,
                     });
                 },
                 else => break,
@@ -414,7 +412,7 @@ pub const Parser = struct {
     fn parseIdent(self: *Parser) Error!NodeIndex {
         const ident_pos = try self.expect(.identifier);
         return try self.addNode(.identifier, ident_pos, .{
-            .identifier = .{ .token = ident_pos }
+            .identifier = ident_pos,
         });
     }
 
@@ -426,7 +424,10 @@ pub const Parser = struct {
             const tag = self.peekTag();
             if (tag != .plus and tag != .minus) break;
 
-            const binary_tag = nodeTagFromCompare(tag);
+            const binary_tag = nodeTagFromBinary(tag) orelse {
+                try self.reportUnexpected(.plus);
+                return ParserError.ParseError;
+            };
             const op_tok = self.token_pos;
             self.next();
 
@@ -448,7 +449,10 @@ pub const Parser = struct {
             const tag = self.peekTag();
             if (tag != .asterisk and tag != .slash) break;
 
-            const binary_tag = nodeTagFromCompare(tag);
+            const binary_tag = nodeTagFromBinary(tag) orelse {
+                try self.reportUnexpected(.asterisk);
+                return ParserError.ParseError;
+            };
             const op_tok = self.token_pos;
             self.next();
 
@@ -470,13 +474,13 @@ pub const Parser = struct {
             .number => {
                 self.next();
                 return self.addNode(.number, idx, .{
-                    .number = .{ .token = idx }
+                    .numbers = idx,
                 });
             },
             .identifier => {
                 self.next();
                 return self.addNode(.identifier, idx, .{
-                    .identifier = .{ .token = idx }
+                    .identifier = idx,
                 });
             },
             .open_paren => {

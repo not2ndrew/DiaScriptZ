@@ -27,13 +27,13 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
     defer allocator.free(parsed_list);
 
     // AST => proper AST
-    var semantic = Semantic.init(
-        &diag_sink, parsed_list,
-        &parser.nodes, &tokenList
-    );
-    defer semantic.deinit();
-
-    try semantic.analyze();
+    // var semantic = Semantic.init(
+    //     &diag_sink, parsed_list,
+    //     &parser.nodes, &tokenList
+    // );
+    // defer semantic.deinit();
+    //
+    // try semantic.analyze();
 
     diag_sink.printErrors(file_name);
 }

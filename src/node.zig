@@ -56,18 +56,18 @@ pub const NodeTag = enum {
     string,
 };
 
-pub fn nodeTagFromArithmetic(token_tag: Tag) NodeTag {
+pub fn nodeTagFromArithmetic(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
         .assign => .assign,
         .plus_equal => .plus_equal,
         .minus_equal => .minus_equal,
         .asterisk_equal => .mult_equal,
         .slash_equal => .div_equal,
-        else => unreachable,
+        else => null,
     };
 }
 
-pub fn nodeTagFromCompare(token_tag: Tag) NodeTag {
+pub fn nodeTagFromCompare(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
         .equals => .equals,
         .not_equal => .not_equal,
@@ -75,25 +75,25 @@ pub fn nodeTagFromCompare(token_tag: Tag) NodeTag {
         .less => .less,
         .greater_or_equal => .greater_or_equal,
         .less_or_equal => .less_or_equal,
-        else => unreachable,
+        else => null,
     };
 }
 
-pub fn nodeTagFromBinary(token_tag: Tag) NodeTag {
+pub fn nodeTagFromBinary(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
         .plus => .add,
         .minus => .sub,
         .asterisk => .mult,
         .slash => .div,
-        else => unreachable,
+        else => null,
     };
 }
 
-pub fn nodeTagFromScene(token_tag: Tag) NodeTag {
+pub fn nodeTagFromScene(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
         .hash => .scene,
         .tilde => .label,
-        else => unreachable,
+        else => null,
     };
 }
 
@@ -108,11 +108,14 @@ pub const NodeRange = struct {
     len: u32,
 };
 
+// TODO: Adjust numbers, string, and identifier
+// These union fields pay the full price of an if_stmt.
+// So it becomes very expensive the more nodes are created.
 pub const NodeData = union {
     // Literals
-    number: struct { token: TokenIndex },
-    string: struct { token: TokenIndex },
-    identifier: struct { token: TokenIndex },
+    numbers: TokenIndex,
+    string: TokenIndex,
+    identifier: TokenIndex,
 
     // Expressions
     binary: struct {
