@@ -13,7 +13,6 @@ const TokenIndex = token.TokenIndex;
 pub const NodeTag = enum {
     // Stmts
     declar_stmt,
-    compound_stmt, // TODO: I am not using this enum.
     if_stmt,
     label,
     dialogue,

@@ -35,6 +35,11 @@ pub const DialogueSymbol = struct {
     token_pos: TokenIndex,
 };
 
+// TODO: Switch nodes, tokens, and stmts to Slice
+// If you will be accessing more than one field, it's
+// better to get the slice of all the fields first, and then
+// call 'items' on that. This provides better performance.
+// https://www.youtube.com/watch?v=UCvASZT7ELU&t
 pub const Semantic = struct {
     diag_sink: *sink,
     stmts: []const NodeIndex,
@@ -81,6 +86,7 @@ pub const Semantic = struct {
         return self.identName(node);
     }
 
+    // TODO: Consider whether I should inline this function.
     fn identName(self: *Semantic, node: Node) []const u8 {
         const token = self.tokens.get(node.token_pos);
         return self.diag_sink.source[token.start..token.end];
@@ -118,9 +124,9 @@ pub const Semantic = struct {
         }
 
         // PASS 2: Semantic Analysis
-        // for (self.stmts) |node_index| {
-        //     try self.analyzeStmt(node_index);
-        // }
+        for (self.stmts) |node_index| {
+            try self.analyzeStmt(node_index);
+        }
     }
 
     // ───────────────────────────────
@@ -148,11 +154,11 @@ pub const Semantic = struct {
         const entry = try self.program_vars.getOrPut(name);
 
         if (entry.found_existing) {
-            try self.report(.duplicate_var, ident_index);
+            try self.report(.{ .simple = .duplicate_var }, ident_index);
             return;
         }
 
-        entry.value_ptr.* = .{
+        entry.value_ptr.* = ProgramSymbol{
             .token_pos = ident_node.token_pos,
             .mutability = mutability,
         };
@@ -163,18 +169,18 @@ pub const Semantic = struct {
         const name = self.identName(label_node);
 
         if (self.program_vars.contains(name)) {
-            try self.report(.duplicate_var, node_index);
+            try self.report(.{ .simple = .duplicate_var }, node_index);
             return;
         }
 
         const entry = try self.dialogue_vars.getOrPut(name);
 
         if (entry.found_existing) {
-            try self.report(.duplicate_dialogue, node_index);
+            try self.report(.{ .simple = .duplicate_dialogue }, node_index);
             return;
         }
 
-        entry.value_ptr.* = .{
+        entry.value_ptr.* = DialogueSymbol{
             .token_pos = label_node.token_pos,
         };
     }
@@ -182,4 +188,19 @@ pub const Semantic = struct {
     // ───────────────────────────────
     //             PASS 2
     // ───────────────────────────────
+    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) !void {
+        const node = self.nodes.get(node_index);
+
+        switch (node.tag) {
+            .declar_stmt => try self.analyzeDeclar(node),
+            else => {},
+        }
+    }
+
+    fn analyzeDeclar(self: *Semantic, node: Node) !void {
+        const value_index = node.data.decl.value;
+        const value_node = self.nodes.get(value_index);
+
+        _ = value_node;
+    }
 };

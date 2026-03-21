@@ -67,18 +67,14 @@ pub const Diagnostic = struct {
 pub const DiagnosticSink = struct {
     allocator: Allocator,
     source: []const u8,
-    list: std.ArrayList(Diagnostic),
+    list: []DiagnosticError,
 
-    pub fn init(allocator: Allocator, source: []const u8) DiagnosticSink {
+    pub fn init(allocator: Allocator, source: []const u8, list: []Diagnostic) DiagnosticSink {
         return .{
             .allocator = allocator,
             .source = source,
-            .list = .{},
+            .list = list,
         };
-    }
-
-    pub fn deinit(self: *DiagnosticSink) void {
-        self.list.deinit(self.allocator);
     }
 
     pub fn report(self: *DiagnosticSink, diag: Diagnostic) !void {
@@ -86,7 +82,7 @@ pub const DiagnosticSink = struct {
     }
 
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
-        for (self.list.items) |diag| {
+        for (self.list) |diag| {
             const line_slice = self.getLineSlice(diag.start);
             const pos = self.getLineCol(diag.start);
 
@@ -107,7 +103,18 @@ pub const DiagnosticSink = struct {
             var buf: [100]u8 = undefined;
             const spaces = buf[0..@min(pos.col, buf.len)];
             @memset(spaces, ' ');
-            std.debug.print("{s}^\n", .{spaces});
+
+            switch (diag.severity) {
+                .note => {
+                    const token = diag.err.unexpected_token;
+                    std.debug.print(
+                        "{s}^\n --> Expected {t}, Found {t}\n\n",
+                        .{spaces, token.expected, token.found}
+                    );
+                },
+                .warning => std.debug.print("{s}^\n", .{spaces}),
+                .err => {},
+            }
         }
     }
 

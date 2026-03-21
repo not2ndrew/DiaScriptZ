@@ -2,8 +2,6 @@ const std = @import("std");
 
 pub const TokenIndex = u32;
 
-pub const TokenList = std.MultiArrayList(Token);
-
 pub const TokenError = error {
     InvalidString,
 };

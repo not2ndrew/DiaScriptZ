@@ -1,7 +1,8 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const sink = @import("diagnostic.zig").DiagnosticSink;
+const Diagnostic = @import("diagnostic.zig").Diagnostic;
+const Ast = @import("ast.zig").Ast;
 
 const Allocator = std.mem.Allocator;
 
@@ -30,41 +31,30 @@ const ParserError = error {
 
 const Error = ParserError || Allocator.Error;
 
-// Extended Backus Naur Form:
 pub const Parser = struct {
-    diag_sink: *sink,
-    tokens: *const std.MultiArrayList(Token),
+    allocator: Allocator,
+    tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node),
-    
-    stmts: std.ArrayList(NodeIndex),
+    stmts: std.MultiArrayList(Node),
 
+    errors: std.ArrayList(Diagnostic),
     token_pos: u32,
 
-    pub fn init(tokens: *const Tokens, diag_sink: *sink) !Parser {
-        // Empirically, there is a 2 : 1 ratio
-        // of tokens to nodes.
-        const estimated_node_count = (tokens.len + 2) / 2;
-
-        // Empirically, there is a 2 : 1 ratio
-        // of stmt nodes to nodes.
-        const estimated_stmt_count = (estimated_node_count + 2) / 2;
-
-        var parser =  Parser{
-            .diag_sink = diag_sink,
+    pub fn init(allocator: Allocator, tokens: Tokens.Slice) !Parser {
+        return Parser{
+            .allocator = allocator,
             .tokens = tokens,
-            .nodes = .{},
-            .stmts = .{},
+            .nodes = .empty,
+            .stmts = .empty,
+            .errors = .empty,
             .token_pos = 0,
         };
-
-        try parser.nodes.ensureTotalCapacity(diag_sink.allocator, estimated_node_count);
-        try parser.stmts.ensureTotalCapacity(diag_sink.allocator, estimated_stmt_count);
-        return parser;
     }
 
-    // No need to deinit stmts since that is done in parse().
     pub fn deinit(self: *Parser) void {
-        self.nodes.deinit(self.diag_sink.allocator);
+        self.nodes.deinit(self.allocator);
+        self.stmts.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
@@ -77,7 +67,7 @@ pub const Parser = struct {
             token.end = prev.end;
         }
 
-        try self.diag_sink.report(.{
+        try self.errors.append(self.allocator, .{
             .severity = .note,
             .err = .{
                 .unexpected_token = .{
@@ -132,7 +122,16 @@ pub const Parser = struct {
         });
 
         const idx: u32 = @intCast(self.nodes.len - 1);
+        std.debug.print("Tokens: {d}, Nodes Length: {d}\n", .{ self.tokens.len, self.nodes.len });
         return idx;
+    }
+
+    fn addStmt(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) void {
+        self.stmts.appendAssumeCapacity(.{
+            .tag = tag,
+            .token_pos = token_pos,
+            .data = data,
+        });
     }
 
     pub fn printStmtNodeTags(self: *Parser, stmts: []NodeIndex) void {
@@ -143,16 +142,13 @@ pub const Parser = struct {
     }
 
     // program = { stmt } ;
-    pub fn parse(self: *Parser) Error![]NodeIndex {
+    pub fn parse(self: *Parser) Error!void {
         while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
-            const stmt = self.parseStmt() catch {
+            self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
-            self.stmts.appendAssumeCapacity(stmt);
         }
-
-        return self.stmts.toOwnedSlice(self.diag_sink.allocator);
     }
 
 
@@ -167,7 +163,7 @@ pub const Parser = struct {
     // | label
     // | dialogue
     // | choices 
-    fn parseStmt(self: *Parser) Error!NodeIndex {
+    fn parseStmt(self: *Parser) Error!void {
         return switch (self.peekTag()) {
             .keyword_const, .keyword_var => self.parseDeclar(),
             .identifier, .underscore => self.parseIdentStmt(),
@@ -182,7 +178,7 @@ pub const Parser = struct {
     }
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr ;
-    fn parseDeclar(self: *Parser) Error!NodeIndex {
+    fn parseDeclar(self: *Parser) Error!void {
         const decl_pos = self.token_pos;
         self.next();
 
@@ -190,13 +186,13 @@ pub const Parser = struct {
         _ = try self.expect(.assign);
         const value = try self.parseExpr();
 
-        return try self.addNode(.declar_stmt, decl_pos, .{
+        self.addStmt(.declar_stmt, decl_pos, .{
             .decl = .{ .name = ident, .value = value }
         });
     }
 
     // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
-    fn parseIdentStmt(self: *Parser) Error!NodeIndex {
+    fn parseIdentStmt(self: *Parser) Error!void {
         const ident_pos = try self.parseIdent();
 
         const next_tag = self.peekTag();
@@ -205,11 +201,11 @@ pub const Parser = struct {
             .assign, .plus_equal, .minus_equal,
             .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
             .colon => try self.parseDialogue(ident_pos),
-            else => return try self.expect(.assign),
+            else => _ = try self.expect(.assign),
         };
     }
 
-    fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
+    fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!void {
         const assign_pos = try self.expect(assign_tag);
         const expr = try self.parseExpr();
 
@@ -218,7 +214,7 @@ pub const Parser = struct {
             return ParserError.ParseError;
         };
 
-        return try self.addNode(node_tag, assign_pos, .{
+        self.addStmt(node_tag, assign_pos, .{
             .assign = .{
                 .target = ident_pos,
                 .value = expr,
@@ -227,7 +223,7 @@ pub const Parser = struct {
     }
 
     // if_stmt = "if" "(" compar_expr ")" block [ else_block ] ;
-    fn parseIfStmt(self: *Parser) Error!NodeIndex {
+    fn parseIfStmt(self: *Parser) Error!void {
         const if_pos = try self.expect(.keyword_if);
         var else_block: NodeIndex = invalid_node;
 
@@ -241,7 +237,7 @@ pub const Parser = struct {
             else_block = try self.parseElseBlock();
         }
 
-        return self.addNode(.if_stmt, if_pos, .{
+        self.addStmt(.if_stmt, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
                 .then_block = then_block,
@@ -280,7 +276,7 @@ pub const Parser = struct {
 
     // stmt_block = "{" { stmt } "}" ;
     fn parseStmtBlock(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.stmts.items.len);
+        const start: u32 = @intCast(self.stmts.len);
         const block_pos = try self.expect(.open_brace);
 
         const len = try self.parseStmtListUntil(.close_brace);
@@ -295,12 +291,11 @@ pub const Parser = struct {
     fn parseStmtListUntil(self: *Parser, end_tag: TokenTag) Error!u32 {
         var len: u32 = 0;
         while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
-            const stmt = self.parseStmt() catch {
+            self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
 
-            self.stmts.appendAssumeCapacity(stmt);
             len += 1;
         }
 
@@ -312,14 +307,14 @@ pub const Parser = struct {
     // ───────────────────────────────
 
     // dialogue = identifier ":" string ;
-    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
+    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!void {
         _ = try self.expect(.colon);
 
         return try self.parseGoto(ident_pos, .dialogue);
     }
 
     // choice = { "*" string }
-    fn parseChoice(self: *Parser) Error!NodeIndex {
+    fn parseChoice(self: *Parser) Error!void {
         const marker = self.token_pos;
         self.next();
 
@@ -364,7 +359,7 @@ pub const Parser = struct {
     }
 
     // string = string_part { string_part } [ "->" ident ] ;
-    fn parseGoto(self: *Parser, ident_pos: TokenIndex, tag: Tag) Error!NodeIndex {
+    fn parseGoto(self: *Parser, ident_pos: TokenIndex, tag: Tag) Error!void {
         const start: u32 = @intCast(self.nodes.len);
         const len: u32 = try self.parseString();
 
@@ -373,25 +368,25 @@ pub const Parser = struct {
 
             const goto = try self.parseIdent();
 
-            return try self.addNode(tag, ident_pos, .{
+            self.addStmt(tag, ident_pos, .{
                 .dialogue = .{
                     .str = .{ .start = start, .len = len },
                     .branch = .{ .goto = goto }
                 }
             });
+        } else {
+            self.addStmt(tag, ident_pos, .{
+                .dialogue = .{
+                    .str = .{ .start = start, .len = len },
+                    .branch = .none
+                }
+            });
         }
-
-        return try self.addNode(tag, ident_pos, .{
-            .dialogue = .{
-                .str = .{ .start = start, .len = len },
-                .branch = .none,
-            }
-        });
     }
 
     // label = “~” ident block “end” ;
-    fn parseLabel(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.stmts.items.len);
+    fn parseLabel(self: *Parser) Error!void {
+        const start: u32 = @intCast(self.stmts.len);
         _ = try self.expect(.tilde);
         const ident_pos = self.token_pos;
         _ = try self.parseIdent();
@@ -400,7 +395,7 @@ pub const Parser = struct {
 
         _ = try self.expect(.keyword_end);
 
-        return try self.addNode(.label, ident_pos, .{
+        self.addStmt(.label, ident_pos, .{
             .block = .{ .start = start, .len = len }
         });
     }

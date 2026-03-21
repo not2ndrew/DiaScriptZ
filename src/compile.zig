@@ -1,10 +1,5 @@
 const std = @import("std");
-const Token = @import("token.zig").Token;
-const Node = @import("node.zig").Node;
-const DiagnosticSink = @import("diagnostic.zig").DiagnosticSink;
-const tokenizer = @import("tokenizer.zig");
-const Parser = @import("parser.zig").Parser;
-const Semantic = @import("semantic.zig").Semantic;
+const Ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -12,30 +7,10 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
     const lines = try readFile(allocator, file_name);
     defer allocator.free(lines);
 
-    var diag_sink = DiagnosticSink.init(allocator, lines);
-    defer diag_sink.deinit();
+    var ast = try Ast.tokenize(allocator, lines);
+    defer ast.nodes.deinit(allocator);
+    defer ast.stmts.deinit(allocator);
 
-    // lines => tokens
-    var tokenList = try tokenize(allocator, lines);
-    defer tokenList.deinit(allocator);
-
-    // tokens => AST of stmt nodes
-    var parser = try Parser.init(&tokenList, &diag_sink);
-    defer parser.deinit();
-
-    const parsed_list = try parser.parse();
-    defer allocator.free(parsed_list);
-
-    // AST => proper AST
-    // var semantic = Semantic.init(
-    //     &diag_sink, parsed_list,
-    //     &parser.nodes, &tokenList
-    // );
-    // defer semantic.deinit();
-    //
-    // try semantic.analyze();
-
-    diag_sink.printErrors(file_name);
 }
 
 /// Make sure to free memory from the string!!!
@@ -59,19 +34,4 @@ fn readFile(allocator: Allocator, file_name: []const u8) ![]const u8 {
     }
 
     return read_buf[0..reader.pos];
-}
-
-fn tokenize(allocator: Allocator, buf: []const u8) !std.MultiArrayList(Token) {
-    var tokenList: std.MultiArrayList(Token) = .{};
-    errdefer tokenList.deinit(allocator);
-
-    var tokens = tokenizer.Tokenizer.init(buf);
-
-    while (true) {
-        const token = tokens.next();
-        try tokenList.append(allocator, token);
-        if (token.tag == .EOF) break;
-    }
-
-    return tokenList;
 }
