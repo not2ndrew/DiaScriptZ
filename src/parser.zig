@@ -41,7 +41,7 @@ pub const Parser = struct {
     token_pos: u32,
 
     pub fn init(allocator: Allocator, tokens: Tokens.Slice) !Parser {
-        return Parser{
+        return .{
             .allocator = allocator,
             .tokens = tokens,
             .nodes = .empty,
@@ -51,10 +51,11 @@ pub const Parser = struct {
         };
     }
 
+    // errors is still kept for semantic analysis.
+    // errors will be deinit() separately.
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
-        self.errors.deinit(self.allocator);
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
@@ -122,7 +123,6 @@ pub const Parser = struct {
         });
 
         const idx: u32 = @intCast(self.nodes.len - 1);
-        std.debug.print("Tokens: {d}, Nodes Length: {d}\n", .{ self.tokens.len, self.nodes.len });
         return idx;
     }
 
@@ -142,7 +142,7 @@ pub const Parser = struct {
     }
 
     // program = { stmt } ;
-    pub fn parse(self: *Parser) Error!void {
+    pub fn parseAll(self: *Parser) Error!void {
         while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
             self.parseStmt() catch {
                 self.synchronize();

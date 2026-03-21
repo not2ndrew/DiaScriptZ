@@ -1,5 +1,7 @@
 const std = @import("std");
 const Ast = @import("ast.zig");
+// const Semantic = @import("semantic.zig").Semantic;
+const Sink = @import("diagnostic.zig").DiagnosticSink;
 
 const Allocator = std.mem.Allocator;
 
@@ -7,10 +9,14 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
     const lines = try readFile(allocator, file_name);
     defer allocator.free(lines);
 
-    var ast = try Ast.tokenize(allocator, lines);
-    defer ast.nodes.deinit(allocator);
-    defer ast.stmts.deinit(allocator);
+    var ast = try Ast.parse(allocator, lines);
+    defer ast.deinit();
 
+    const errors = try ast.errors.toOwnedSlice(allocator);
+    defer allocator.free(errors);
+
+    var sink = Sink.init(lines, errors);
+    sink.printErrors(file_name);
 }
 
 /// Make sure to free memory from the string!!!

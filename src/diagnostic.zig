@@ -1,9 +1,11 @@
 const std = @import("std");
+const tok = @import("token.zig");
 const zig_node = @import("node.zig");
 const Tag = @import("token.zig").Tag;
 
-const NodeIndex = zig_node.NodeIndex;
-const invalid_node = zig_node.invalid_node;
+const Token = tok.Token;
+const Tokens = std.MultiArrayList(Token);
+const TokenIndex = tok.TokenIndex;
 
 const Allocator = std.mem.Allocator;
 
@@ -59,30 +61,23 @@ pub const Severity = enum {
 pub const Diagnostic = struct {
     severity: Severity,
     err: DiagnosticError,
-    start: u32,
-    end: u32,
-    node_index: NodeIndex = invalid_node,
+    start: TokenIndex,
+    end: TokenIndex,
 };
 
 pub const DiagnosticSink = struct {
-    allocator: Allocator,
     source: []const u8,
-    list: []DiagnosticError,
+    errors: []Diagnostic,
 
-    pub fn init(allocator: Allocator, source: []const u8, list: []Diagnostic) DiagnosticSink {
+    pub fn init(source: []const u8, errors: []Diagnostic) DiagnosticSink {
         return .{
-            .allocator = allocator,
             .source = source,
-            .list = list,
+            .errors = errors,
         };
     }
 
-    pub fn report(self: *DiagnosticSink, diag: Diagnostic) !void {
-        try self.list.append(self.allocator, diag);
-    }
-
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
-        for (self.list) |diag| {
+        for (self.errors) |diag| {
             const line_slice = self.getLineSlice(diag.start);
             const pos = self.getLineCol(diag.start);
 
