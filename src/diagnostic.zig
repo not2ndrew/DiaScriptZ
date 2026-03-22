@@ -107,18 +107,20 @@ pub const DiagnosticSink = struct {
                         .{spaces, token.expected, token.found}
                     );
                 },
-                .warning => std.debug.print("{s}^\n", .{spaces}),
-                .err => {},
+                else => std.debug.print("{s}^\n", .{spaces}),
             }
         }
     }
 
-    // TODO: Search for every '\n' during init,
-    // then binary search line num,
+    // TODO: Search for every '\n' during init.
+    // Get an array of '\n' from tokenizer.
+    // Then binary search line num,
     // then compute column = byte_pos - line num
     //
     // The reason is there are x * y total bytes to scan
     // where x is col and y is line
+    //
+    // We can trade an array of 8 bytes for performance.
     fn getLineCol(self: *DiagnosticSink, byte_pos: usize) struct { line: usize, col: usize } {
         var line: usize = 1;
         var col: usize = 1;

@@ -21,9 +21,17 @@ pub const Ast = struct {
     nodes: std.MultiArrayList(Node).Slice,
     stmts: std.MultiArrayList(Node).Slice,
     errors: std.ArrayList(Diagnostic),
+
+    /// This method deinitialize nodes, stmts, and tokens.
+    /// It is best to deinitalize them at the end of semantic analysis.
+    pub fn deinit(self: *Ast) void {
+        self.nodes.deinit(self.allocator);
+        self.stmts.deinit(self.allocator);
+        self.tokens.deinit(self.allocator);
+    }
 };
 
-/// Make sure to deinit() nodes, stmts
+/// Make sure to deinit() nodes, stmts, and tokens
 pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
     var tokens: std.MultiArrayList(Token) = .empty;
     defer tokens.deinit(allocator);
@@ -43,10 +51,7 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
         if (token.tag == .EOF) break;
     }
 
-    var tokens_slice = tokens.toOwnedSlice();
-    defer tokens_slice.deinit(allocator);
-
-    return parseFromTokens(allocator, buf, tokens_slice);
+    return parseFromTokens(allocator, buf, tokens.toOwnedSlice());
 }
 
 fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) !Ast {

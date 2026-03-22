@@ -10,19 +10,16 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
     defer allocator.free(lines);
 
     var ast = try Ast.parse(allocator, lines);
-    defer ast.nodes.deinit(allocator);
-    defer ast.stmts.deinit(allocator);
+    defer ast.deinit();
 
-    // var semantic = Semantic.init(
-    //     allocator, lines, ast.stmts,
-    //     ast.nodes, ast.tokens, ast.errors
-    // );
-    // try semantic.analyze();
+    var semantic = Semantic.init(
+        allocator, lines, ast.stmts,
+        ast.nodes, ast.tokens, &ast.errors
+    );
+    try semantic.analyze();
+    defer semantic.deinit();
 
-    const errors = try ast.errors.toOwnedSlice(allocator);
-    defer allocator.free(errors);
-
-    var sink = Sink.init(lines, errors);
+    var sink = Sink.init(lines, ast.errors.items);
     sink.printErrors(file_name);
 }
 

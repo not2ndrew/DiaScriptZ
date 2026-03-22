@@ -37,7 +37,6 @@ pub const DialogueSymbol = struct {
     token_pos: TokenIndex,
 };
 
-// TODO: Switch nodes, tokens, and stmts to Slice
 // If you will be accessing more than one field, it's
 // better to get the slice of all the fields first, and then
 // call 'items' on that. This provides better performance.
@@ -48,7 +47,7 @@ pub const Semantic = struct {
     stmts: Nodes.Slice,
     nodes: Nodes.Slice,
     tokens: Tokens.Slice,
-    errors: Diagnostics,
+    errors: *Diagnostics,
 
     program_vars: ProgramVarHashMap,
     dialogue_vars: DialogueVarHashMap,
@@ -56,7 +55,7 @@ pub const Semantic = struct {
     pub fn init(
         allocator: Allocator, source: []const u8, 
         stmts: Nodes.Slice, nodes: Nodes.Slice,
-        tokens: Tokens.Slice, errors: Diagnostics,
+        tokens: Tokens.Slice, errors: *Diagnostics,
     ) Semantic {
         return .{
             .allocator = allocator,
@@ -71,14 +70,15 @@ pub const Semantic = struct {
     }
 
     pub fn deinit(self: *Semantic) void {
-        self.program_vars.deinit();
-        self.dialogue_vars.deinit();
+        self.program_vars.deinit(self.allocator);
+        self.dialogue_vars.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 
-    fn report(self: *Semantic, diag_err: DiagnosticError, node_index: NodeIndex) !void {
-        const node = self.nodes.get(node_index);
+    fn report(self: *Semantic, diag_err: DiagnosticError, node: Node) !void {
         const token = self.tokens.get(node.token_pos);
 
+        // TODO: errors returns memory leak when an error occurs.
         try self.errors.append(self.allocator, .{
             .severity = .err,
             .err = diag_err,
@@ -92,7 +92,6 @@ pub const Semantic = struct {
         return self.identName(node);
     }
 
-    // TODO: self.tokens.get(node.token_pos) returns segfault.
     fn identName(self: *Semantic, node: Node) []const u8 {
         const token = self.tokens.get(node.token_pos);
         return self.source[token.start..token.end];
@@ -130,9 +129,6 @@ pub const Semantic = struct {
             try self.collectDeclName(stmt_node);
         }
         // PASS 2: Semantic Analysis
-        // for (self.stmts) |node_index| {
-        //     try self.analyzeStmt(node_index);
-        // }
     }
 
     // ───────────────────────────────
@@ -158,15 +154,15 @@ pub const Semantic = struct {
 
         const entry = try self.program_vars.getOrPut(self.allocator, name);
 
-        if (entry.found_existing) {
-            try self.report(.{ .simple = .duplicate_var }, ident_index);
-            return;
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{
+                .token_pos = ident_node.token_pos,
+                .mutability = mutability,
+            };
+        } else {
+            try self.report(.{ .simple = .duplicate_var }, ident_node);
         }
 
-        entry.value_ptr.* = ProgramSymbol{
-            .token_pos = ident_node.token_pos,
-            .mutability = mutability,
-        };
     }
 
     fn storeLabel(self: *Semantic, node: Node) !void {
@@ -179,14 +175,11 @@ pub const Semantic = struct {
 
         const entry = try self.dialogue_vars.getOrPut(self.allocator, name);
 
-        if (entry.found_existing) {
+        if (!entry.found_existing) {
+            entry.value_ptr.* = .{ .token_pos = node.token_pos };
+        } else {
             try self.report(.{ .simple = .duplicate_dialogue }, node_index);
-            return;
         }
-
-        entry.value_ptr.* = DialogueSymbol{
-            .token_pos = node.token_pos,
-        };
     }
 
     // ───────────────────────────────
