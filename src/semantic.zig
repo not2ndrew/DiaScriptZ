@@ -9,17 +9,19 @@ const NodeIndex = zig_node.NodeIndex;
 const TokenIndex = tok.TokenIndex;
 
 const Token = tok.Token;
-
-const Node = zig_node.Node;
-const invalid_node = zig_node.invalid_node;
-
-const sink = diagnostic.DiagnosticSink;
-const DiagnosticError = diagnostic.DiagnosticError;
-
-const Nodes = std.MultiArrayList(Node);
 const Tokens = std.MultiArrayList(Token);
 
+const Node = zig_node.Node;
+const Nodes = std.MultiArrayList(Node);
+
+const Diagnostic = diagnostic.Diagnostic;
+const DiagnosticError = diagnostic.DiagnosticError;
+const Diagnostics = std.ArrayList(Diagnostic);
+
 const MAX_NUM_CHOICES = 4;
+
+const ProgramVarHashMap = std.StringArrayHashMapUnmanaged(ProgramSymbol);
+const DialogueVarHashMap = std.StringArrayHashMapUnmanaged(DialogueSymbol);
 
 pub const ProgramSymbol = struct {
     token_pos: TokenIndex,
@@ -41,25 +43,30 @@ pub const DialogueSymbol = struct {
 // call 'items' on that. This provides better performance.
 // https://www.youtube.com/watch?v=UCvASZT7ELU&t
 pub const Semantic = struct {
-    diag_sink: *sink,
-    stmts: []const NodeIndex,
-    nodes: *const Nodes,
-    tokens: *const Tokens,
+    allocator: Allocator,
+    source: []const u8,
+    stmts: Nodes.Slice,
+    nodes: Nodes.Slice,
+    tokens: Tokens.Slice,
+    errors: Diagnostics,
 
-    program_vars: std.StringArrayHashMap(ProgramSymbol),
-    dialogue_vars: std.StringArrayHashMap(DialogueSymbol),
+    program_vars: ProgramVarHashMap,
+    dialogue_vars: DialogueVarHashMap,
 
     pub fn init(
-        diag_sink: *sink, stmts: []const NodeIndex,
-        nodes: *const Nodes, tokens: *const Tokens
+        allocator: Allocator, source: []const u8, 
+        stmts: Nodes.Slice, nodes: Nodes.Slice,
+        tokens: Tokens.Slice, errors: Diagnostics,
     ) Semantic {
         return .{
-            .diag_sink = diag_sink,
+            .allocator = allocator,
+            .source = source,
             .stmts = stmts,
             .nodes = nodes,
             .tokens = tokens,
-            .program_vars = std.StringArrayHashMap(ProgramSymbol).init(diag_sink.allocator),
-            .dialogue_vars = std.StringArrayHashMap(DialogueSymbol).init(diag_sink.allocator),
+            .errors = errors,
+            .program_vars = ProgramVarHashMap.empty,
+            .dialogue_vars = DialogueVarHashMap.empty,
         };
     }
 
@@ -72,12 +79,11 @@ pub const Semantic = struct {
         const node = self.nodes.get(node_index);
         const token = self.tokens.get(node.token_pos);
 
-        try self.diag_sink.report(.{
+        try self.errors.append(self.allocator, .{
             .severity = .err,
             .err = diag_err,
             .start = @intCast(token.start),
-            .end = @intCast(token.start),
-            .node_index = node_index,
+            .end = @intCast(token.end),
         });
     }
 
@@ -86,10 +92,10 @@ pub const Semantic = struct {
         return self.identName(node);
     }
 
-    // TODO: Consider whether I should inline this function.
+    // TODO: self.tokens.get(node.token_pos) returns segfault.
     fn identName(self: *Semantic, node: Node) []const u8 {
         const token = self.tokens.get(node.token_pos);
-        return self.diag_sink.source[token.start..token.end];
+        return self.source[token.start..token.end];
     }
 
     fn findProgramVar(self: *Semantic, node_index: NodeIndex) !void {
@@ -119,25 +125,24 @@ pub const Semantic = struct {
     /// 2) Validation analysis.
     pub fn analyze(self: *Semantic) !void {
         // PASS 1: Scan for all declared names
-        for (self.stmts) |node_index| {
-            try self.collectDeclName(node_index);
+        for (0..self.stmts.len) |i| {
+            const stmt_node = self.stmts.get(i);
+            try self.collectDeclName(stmt_node);
         }
-
         // PASS 2: Semantic Analysis
-        for (self.stmts) |node_index| {
-            try self.analyzeStmt(node_index);
-        }
+        // for (self.stmts) |node_index| {
+        //     try self.analyzeStmt(node_index);
+        // }
     }
 
     // ───────────────────────────────
     //             PASS 1
     // ───────────────────────────────
-    fn collectDeclName(self: *Semantic, node_index: NodeIndex) !void {
-        const node = self.nodes.get(node_index);
 
+    fn collectDeclName(self: *Semantic, node: Node) !void {
         switch (node.tag) {
             .declar_stmt => try self.storeDeclar(node),
-            .label => try self.storeLabel(node_index),
+            // .label => try self.storeLabel(node_index),
             else => {},
         }
     }
@@ -151,7 +156,7 @@ pub const Semantic = struct {
         var mutability: ProgramSymbol.Mutability = .keyword_var;
         if (mut_type == .keyword_const) mutability = .keyword_const;
 
-        const entry = try self.program_vars.getOrPut(name);
+        const entry = try self.program_vars.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
             try self.report(.{ .simple = .duplicate_var }, ident_index);
@@ -164,16 +169,15 @@ pub const Semantic = struct {
         };
     }
 
-    fn storeLabel(self: *Semantic, node_index: NodeIndex) !void {
-        const label_node = self.nodes.get(node_index);
-        const name = self.identName(label_node);
+    fn storeLabel(self: *Semantic, node: Node) !void {
+        const name = self.identName(node);
+        const node_index = node.data.block.start;
 
         if (self.program_vars.contains(name)) {
             try self.report(.{ .simple = .duplicate_var }, node_index);
-            return;
         }
 
-        const entry = try self.dialogue_vars.getOrPut(name);
+        const entry = try self.dialogue_vars.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
             try self.report(.{ .simple = .duplicate_dialogue }, node_index);
@@ -181,26 +185,11 @@ pub const Semantic = struct {
         }
 
         entry.value_ptr.* = DialogueSymbol{
-            .token_pos = label_node.token_pos,
+            .token_pos = node.token_pos,
         };
     }
 
     // ───────────────────────────────
     //             PASS 2
     // ───────────────────────────────
-    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) !void {
-        const node = self.nodes.get(node_index);
-
-        switch (node.tag) {
-            .declar_stmt => try self.analyzeDeclar(node),
-            else => {},
-        }
-    }
-
-    fn analyzeDeclar(self: *Semantic, node: Node) !void {
-        const value_index = node.data.decl.value;
-        const value_node = self.nodes.get(value_index);
-
-        _ = value_node;
-    }
 };

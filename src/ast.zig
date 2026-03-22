@@ -21,12 +21,6 @@ pub const Ast = struct {
     nodes: std.MultiArrayList(Node).Slice,
     stmts: std.MultiArrayList(Node).Slice,
     errors: std.ArrayList(Diagnostic),
-
-    pub fn deinit(self: *Ast) void {
-        self.nodes.deinit(self.allocator);
-        self.stmts.deinit(self.allocator);
-        // self.errors.deinit(self.allocator);
-    }
 };
 
 /// Make sure to deinit() nodes, stmts
@@ -34,8 +28,6 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
     var tokens: std.MultiArrayList(Token) = .empty;
     defer tokens.deinit(allocator);
 
-    // Empirically, there is a 8 : 1 ratio
-    // of source bytes to tokens.
     // TODO: It may not be 8 : 1 ratio. Experiment
     // https://ziggit.dev/t/make-zig-tokenizer-faster-using-only-one-ensuretotalcapacity-malloc/11009/5
     const estimated_token_count = buf.len / TOKEN_RATIO;

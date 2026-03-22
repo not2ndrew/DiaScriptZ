@@ -1,6 +1,6 @@
 const std = @import("std");
 const Ast = @import("ast.zig");
-// const Semantic = @import("semantic.zig").Semantic;
+const Semantic = @import("semantic.zig").Semantic;
 const Sink = @import("diagnostic.zig").DiagnosticSink;
 
 const Allocator = std.mem.Allocator;
@@ -10,7 +10,14 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
     defer allocator.free(lines);
 
     var ast = try Ast.parse(allocator, lines);
-    defer ast.deinit();
+    defer ast.nodes.deinit(allocator);
+    defer ast.stmts.deinit(allocator);
+
+    // var semantic = Semantic.init(
+    //     allocator, lines, ast.stmts,
+    //     ast.nodes, ast.tokens, ast.errors
+    // );
+    // try semantic.analyze();
 
     const errors = try ast.errors.toOwnedSlice(allocator);
     defer allocator.free(errors);
