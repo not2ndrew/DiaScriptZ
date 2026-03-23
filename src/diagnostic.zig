@@ -9,6 +9,68 @@ const TokenIndex = tok.TokenIndex;
 
 const Allocator = std.mem.Allocator;
 
+pub const Severity = enum {
+    err,
+    warning,
+    note,
+};
+
+pub const Diagnostic = struct {
+    severity: Severity,
+    err: DiagnosticError,
+    start: TokenIndex,
+    end: TokenIndex,
+};
+
+// TODO: Search for every '\n' during init.
+// Get an array of '\n' from tokenizer.
+// Then binary search line num,
+// then compute column = byte_pos - line num
+//
+// The reason is there are x * y total bytes to scan
+// where x is col and y is line
+//
+// We can trade an array of 8 bytes for performance.
+fn getLineCol(source: []const u8, byte_pos: usize) struct { line: usize, col: usize } {
+    var line: usize = 1;
+    var col: usize = 1;
+
+    var i: usize = 0;
+    while (i < byte_pos and i < source.len) {
+        if (source[i] == '\n') {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+
+        i += 1;
+    }
+
+    return .{ .line = line, .col = col };
+}
+
+fn getLineSlice(source: []const u8, byte_pos: usize) []const u8 {
+    var pos = byte_pos;
+
+    if (pos >= source.len and source.len > 0) {
+        pos = source.len - 1;
+    }
+
+    var start = pos;
+    var end = pos;
+
+    while (start > 0 and source[start - 1] != '\n') {
+        start -= 1;
+    }
+
+    while (end < source.len and source[end] != '\n') {
+        end += 1;
+    }
+
+    return source[start..end];
+}
+
 pub const DiagnosticError = union(enum) {
     unexpected_token: UnexpectedToken,
     simple: SimpleError,
@@ -49,20 +111,6 @@ pub const DiagnosticError = union(enum) {
             },
         };
     }
-
-};
-
-pub const Severity = enum {
-    err,
-    warning,
-    note,
-};
-
-pub const Diagnostic = struct {
-    severity: Severity,
-    err: DiagnosticError,
-    start: TokenIndex,
-    end: TokenIndex,
 };
 
 pub const DiagnosticSink = struct {
@@ -78,8 +126,8 @@ pub const DiagnosticSink = struct {
 
     pub fn printErrors(self: *DiagnosticSink, file_name: []const u8) void {
         for (self.errors) |diag| {
-            const line_slice = self.getLineSlice(diag.start);
-            const pos = self.getLineCol(diag.start);
+            const line_slice = getLineSlice(self.source, diag.start);
+            const pos = getLineCol(self.source, diag.start);
 
             std.debug.print(
                 \\{s}:{d}:{d} error: {s}
@@ -110,54 +158,5 @@ pub const DiagnosticSink = struct {
                 else => std.debug.print("{s}^\n", .{spaces}),
             }
         }
-    }
-
-    // TODO: Search for every '\n' during init.
-    // Get an array of '\n' from tokenizer.
-    // Then binary search line num,
-    // then compute column = byte_pos - line num
-    //
-    // The reason is there are x * y total bytes to scan
-    // where x is col and y is line
-    //
-    // We can trade an array of 8 bytes for performance.
-    fn getLineCol(self: *DiagnosticSink, byte_pos: usize) struct { line: usize, col: usize } {
-        var line: usize = 1;
-        var col: usize = 1;
-
-        var i: usize = 0;
-        while (i < byte_pos and i < self.source.len) {
-            if (self.source[i] == '\n') {
-                line += 1;
-                col = 1;
-            } else {
-                col += 1;
-            }
-
-            i += 1;
-        }
-
-        return .{ .line = line, .col = col };
-    }
-
-    fn getLineSlice(self: *DiagnosticSink, byte_pos: usize) []const u8 {
-        var pos = byte_pos;
-
-        if (pos >= self.source.len and self.source.len > 0) {
-            pos = self.source.len - 1;
-        }
-
-        var start = pos;
-        var end = pos;
-
-        while (start > 0 and self.source[start - 1] != '\n') {
-            start -= 1;
-        }
-
-        while (end < self.source.len and self.source[end] != '\n') {
-            end += 1;
-        }
-
-        return self.source[start..end];
     }
 };

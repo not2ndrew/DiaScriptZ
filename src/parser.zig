@@ -51,11 +51,10 @@ pub const Parser = struct {
         };
     }
 
-    // errors is still kept for semantic analysis.
-    // errors will be deinit() separately.
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
@@ -132,13 +131,6 @@ pub const Parser = struct {
             .token_pos = token_pos,
             .data = data,
         });
-    }
-
-    pub fn printStmtNodeTags(self: *Parser, stmts: []NodeIndex) void {
-        for (stmts) |stmt_index| {
-            const tag = self.nodes.get(stmt_index).tag;
-            std.debug.print("Node Tag: {t}\n", .{tag});
-        }
     }
 
     // program = { stmt } ;

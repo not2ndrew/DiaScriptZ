@@ -17,6 +17,10 @@ const Mode = enum {
     interpolation,
 };
 
+fn isIdentChar(c: u8) bool {
+    return isAlphabetic(c) or isDigit(c) or c == '_';
+}
+
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
@@ -30,10 +34,6 @@ pub const Tokenizer = struct {
             .mode = .normal,
             .line_start = true,
         };
-    }
-
-    fn isIdentChar(c: u8) bool {
-        return isAlphabetic(c) or isDigit(c) or c == '_';
     }
 
     fn skipWhiteSpace(self: *Tokenizer) void {
