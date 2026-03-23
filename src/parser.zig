@@ -51,10 +51,10 @@ pub const Parser = struct {
         };
     }
 
+    /// Handle deinit of error outside.
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
-        self.errors.deinit(self.allocator);
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {

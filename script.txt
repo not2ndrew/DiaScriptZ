@@ -1,3 +1,2 @@
-var i = 0
-i += 1
-const j = 0
+var x = 3
+if (x > 1) {}

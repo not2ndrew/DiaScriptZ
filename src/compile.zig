@@ -12,17 +12,13 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
 
     var ast = try Ast.parse(allocator, lines);
     defer ast.deinit();
+    defer ast.errors.deinit(allocator);
 
     var semantic = Semantic.init(
         allocator, lines, ast.stmts,
         ast.nodes, ast.tokens, &ast.errors
     );
     defer semantic.deinit();
-
-    // program_vars and dialogue_vars is guaranteed to have an
-    // upperbound of stmts.len.
-    try semantic.program_vars.ensureTotalCapacity(allocator, ast.stmts.len);
-    try semantic.dialogue_vars.ensureTotalCapacity(allocator, ast.stmts.len);
 
     try semantic.analyze();
 

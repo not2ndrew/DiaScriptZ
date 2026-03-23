@@ -90,21 +90,10 @@ pub const Semantic = struct {
         return self.source[token.start..token.end];
     }
 
-    fn findProgramVar(self: *Semantic, node_index: NodeIndex) !void {
-        const ident_node = self.nodes.get(node_index);
-        const node_name = self.identName(ident_node);
-
-        if (!self.program_vars.contains(node_name)) {
-            try self.report(.undeclared_var, node_index);
-            return;
-        }
-    }
-
     fn analyzeExpr(self: *Semantic, node: Node) !void {
         switch (node.tag) {
             .number => try self.analyzeNumber(node),
             .identifier => try self.analyzeIdent(node),
-            .string => {},
             else => unreachable,
         }
     }
@@ -171,7 +160,7 @@ pub const Semantic = struct {
         var mutability: ProgramSymbol.Mutability = .keyword_var;
         if (mut_type == .keyword_const) mutability = .keyword_const;
 
-        const entry = self.program_vars.getOrPutAssumeCapacity(name);
+        const entry = try self.program_vars.getOrPut(self.allocator, name);
         if (!entry.found_existing) {
             entry.value_ptr.* = .{
                 .token_pos = ident_node.token_pos,
@@ -185,7 +174,7 @@ pub const Semantic = struct {
 
     fn storeLabel(self: *Semantic, node: Node) !void {
         const name = self.identName(node);
-        const entry = self.dialogue_vars.getOrPutAssumeCapacity(name);
+        const entry = try self.dialogue_vars.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
             try self.report(.{ .simple = .duplicate_dialogue }, node);
@@ -206,6 +195,7 @@ pub const Semantic = struct {
             .declar_stmt => try self.analyzeDeclar(node),
             .assign, .plus_equal, .minus_equal,
             .mult_equal, .div_equal => try self.analyzeAssign(node),
+            .if_stmt => try self.analyzeIfStmt(node),
             else => {},
         }
     }
@@ -235,5 +225,25 @@ pub const Semantic = struct {
         if (symbol.mutability == .keyword_const) {
             try self.report(.{ .simple = .modified_const }, ident_node);
         }
+    }
+
+    fn analyzeIfStmt(self: *Semantic, node: Node) !void {
+        const if_stmt = node.data.if_stmt;
+        const cond_index = if_stmt.condition;
+
+        const cond_node = self.nodes.get(cond_index);
+        try self.analyzeCompare(cond_node);
+    }
+
+    fn analyzeCompare(self: *Semantic, node: Node) !void {
+        const binary = node.data.binary;
+        const lhs_index = binary.lhs;
+        const rhs_index = binary.rhs;
+
+        const lhs_node = self.nodes.get(lhs_index);
+        const rhs_node = self.nodes.get(rhs_index);
+
+        try self.analyzeExpr(lhs_node);
+        try self.analyzeExpr(rhs_node);
     }
 };
