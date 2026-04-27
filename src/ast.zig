@@ -10,6 +10,8 @@ const Allocator = std.mem.Allocator;
 const Nodes = std.MultiArrayList(Node);
 const Tokens = std.MultiArrayList(Token);
 
+const NodeIndex = u32;
+
 const TOKEN_RATIO = 8;
 const NODE_RATIO = 2;
 const STMT_RATIO = 2;
@@ -19,14 +21,14 @@ pub const Ast = struct {
     source: []const u8,
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node).Slice,
-    stmts: std.MultiArrayList(Node).Slice,
+    stmts: []NodeIndex,
     errors: std.ArrayList(Diagnostic),
 
     /// This method deinitialize nodes, stmts, and tokens.
     /// It is best to deinitalize them at the end of semantic analysis.
     pub fn deinit(self: *Ast) void {
         self.nodes.deinit(self.allocator);
-        self.stmts.deinit(self.allocator);
+        self.allocator.free(self.stmts);
         self.tokens.deinit(self.allocator);
     }
 };
@@ -79,7 +81,7 @@ fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) 
         .source = buf,
         .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
-        .stmts = parser.stmts.toOwnedSlice(),
+        .stmts = try parser.stmts.toOwnedSlice(allocator),
         .errors = parser.errors
     };
 }

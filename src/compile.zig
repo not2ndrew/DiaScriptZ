@@ -37,13 +37,11 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     defer file.close(io);
 
     const length = try file.length(io);
-
     if (length == 0) return DelimiterError.ReadFailed;
 
     read_buf = try allocator.alloc(u8, length);
 
     var reader = Io.File.Reader.init(file, io, read_buf);
-    // var reader = std.fs.File.Reader.init(file, read_buf);
     const reader_inter: *Io.Reader = &reader.interface;
 
     while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {

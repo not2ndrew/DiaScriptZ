@@ -21,6 +21,8 @@ const Diagnostics = std.ArrayList(Diagnostic);
 const ProgramVarHashMap = std.StringArrayHashMapUnmanaged(ProgramSymbol);
 const LabelVarHashMap = std.StringArrayHashMapUnmanaged(LabelSymbol);
 
+const MAX_NUM_SCOPES = 4;
+
 // TODO: Create an arraylist Scope
 // for variable and label declarations
 // https://craftinginterpreters.com/local-variables.html
@@ -45,7 +47,7 @@ pub const LabelSymbol = struct {
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
-    stmts: Nodes.Slice,
+    stmts: []NodeIndex,
     nodes: Nodes.Slice,
     tokens: Tokens.Slice,
     errors: *Diagnostics,
@@ -55,7 +57,7 @@ pub const Semantic = struct {
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
-        stmts: Nodes.Slice, nodes: Nodes.Slice,
+        stmts: []NodeIndex, nodes: Nodes.Slice,
         tokens: Tokens.Slice, errors: *Diagnostics,
     ) Semantic {
         return .{
@@ -127,7 +129,7 @@ pub const Semantic = struct {
 
     pub fn analyze(self: *Semantic) !void {
         for (0..self.stmts.len) |i| {
-            const stmt_node = self.stmts.get(i);
+            const stmt_node = self.nodes.get(i);
             try self.analyzeStmt(stmt_node);
         }
     }
@@ -182,7 +184,7 @@ pub const Semantic = struct {
             entry.value_ptr.* = .{ .token_pos = node.token_pos };
         }
 
-        if (self.program_vars.get(name) != null) {
+        if (self.program_vars.contains(name)) {
             try self.report(.{ .simple = .duplicate_var }, node);
         }
     }

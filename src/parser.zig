@@ -35,7 +35,7 @@ pub const Parser = struct {
     allocator: Allocator,
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node),
-    stmts: std.MultiArrayList(Node),
+    stmts: std.ArrayList(NodeIndex),
 
     errors: std.ArrayList(Diagnostic),
     token_pos: u32,
@@ -125,14 +125,6 @@ pub const Parser = struct {
         return idx;
     }
 
-    fn addStmt(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) void {
-        self.stmts.appendAssumeCapacity(.{
-            .tag = tag,
-            .token_pos = token_pos,
-            .data = data,
-        });
-    }
-
     // program = { stmt } ;
     pub fn parseAll(self: *Parser) Error!void {
         while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
@@ -156,21 +148,23 @@ pub const Parser = struct {
     // | dialogue
     // | choices 
     fn parseStmt(self: *Parser) Error!void {
-        return switch (self.peekTag()) {
-            .keyword_const, .keyword_var => self.parseDeclar(),
-            .identifier, .underscore => self.parseIdentStmt(),
-            .keyword_if => self.parseIfStmt(),
-            .choice_marker => self.parseChoice(),
-            .tilde => self.parseLabel(),
+        const stmt_index = switch (self.peekTag()) {
+            .keyword_const, .keyword_var => try self.parseDeclar(),
+            .identifier, .underscore => try self.parseIdentStmt(),
+            .keyword_if => try self.parseIfStmt(),
+            .choice_marker => try self.parseChoice(),
+            .tilde => try self.parseLabel(),
             else => {
                 try self.reportUnexpected(.identifier);
                 return Error.ParseError;
             }
         };
+
+        self.stmts.appendAssumeCapacity(stmt_index);
     }
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr ;
-    fn parseDeclar(self: *Parser) Error!void {
+    fn parseDeclar(self: *Parser) Error!NodeIndex {
         const decl_pos = self.token_pos;
         self.next();
 
@@ -178,13 +172,13 @@ pub const Parser = struct {
         _ = try self.expect(.assign);
         const value = try self.parseExpr();
 
-        self.addStmt(.declar_stmt, decl_pos, .{
+        return try self.addNode(.declar_stmt, decl_pos, .{
             .decl = .{ .name = ident, .value = value }
         });
     }
 
     // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
-    fn parseIdentStmt(self: *Parser) Error!void {
+    fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         const ident_pos = try self.parseIdent();
 
         const next_tag = self.peekTag();
@@ -193,11 +187,11 @@ pub const Parser = struct {
             .assign, .plus_equal, .minus_equal,
             .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
             .colon => try self.parseDialogue(ident_pos),
-            else => _ = try self.expect(.assign),
+            else => try self.expect(.assign),
         };
     }
 
-    fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!void {
+    fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = try self.expect(assign_tag);
         const expr = try self.parseExpr();
 
@@ -206,7 +200,7 @@ pub const Parser = struct {
             return ParserError.ParseError;
         };
 
-        self.addStmt(node_tag, assign_pos, .{
+        return try self.addNode(node_tag, assign_pos, .{
             .assign = .{
                 .target = ident_pos,
                 .value = expr,
@@ -215,7 +209,7 @@ pub const Parser = struct {
     }
 
     // if_stmt = "if" "(" compar_expr ")" block [ else_block ] ;
-    fn parseIfStmt(self: *Parser) Error!void {
+    fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.keyword_if);
         var else_block: NodeIndex = invalid_node;
 
@@ -229,7 +223,7 @@ pub const Parser = struct {
             else_block = try self.parseElseBlock();
         }
 
-        self.addStmt(.if_stmt, if_pos, .{
+        return self.addNode(.if_stmt, if_pos, .{
             .if_stmt = .{
                 .condition = condition,
                 .then_block = then_block,
@@ -268,7 +262,7 @@ pub const Parser = struct {
 
     // stmt_block = "{" { stmt } "}" ;
     fn parseStmtBlock(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.stmts.len);
+        const start: u32 = @intCast(self.stmts.items.len);
         const block_pos = try self.expect(.open_brace);
 
         const len = try self.parseStmtListUntil(.close_brace);
@@ -299,14 +293,14 @@ pub const Parser = struct {
     // ───────────────────────────────
 
     // dialogue = identifier ":" string ;
-    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!void {
+    fn parseDialogue(self: *Parser, ident_pos: TokenIndex) Error!NodeIndex {
         _ = try self.expect(.colon);
 
         return try self.parseGoto(ident_pos, .dialogue);
     }
 
     // choice = { "*" string }
-    fn parseChoice(self: *Parser) Error!void {
+    fn parseChoice(self: *Parser) Error!NodeIndex {
         const marker = self.token_pos;
         self.next();
 
@@ -351,7 +345,7 @@ pub const Parser = struct {
     }
 
     // string = string_part { string_part } [ "->" ident ] ;
-    fn parseGoto(self: *Parser, ident_pos: TokenIndex, tag: Tag) Error!void {
+    fn parseGoto(self: *Parser, ident_pos: TokenIndex, tag: Tag) Error!NodeIndex {
         const start: u32 = @intCast(self.nodes.len);
         const len: u32 = try self.parseString();
 
@@ -360,14 +354,14 @@ pub const Parser = struct {
 
             const goto = try self.parseIdent();
 
-            self.addStmt(tag, ident_pos, .{
+            return self.addNode(tag, ident_pos, .{
                 .dialogue = .{
                     .str = .{ .start = start, .len = len },
                     .branch = .{ .goto = goto }
                 }
             });
         } else {
-            self.addStmt(tag, ident_pos, .{
+            return self.addNode(tag, ident_pos, .{
                 .dialogue = .{
                     .str = .{ .start = start, .len = len },
                     .branch = .none
@@ -377,8 +371,8 @@ pub const Parser = struct {
     }
 
     // label = “~” ident block “end” ;
-    fn parseLabel(self: *Parser) Error!void {
-        const start: u32 = @intCast(self.stmts.len);
+    fn parseLabel(self: *Parser) Error!NodeIndex {
+        const start: u32 = @intCast(self.stmts.items.len);
         _ = try self.expect(.tilde);
         const ident_pos = self.token_pos;
         _ = try self.parseIdent();
@@ -387,7 +381,7 @@ pub const Parser = struct {
 
         _ = try self.expect(.keyword_end);
 
-        self.addStmt(.label, ident_pos, .{
+        return self.addNode(.label, ident_pos, .{
             .block = .{ .start = start, .len = len }
         });
     }
