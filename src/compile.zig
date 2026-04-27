@@ -3,11 +3,13 @@ const Ast = @import("ast.zig");
 const Semantic = @import("semantic.zig").Semantic;
 const Sink = @import("diagnostic.zig").DiagnosticSink;
 
+const Io = std.Io;
+const Init = std.process.Init;
 const Allocator = std.mem.Allocator;
 const DelimiterError = std.Io.Reader.DelimiterError;
 
-pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
-    const lines = try readFile(allocator, file_name);
+pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
+    const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
 
     var ast = try Ast.parse(allocator, lines);
@@ -27,21 +29,22 @@ pub fn compileFile(allocator: Allocator, file_name: []const u8) !void {
 }
 
 /// Make sure to free memory from the string!!!
-fn readFile(allocator: Allocator, file_name: []const u8) ![]const u8 {
+fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8 {
+    const io = init.io;
     var read_buf: []u8 = undefined;
 
-    const file = try std.fs.cwd().openFile(file_name, .{});
-    defer file.close();
+    const file = try Io.Dir.cwd().openFile(io, file_name, .{});
+    defer file.close(io);
 
-    const stat = try file.stat();
-    const size = stat.size;
+    const length = try file.length(io);
 
-    if (size == 0) return DelimiterError.ReadFailed;
+    if (length == 0) return DelimiterError.ReadFailed;
 
-    read_buf = try allocator.alloc(u8, size);
+    read_buf = try allocator.alloc(u8, length);
 
-    var reader = std.fs.File.Reader.init(file, read_buf);
-    const reader_inter: *std.Io.Reader = &reader.interface;
+    var reader = Io.File.Reader.init(file, io, read_buf);
+    // var reader = std.fs.File.Reader.init(file, read_buf);
+    const reader_inter: *Io.Reader = &reader.interface;
 
     while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
         if (err != DelimiterError.EndOfStream) {

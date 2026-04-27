@@ -90,7 +90,7 @@ pub const DiagnosticError = union(enum) {
         modified_const,
 
         // Dialogue Errors
-        duplicate_dialogue,
+        duplicate_label,
         undeclared_dialogue,
         ambiguous_jump,
     };
@@ -106,7 +106,7 @@ pub const DiagnosticError = union(enum) {
                 .int_underflow => "integer underflow",
                 .undeclared_dialogue => "use of undeclared dialogue block",
                 .ambiguous_jump => "dialogue jumps too ambiguous",
-                .duplicate_dialogue => "duplicate dialogue struct name",
+                .duplicate_label => "duplicate label struct name",
                 .undetermined_string => "undetermined string",
             },
         };

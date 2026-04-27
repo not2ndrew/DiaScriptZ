@@ -18,11 +18,12 @@ const Diagnostic = diagnostic.Diagnostic;
 const DiagnosticError = diagnostic.DiagnosticError;
 const Diagnostics = std.ArrayList(Diagnostic);
 
-const MAX_NUM_CHOICES = 4;
-
 const ProgramVarHashMap = std.StringArrayHashMapUnmanaged(ProgramSymbol);
-const DialogueVarHashMap = std.StringArrayHashMapUnmanaged(DialogueSymbol);
+const LabelVarHashMap = std.StringArrayHashMapUnmanaged(LabelSymbol);
 
+// TODO: Create an arraylist Scope
+// for variable and label declarations
+// https://craftinginterpreters.com/local-variables.html
 pub const ProgramSymbol = struct {
     token_pos: TokenIndex,
     mutability: Mutability,
@@ -33,7 +34,7 @@ pub const ProgramSymbol = struct {
     };
 };
 
-pub const DialogueSymbol = struct {
+pub const LabelSymbol = struct {
     token_pos: TokenIndex,
 };
 
@@ -50,7 +51,7 @@ pub const Semantic = struct {
     errors: *Diagnostics,
 
     program_vars: ProgramVarHashMap,
-    dialogue_vars: DialogueVarHashMap,
+    label_vars: LabelVarHashMap,
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
@@ -65,13 +66,13 @@ pub const Semantic = struct {
             .tokens = tokens,
             .errors = errors,
             .program_vars = ProgramVarHashMap.empty,
-            .dialogue_vars = DialogueVarHashMap.empty,
+            .label_vars = LabelVarHashMap.empty,
         };
     }
 
     pub fn deinit(self: *Semantic) void {
         self.program_vars.deinit(self.allocator);
-        self.dialogue_vars.deinit(self.allocator);
+        self.label_vars.deinit(self.allocator);
     }
 
     fn report(self: *Semantic, diag_err: DiagnosticError, node: Node) !void {
@@ -85,12 +86,13 @@ pub const Semantic = struct {
         });
     }
 
-    fn identName(self: *Semantic, node: Node) []const u8 {
-        const token = self.tokens.get(node.token_pos);
+    fn identName(self: *Semantic, token_pos: TokenIndex) []const u8 {
+        const token = self.tokens.get(token_pos);
         return self.source[token.start..token.end];
     }
 
-    fn analyzeExpr(self: *Semantic, node: Node) !void {
+    fn analyzeExpr(self: *Semantic, node_index: NodeIndex) !void {
+        const node = self.nodes.get(node_index);
         switch (node.tag) {
             .number => try self.analyzeNumber(node),
             .identifier => try self.analyzeIdent(node),
@@ -100,7 +102,7 @@ pub const Semantic = struct {
 
     /// By default, the maximum will be u8 (256).
     fn analyzeNumber(self: *Semantic, node: Node) !void {
-        const name = self.identName(node);
+        const name = self.identName(node.token_pos);
 
         // 10 is the default base for parseInt.
         _ = std.fmt.parseInt(u8, name, 10) catch {
@@ -110,55 +112,53 @@ pub const Semantic = struct {
     }
 
     fn analyzeIdent(self: *Semantic, node: Node) !void {
-        const value_name = self.identName(node);
+        const value_name = self.identName(node.token_pos);
 
         if (!self.program_vars.contains(value_name)) {
             try self.report(.{ .simple = .undeclared_var }, node);
             return;
         }
 
-        if (self.dialogue_vars.contains(value_name)) {
+        if (self.label_vars.contains(value_name)) {
             try self.report(.{ .simple = .duplicate_var }, node);
             return;
         }
     }
 
-    /// The function uses two scan appraoch:
-    /// 1) Collecting Declaration Names
-    /// 2) Validation analysis.
     pub fn analyze(self: *Semantic) !void {
-        // PASS 1: Scan for all declared names
-        for (0..self.stmts.len) |i| {
-            const stmt_node = self.stmts.get(i);
-            try self.collectDeclName(stmt_node);
-        }
-        // PASS 2: Semantic Analysis
         for (0..self.stmts.len) |i| {
             const stmt_node = self.stmts.get(i);
             try self.analyzeStmt(stmt_node);
         }
     }
 
-    // ───────────────────────────────
-    //             PASS 1
-    // ───────────────────────────────
-
-    fn collectDeclName(self: *Semantic, node: Node) !void {
+    fn analyzeStmt(self: *Semantic, node: Node) !void {
         switch (node.tag) {
-            .declar_stmt => try self.storeDeclar(node),
-            .label => try self.storeLabel(node),
+            // Collect declarations
+            .declar_stmt => try self.analyzeDeclar(node),
+            .label => try self.analyzeLabel(node),
+
+            // Analyze stmts
+            .assign, .plus_equal, .minus_equal,
+            .mult_equal, .div_equal => try self.analyzeAssign(node),
+            .if_stmt => try self.analyzeIfStmt(node),
             else => {},
         }
     }
 
-    fn storeDeclar(self: *Semantic, node: Node) !void {
-        const ident_index = node.data.decl.name;
+    fn analyzeDeclar(self: *Semantic, node: Node) !void {
+        const decl = node.data.decl;
+        const ident_index = decl.name;
+        const value_index = decl.value;
+
         const ident_node = self.nodes.get(ident_index);
-        const name = self.identName(ident_node);
+        const name = self.identName(ident_node.token_pos);
 
         const mut_type = self.tokens.get(node.token_pos).tag;
         var mutability: ProgramSymbol.Mutability = .keyword_var;
         if (mut_type == .keyword_const) mutability = .keyword_const;
+
+        try self.analyzeExpr(value_index);
 
         const entry = try self.program_vars.getOrPut(self.allocator, name);
         if (!entry.found_existing) {
@@ -172,12 +172,12 @@ pub const Semantic = struct {
 
     }
 
-    fn storeLabel(self: *Semantic, node: Node) !void {
-        const name = self.identName(node);
-        const entry = try self.dialogue_vars.getOrPut(self.allocator, name);
+    fn analyzeLabel(self: *Semantic, node: Node) !void {
+        const name = self.identName(node.token_pos);
+        const entry = try self.label_vars.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
-            try self.report(.{ .simple = .duplicate_dialogue }, node);
+            try self.report(.{ .simple = .duplicate_label }, node);
         } else {
             entry.value_ptr.* = .{ .token_pos = node.token_pos };
         }
@@ -187,40 +187,25 @@ pub const Semantic = struct {
         }
     }
 
-    // ───────────────────────────────
-    //             PASS 2
-    // ───────────────────────────────
-    fn analyzeStmt(self: *Semantic, node: Node) !void {
-        switch (node.tag) {
-            .declar_stmt => try self.analyzeDeclar(node),
-            .assign, .plus_equal, .minus_equal,
-            .mult_equal, .div_equal => try self.analyzeAssign(node),
-            .if_stmt => try self.analyzeIfStmt(node),
-            else => {},
-        }
-    }
-
-    fn analyzeDeclar(self: *Semantic, node: Node) !void {
-        const value_index = node.data.decl.value;
-        const value_node = self.nodes.get(value_index);
-        try self.analyzeExpr(value_node);
-    }
-
     fn analyzeAssign(self: *Semantic, node: Node) !void {
         const assign = node.data.assign;
         const ident_index = assign.target;
         const value_index = assign.value;
 
         const ident_node = self.nodes.get(ident_index);
-        const value_node = self.nodes.get(value_index);
-        try self.analyzeIdent(ident_node);
-        try self.analyzeExpr(value_node);
 
-        const ident_name = self.identName(ident_node);
+        try self.analyzeExpr(value_index);
+
+        const ident_name = self.identName(ident_node.token_pos);
         const symbol = self.program_vars.get(ident_name) orelse {
             try self.report(.{ .simple = .undeclared_var }, ident_node);
             return;
         };
+
+        if (self.label_vars.contains(ident_name)) {
+            try self.report(.{ .simple = .duplicate_var }, ident_node);
+            return;
+        }
 
         if (symbol.mutability == .keyword_const) {
             try self.report(.{ .simple = .modified_const }, ident_node);
@@ -237,13 +222,8 @@ pub const Semantic = struct {
 
     fn analyzeCompare(self: *Semantic, node: Node) !void {
         const binary = node.data.binary;
-        const lhs_index = binary.lhs;
-        const rhs_index = binary.rhs;
 
-        const lhs_node = self.nodes.get(lhs_index);
-        const rhs_node = self.nodes.get(rhs_index);
-
-        try self.analyzeExpr(lhs_node);
-        try self.analyzeExpr(rhs_node);
+        try self.analyzeExpr(binary.lhs);
+        try self.analyzeExpr(binary.rhs);
     }
 };
