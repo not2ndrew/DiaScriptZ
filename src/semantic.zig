@@ -21,13 +21,12 @@ const Diagnostics = std.ArrayList(Diagnostic);
 const ProgramVarHashMap = std.StringArrayHashMapUnmanaged(ProgramSymbol);
 const LabelVarHashMap = std.StringArrayHashMapUnmanaged(LabelSymbol);
 
-const MAX_NUM_SCOPES = 4;
-
 // TODO: Create an arraylist Scope
 // for variable and label declarations
 // https://craftinginterpreters.com/local-variables.html
 pub const ProgramSymbol = struct {
     token_pos: TokenIndex,
+    depth: u8,
     mutability: Mutability,
 
     pub const Mutability = enum {
@@ -38,6 +37,7 @@ pub const ProgramSymbol = struct {
 
 pub const LabelSymbol = struct {
     token_pos: TokenIndex,
+    depth: u8,
 };
 
 // If you will be accessing more than one field, it's
@@ -55,6 +55,8 @@ pub const Semantic = struct {
     program_vars: ProgramVarHashMap,
     label_vars: LabelVarHashMap,
 
+    scope_depth: u8,
+
     pub fn init(
         allocator: Allocator, source: []const u8, 
         stmts: []NodeIndex, nodes: Nodes.Slice,
@@ -69,6 +71,7 @@ pub const Semantic = struct {
             .errors = errors,
             .program_vars = ProgramVarHashMap.empty,
             .label_vars = LabelVarHashMap.empty,
+            .scope_depth = 0,
         };
     }
 
@@ -91,6 +94,14 @@ pub const Semantic = struct {
     fn identName(self: *Semantic, token_pos: TokenIndex) []const u8 {
         const token = self.tokens.get(token_pos);
         return self.source[token.start..token.end];
+    }
+
+    fn beginScope(self: *Semantic) void {
+        self.scope_depth += 1;
+    }
+
+    fn endScope(self: *Semantic) void {
+        self.scope_depth -= 1;
     }
 
     fn analyzeExpr(self: *Semantic, node_index: NodeIndex) !void {
@@ -128,8 +139,8 @@ pub const Semantic = struct {
     }
 
     pub fn analyze(self: *Semantic) !void {
-        for (0..self.stmts.len) |i| {
-            const stmt_node = self.nodes.get(i);
+        for (self.stmts) |stmt_index| {
+            const stmt_node = self.nodes.get(stmt_index);
             try self.analyzeStmt(stmt_node);
         }
     }
@@ -163,15 +174,15 @@ pub const Semantic = struct {
         try self.analyzeExpr(value_index);
 
         const entry = try self.program_vars.getOrPut(self.allocator, name);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = .{
-                .token_pos = ident_node.token_pos,
-                .mutability = mutability,
-            };
-        } else {
-            try self.report(.{ .simple = .duplicate_var }, ident_node);
+        if (entry.found_existing and entry.value_ptr.depth == self.scope_depth) {
+            return try self.report(.{ .simple = .duplicate_var }, ident_node);
         }
 
+        entry.value_ptr.* = .{
+            .token_pos = ident_node.token_pos,
+            .mutability = mutability,
+            .depth = self.scope_depth,
+        };
     }
 
     fn analyzeLabel(self: *Semantic, node: Node) !void {
@@ -181,7 +192,10 @@ pub const Semantic = struct {
         if (entry.found_existing) {
             try self.report(.{ .simple = .duplicate_label }, node);
         } else {
-            entry.value_ptr.* = .{ .token_pos = node.token_pos };
+            entry.value_ptr.* = .{
+                .token_pos = node.token_pos,
+                .depth = self.scope_depth,
+            };
         }
 
         if (self.program_vars.contains(name)) {
@@ -200,17 +214,15 @@ pub const Semantic = struct {
 
         const ident_name = self.identName(ident_node.token_pos);
         const symbol = self.program_vars.get(ident_name) orelse {
-            try self.report(.{ .simple = .undeclared_var }, ident_node);
-            return;
+            return try self.report(.{ .simple = .undeclared_var }, ident_node);
         };
 
         if (self.label_vars.contains(ident_name)) {
-            try self.report(.{ .simple = .duplicate_var }, ident_node);
-            return;
+            return try self.report(.{ .simple = .duplicate_var }, ident_node);
         }
 
         if (symbol.mutability == .keyword_const) {
-            try self.report(.{ .simple = .modified_const }, ident_node);
+            return try self.report(.{ .simple = .modified_const }, ident_node);
         }
     }
 

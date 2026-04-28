@@ -128,7 +128,7 @@ pub const Parser = struct {
     // program = { stmt } ;
     pub fn parseAll(self: *Parser) Error!void {
         while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
-            self.parseStmt() catch {
+            self.parseTopLevelStmt() catch {
                 self.synchronize();
                 continue;
             };
@@ -147,8 +147,8 @@ pub const Parser = struct {
     // | label
     // | dialogue
     // | choices 
-    fn parseStmt(self: *Parser) Error!void {
-        const stmt_index = switch (self.peekTag()) {
+    fn parseStmt(self: *Parser) Error!NodeIndex {
+        return switch (self.peekTag()) {
             .keyword_const, .keyword_var => try self.parseDeclar(),
             .identifier, .underscore => try self.parseIdentStmt(),
             .keyword_if => try self.parseIfStmt(),
@@ -159,7 +159,10 @@ pub const Parser = struct {
                 return Error.ParseError;
             }
         };
+    }
 
+    fn parseTopLevelStmt(self: *Parser) Error!void {
+        const stmt_index = try self.parseStmt();
         self.stmts.appendAssumeCapacity(stmt_index);
     }
 
@@ -277,7 +280,7 @@ pub const Parser = struct {
     fn parseStmtListUntil(self: *Parser, end_tag: TokenTag) Error!u32 {
         var len: u32 = 0;
         while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
-            self.parseStmt() catch {
+            _ = self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
