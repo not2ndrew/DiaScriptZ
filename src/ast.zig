@@ -12,10 +12,6 @@ const Tokens = std.MultiArrayList(Token);
 
 const NodeIndex = u32;
 
-const TOKEN_RATIO = 8;
-const NODE_RATIO = 2;
-const STMT_RATIO = 2;
-
 pub const Ast = struct {
     allocator: Allocator,
     source: []const u8,
@@ -35,20 +31,14 @@ pub const Ast = struct {
 
 /// Make sure to deinit() nodes, stmts, and tokens
 pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
-    var tokens: std.MultiArrayList(Token) = .empty;
+    var tokens: Tokens = .empty;
     defer tokens.deinit(allocator);
-
-    // TODO: It may not be 8 : 1 ratio. Experiment
-    // https://ziggit.dev/t/make-zig-tokenizer-faster-using-only-one-ensuretotalcapacity-malloc/11009/5
-    const estimated_token_count = buf.len / TOKEN_RATIO;
-    try tokens.ensureTotalCapacity(allocator, estimated_token_count);
 
     // lines => tokens
     var tokenizer = Tokenizer.init(buf);
 
     while (true) {
         const token = tokenizer.next();
-        // tokens.appendAssumeCapacity(token);
         try tokens.append(allocator, token);
         if (token.tag == .EOF) break;
     }
@@ -59,18 +49,6 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
 fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) !Ast {
     var parser = try Parser.init(allocator, tokens);
     defer parser.deinit();
-
-    // TODO: This is too much memory, find a better ratio.
-    // Empirically, there is a 1 : 2 ratio
-    // of tokens to nodes.
-    const estimated_node_count = tokens.len * NODE_RATIO;
-
-    // Empirically, there is a 2 : 1 ratio
-    // of nodes to stmt nodes.
-    const estimated_stmt_count = (estimated_node_count + 2) / STMT_RATIO;
-
-    try parser.nodes.ensureTotalCapacity(allocator, estimated_node_count);
-    try parser.stmts.ensureTotalCapacity(allocator, estimated_stmt_count);
 
     // tokens => AST of stmt nodes
     try parser.parseAll();

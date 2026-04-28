@@ -232,6 +232,18 @@ pub const Semantic = struct {
 
         const cond_node = self.nodes.get(cond_index);
         try self.analyzeCompare(cond_node);
+
+        // TODO: How to connect from then_block to other stmt indexes.
+        // Block only stores the start and len of the stmts.
+        //
+        // const then_block = self.nodes.get(if_stmt.then_block);
+        // const block = then_block.data.block;
+        //
+        // for (block.start..block.len) |stmt_index| {
+        //     const lower_level_node = self.nodes.get(stmt_index);
+        //     self.analyzeStmt(lower_level_node);
+        // }
+
     }
 
     fn analyzeCompare(self: *Semantic, node: Node) !void {

@@ -115,7 +115,7 @@ pub const Parser = struct {
     }
 
     fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: NodeData) !NodeIndex {
-        self.nodes.appendAssumeCapacity(.{
+        try self.nodes.append(self.allocator, .{
             .tag = tag,
             .token_pos = token_pos,
             .data = data,
@@ -163,7 +163,7 @@ pub const Parser = struct {
 
     fn parseTopLevelStmt(self: *Parser) Error!void {
         const stmt_index = try self.parseStmt();
-        self.stmts.appendAssumeCapacity(stmt_index);
+        try self.stmts.append(self.allocator, stmt_index);
     }
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr ;
