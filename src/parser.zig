@@ -50,11 +50,6 @@ pub const Parser = struct {
         };
     }
 
-    /// Handle deinit of error outside.
-    pub fn deinit(self: *Parser) void {
-        self.nodes.deinit(self.allocator);
-    }
-
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
         var token = self.peekToken();
 
@@ -138,7 +133,6 @@ pub const Parser = struct {
         }
 
         const slice = try stmts.toOwnedSlice(self.allocator);
-        defer self.allocator.free(slice);
         _ = try self.addNode(.block, 0, .{ .block = slice });
     }
 
@@ -270,7 +264,6 @@ pub const Parser = struct {
         const block_pos = try self.expect(.open_brace);
 
         const slice = try self.parseStmtListUntil(.close_brace);
-        defer self.allocator.free(slice);
 
         _ = try self.expect(.close_brace);
 
@@ -385,7 +378,6 @@ pub const Parser = struct {
         _ = try self.parseIdent();
 
         const slice = try self.parseStmtListUntil(.keyword_end);
-        defer self.allocator.free(slice);
 
         _ = try self.expect(.keyword_end);
 

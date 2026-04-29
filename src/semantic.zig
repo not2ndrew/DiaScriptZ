@@ -47,7 +47,6 @@ pub const LabelSymbol = struct {
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
-    stmts: []NodeIndex,
     nodes: Nodes.Slice,
     tokens: Tokens.Slice,
     errors: *Diagnostics,
@@ -59,13 +58,12 @@ pub const Semantic = struct {
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
-        stmts: []NodeIndex, nodes: Nodes.Slice,
+        nodes: Nodes.Slice,
         tokens: Tokens.Slice, errors: *Diagnostics,
     ) Semantic {
         return .{
             .allocator = allocator,
             .source = source,
-            .stmts = stmts,
             .nodes = nodes,
             .tokens = tokens,
             .errors = errors,
@@ -80,8 +78,8 @@ pub const Semantic = struct {
         self.label_vars.deinit(self.allocator);
     }
 
-    fn report(self: *Semantic, diag_err: DiagnosticError, node: Node) !void {
-        const token = self.tokens.get(node.token_pos);
+    fn report(self: *Semantic, diag_err: DiagnosticError, token_pos: TokenIndex) !void {
+        const token = self.tokens.get(token_pos);
 
         try self.errors.append(self.allocator, .{
             .severity = .err,
@@ -119,7 +117,7 @@ pub const Semantic = struct {
 
         // 10 is the default base for parseInt.
         _ = std.fmt.parseInt(u8, name, 10) catch {
-            try self.report(.{ .simple = .int_overflow }, node);
+            try self.report(.{ .simple = .int_overflow }, node.token_pos);
             return;
         };
     }
@@ -128,24 +126,27 @@ pub const Semantic = struct {
         const value_name = self.identName(node.token_pos);
 
         if (!self.program_vars.contains(value_name)) {
-            try self.report(.{ .simple = .undeclared_var }, node);
+            try self.report(.{ .simple = .undeclared_var }, node.token_pos);
             return;
         }
 
         if (self.label_vars.contains(value_name)) {
-            try self.report(.{ .simple = .duplicate_var }, node);
+            try self.report(.{ .simple = .duplicate_var }, node.token_pos);
             return;
         }
     }
 
+    // The last node of a post-traversal list
+    // is the root node.
     pub fn analyze(self: *Semantic) !void {
-        for (self.stmts) |stmt_index| {
-            const stmt_node = self.nodes.get(stmt_index);
-            try self.analyzeStmt(stmt_node);
+        const root_node = self.nodes.get(self.nodes.len - 1);
+        for (root_node.data.block) |stmt_index| {
+            try self.analyzeStmt(stmt_index);
         }
     }
 
-    fn analyzeStmt(self: *Semantic, node: Node) !void {
+    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) !void {
+        const node = self.nodes.get(node_index);
         switch (node.tag) {
             // Collect declarations
             .declar_stmt => try self.analyzeDeclar(node),
@@ -175,7 +176,7 @@ pub const Semantic = struct {
 
         const entry = try self.program_vars.getOrPut(self.allocator, name);
         if (entry.found_existing and entry.value_ptr.depth == self.scope_depth) {
-            return try self.report(.{ .simple = .duplicate_var }, ident_node);
+            return try self.report(.{ .simple = .duplicate_var }, ident_node.token_pos);
         }
 
         entry.value_ptr.* = .{
@@ -190,7 +191,7 @@ pub const Semantic = struct {
         const entry = try self.label_vars.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
-            try self.report(.{ .simple = .duplicate_label }, node);
+            try self.report(.{ .simple = .duplicate_label }, node.token_pos);
         } else {
             entry.value_ptr.* = .{
                 .token_pos = node.token_pos,
@@ -199,7 +200,7 @@ pub const Semantic = struct {
         }
 
         if (self.program_vars.contains(name)) {
-            try self.report(.{ .simple = .duplicate_var }, node);
+            try self.report(.{ .simple = .duplicate_var }, node.token_pos);
         }
     }
 
@@ -214,15 +215,15 @@ pub const Semantic = struct {
 
         const ident_name = self.identName(ident_node.token_pos);
         const symbol = self.program_vars.get(ident_name) orelse {
-            return try self.report(.{ .simple = .undeclared_var }, ident_node);
+            return try self.report(.{ .simple = .undeclared_var }, ident_node.token_pos);
         };
 
         if (self.label_vars.contains(ident_name)) {
-            return try self.report(.{ .simple = .duplicate_var }, ident_node);
+            return try self.report(.{ .simple = .duplicate_var }, ident_node.token_pos);
         }
 
         if (symbol.mutability == .keyword_const) {
-            return try self.report(.{ .simple = .modified_const }, ident_node);
+            return try self.report(.{ .simple = .modified_const }, ident_node.token_pos);
         }
     }
 

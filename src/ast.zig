@@ -46,7 +46,8 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
 
 fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) !Ast {
     var parser = try Parser.init(allocator, tokens);
-    defer parser.deinit();
+    // defer calls the statement OUTSIDE the function. Not inside
+    // defer parser.deinit();
 
     // tokens => AST of stmt nodes
     try parser.parseAll();
