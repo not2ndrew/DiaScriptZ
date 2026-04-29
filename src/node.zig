@@ -112,7 +112,7 @@ pub const Range = struct {
 // TODO: Adjust numbers, string, and identifier
 // These union fields pay the full price of an if_stmt.
 // So it becomes very expensive the more nodes are created.
-pub const NodeData = union {
+pub const NodeData = union(enum) {
     // Literals
     numbers: TokenIndex,
     string: TokenIndex,

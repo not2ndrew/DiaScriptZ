@@ -19,9 +19,22 @@ pub const Ast = struct {
     nodes: std.MultiArrayList(Node).Slice,
     errors: std.ArrayList(Diagnostic),
 
-    /// This method deinitialize nodes, stmts, and tokens.
-    /// It is best to deinitalize them at the end of semantic analysis.
+    /// It is best to deinitalize at the end of semantic analysis.
     pub fn deinit(self: *Ast) void {
+        for (0..self.nodes.len) |i| {
+            const node = self.nodes.get(i);
+            switch (node.data) {
+                .block => self.allocator.free(node.data.block),
+                else => {},
+            }
+        }
+        // for (self.nodes.items(.NodeData)) |data| {
+        //     switch (data) {
+        //         .block => |slice| {
+        //             self.allocator.free(slice);
+        //         }
+        //     }
+        // }
         self.nodes.deinit(self.allocator);
         self.tokens.deinit(self.allocator);
     }
@@ -46,8 +59,6 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
 
 fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) !Ast {
     var parser = try Parser.init(allocator, tokens);
-    // defer calls the statement OUTSIDE the function. Not inside
-    // defer parser.deinit();
 
     // tokens => AST of stmt nodes
     try parser.parseAll();
