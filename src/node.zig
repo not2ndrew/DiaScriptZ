@@ -102,7 +102,9 @@ pub const Node = struct {
     data: NodeData,
 };
 
-pub const NodeRange = struct {
+pub const Block = []NodeIndex;
+
+pub const Range = struct {
     start: u32,
     len: u32,
 };
@@ -135,9 +137,9 @@ pub const NodeData = union {
         then_block: NodeIndex = invalid_node,
         else_block: NodeIndex = invalid_node,
     },
-    block: NodeRange,
+    block: Block,
     dialogue: struct {
-        str: NodeRange,
+        str: Range,
         branch: union(enum) {
             none,
             goto: NodeIndex,

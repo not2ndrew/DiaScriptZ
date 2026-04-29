@@ -35,9 +35,9 @@ pub const Parser = struct {
     allocator: Allocator,
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node),
-    stmts: std.ArrayList(NodeIndex),
 
     errors: std.ArrayList(Diagnostic),
+
     token_pos: u32,
 
     pub fn init(allocator: Allocator, tokens: Tokens.Slice) !Parser {
@@ -45,7 +45,6 @@ pub const Parser = struct {
             .allocator = allocator,
             .tokens = tokens,
             .nodes = .empty,
-            .stmts = .empty,
             .errors = .empty,
             .token_pos = 0,
         };
@@ -54,7 +53,6 @@ pub const Parser = struct {
     /// Handle deinit of error outside.
     pub fn deinit(self: *Parser) void {
         self.nodes.deinit(self.allocator);
-        self.stmts.deinit(self.allocator);
     }
 
     fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
@@ -127,12 +125,21 @@ pub const Parser = struct {
 
     // program = { stmt } ;
     pub fn parseAll(self: *Parser) Error!void {
+        // Allocate 10 for now.
+        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 10);
+
         while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
-            self.parseTopLevelStmt() catch {
+            const stmt_index = self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
+
+            try stmts.append(self.allocator, stmt_index);
         }
+
+        const slice = try stmts.toOwnedSlice(self.allocator);
+        defer self.allocator.free(slice);
+        _ = try self.addNode(.block, 0, .{ .block = slice });
     }
 
 
@@ -159,11 +166,6 @@ pub const Parser = struct {
                 return Error.ParseError;
             }
         };
-    }
-
-    fn parseTopLevelStmt(self: *Parser) Error!void {
-        const stmt_index = try self.parseStmt();
-        try self.stmts.append(self.allocator, stmt_index);
     }
 
     // declar_stmt = ( "const" | "var" ) ident "=" expr ;
@@ -265,30 +267,32 @@ pub const Parser = struct {
 
     // stmt_block = "{" { stmt } "}" ;
     fn parseStmtBlock(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.stmts.items.len);
         const block_pos = try self.expect(.open_brace);
 
-        const len = try self.parseStmtListUntil(.close_brace);
+        const slice = try self.parseStmtListUntil(.close_brace);
+        defer self.allocator.free(slice);
 
         _ = try self.expect(.close_brace);
 
         return try self.addNode(.block, block_pos, .{
-            .block = .{ .start = start, .len = len }
+            .block = slice
         });
     }
 
-    fn parseStmtListUntil(self: *Parser, end_tag: TokenTag) Error!u32 {
-        var len: u32 = 0;
+    fn parseStmtListUntil(self: *Parser, end_tag: TokenTag) Error![]NodeIndex {
+        // Allocate 10 for now.
+        var stmts = try std.ArrayList(NodeIndex).initCapacity(self.allocator, 10);
+
         while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
-            _ = self.parseStmt() catch {
+            const stmt_index = self.parseStmt() catch {
                 self.synchronize();
                 continue;
             };
 
-            len += 1;
+            try stmts.append(self.allocator, stmt_index);
         }
 
-        return len;
+        return try stmts.toOwnedSlice(self.allocator);
     }
 
     // ───────────────────────────────
@@ -375,17 +379,18 @@ pub const Parser = struct {
 
     // label = “~” ident block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.stmts.items.len);
         _ = try self.expect(.tilde);
+
         const ident_pos = self.token_pos;
         _ = try self.parseIdent();
 
-        const len = try self.parseStmtListUntil(.keyword_end);
+        const slice = try self.parseStmtListUntil(.keyword_end);
+        defer self.allocator.free(slice);
 
         _ = try self.expect(.keyword_end);
 
         return self.addNode(.label, ident_pos, .{
-            .block = .{ .start = start, .len = len }
+            .block = slice
         });
     }
 
