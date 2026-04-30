@@ -21,6 +21,11 @@ const Diagnostics = std.ArrayList(Diagnostic);
 const ProgramVarHashMap = std.StringArrayHashMapUnmanaged(ProgramSymbol);
 const LabelVarHashMap = std.StringArrayHashMapUnmanaged(LabelSymbol);
 
+pub const Error = error {
+    SemanticError,
+    OutOfMemory,
+};
+
 // TODO: Create an arraylist Scope
 // for variable and label declarations
 // https://craftinginterpreters.com/local-variables.html
@@ -138,14 +143,25 @@ pub const Semantic = struct {
 
     // The last node of a post-traversal list
     // is the root node.
-    pub fn analyze(self: *Semantic) !void {
+    pub fn analyze(self: *Semantic) Error!void {
         const root_node = self.nodes.get(self.nodes.len - 1);
+
+        // Assume 0 to be global scope.
         for (root_node.data.block) |stmt_index| {
             try self.analyzeStmt(stmt_index);
         }
     }
 
-    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) !void {
+    fn analyzeBlock(self: *Semantic, stmts: []NodeIndex) Error!void {
+        self.beginScope();
+        for (stmts) |stmt_index| {
+            try self.analyzeStmt(stmt_index);
+        }
+
+        self.endScope();
+    }
+
+    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) Error!void {
         const node = self.nodes.get(node_index);
         switch (node.tag) {
             // Collect declarations
@@ -160,7 +176,7 @@ pub const Semantic = struct {
         }
     }
 
-    fn analyzeDeclar(self: *Semantic, node: Node) !void {
+    fn analyzeDeclar(self: *Semantic, node: Node) Error!void {
         const decl = node.data.decl;
         const ident_index = decl.name;
         const value_index = decl.value;
@@ -186,7 +202,7 @@ pub const Semantic = struct {
         };
     }
 
-    fn analyzeLabel(self: *Semantic, node: Node) !void {
+    fn analyzeLabel(self: *Semantic, node: Node) Error!void {
         const name = self.identName(node.token_pos);
         const entry = try self.label_vars.getOrPut(self.allocator, name);
 
@@ -204,7 +220,7 @@ pub const Semantic = struct {
         }
     }
 
-    fn analyzeAssign(self: *Semantic, node: Node) !void {
+    fn analyzeAssign(self: *Semantic, node: Node) Error!void {
         const assign = node.data.assign;
         const ident_index = assign.target;
         const value_index = assign.value;
@@ -227,27 +243,20 @@ pub const Semantic = struct {
         }
     }
 
-    fn analyzeIfStmt(self: *Semantic, node: Node) !void {
+    fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
         const if_stmt = node.data.if_stmt;
         const cond_index = if_stmt.condition;
 
         const cond_node = self.nodes.get(cond_index);
         try self.analyzeCompare(cond_node);
 
-        // TODO: How to connect from then_block to other stmt indexes.
-        // Block only stores the start and len of the stmts.
-        //
-        // const then_block = self.nodes.get(if_stmt.then_block);
-        // const block = then_block.data.block;
-        //
-        // for (block.start..block.len) |stmt_index| {
-        //     const lower_level_node = self.nodes.get(stmt_index);
-        //     self.analyzeStmt(lower_level_node);
-        // }
+        const then_block = self.nodes.get(if_stmt.then_block);
+        const block = then_block.data.block;
 
+        try self.analyzeBlock(block);
     }
 
-    fn analyzeCompare(self: *Semantic, node: Node) !void {
+    fn analyzeCompare(self: *Semantic, node: Node) Error!void {
         const binary = node.data.binary;
 
         try self.analyzeExpr(binary.lhs);

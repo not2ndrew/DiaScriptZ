@@ -28,15 +28,10 @@ pub const Ast = struct {
                 else => {},
             }
         }
-        // for (self.nodes.items(.NodeData)) |data| {
-        //     switch (data) {
-        //         .block => |slice| {
-        //             self.allocator.free(slice);
-        //         }
-        //     }
-        // }
+
         self.nodes.deinit(self.allocator);
         self.tokens.deinit(self.allocator);
+        self.errors.deinit(self.allocator);
     }
 };
 
