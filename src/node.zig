@@ -18,9 +18,6 @@ pub const NodeTag = enum {
     dialogue,
     choice,
     
-    // choices
-    choice_marker,
-
     // If stmts
     block,
     then_block,
@@ -49,10 +46,16 @@ pub const NodeTag = enum {
     mult,
     div,
 
+    // Identifiers
+    var_ident,
+    label_ident,
+    name_ident,
+
     // Variable Names
     identifier,
     number,
     string,
+    anonymous,
 };
 
 pub fn nodeTagFromArithmetic(token_tag: Tag) ?NodeTag {
@@ -109,14 +112,10 @@ pub const Range = struct {
     len: u32,
 };
 
-// TODO: Adjust numbers, string, and identifier
-// These union fields pay the full price of an if_stmt.
-// So it becomes very expensive the more nodes are created.
+// TODO: every data using none will pay the full cost of dialogue.
+// Try to reduce the size of the largest field.
 pub const NodeData = union(enum) {
-    // Literals
-    numbers: TokenIndex,
-    string: TokenIndex,
-    identifier: TokenIndex,
+    none,
 
     // Expressions
     binary: struct {

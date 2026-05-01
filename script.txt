@@ -1,6 +1,2 @@
-var x = 0
-if (x > 1) {
-	var x = 3
-	var x = 2
-	x += 2
-}
+const narnia = 1
+Andrew: Let's go to Narnia! -> narnia

@@ -91,7 +91,7 @@ pub const DiagnosticError = union(enum) {
 
         // Dialogue Errors
         duplicate_label,
-        undeclared_dialogue,
+        undeclared_label,
         ambiguous_jump,
     };
 
@@ -104,7 +104,7 @@ pub const DiagnosticError = union(enum) {
                 .modified_const => "cannot modify constant",
                 .int_overflow => "integer overflow",
                 .int_underflow => "integer underflow",
-                .undeclared_dialogue => "use of undeclared dialogue block",
+                .undeclared_label => "use of undeclared label block",
                 .ambiguous_jump => "dialogue jumps too ambiguous",
                 .duplicate_label => "duplicate label struct name",
                 .undetermined_string => "undetermined string",

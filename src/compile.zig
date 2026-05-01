@@ -27,13 +27,13 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     var ast = try Ast.parse(allocator, lines);
     defer ast.deinit();
 
-    var semantic = Semantic.init(
-        allocator, lines, ast.nodes,
-        ast.tokens, &ast.errors
-    );
-    defer semantic.deinit();
-
-    try semantic.analyze();
+    // var semantic = Semantic.init(
+    //     allocator, lines, ast.nodes,
+    //     ast.tokens, &ast.errors
+    // );
+    // defer semantic.deinit();
+    //
+    // try semantic.analyze();
 
     var sink = Sink.init(lines, ast.errors.items);
     sink.printErrors(file_name);
