@@ -13,6 +13,7 @@ const Tokens = std.MultiArrayList(Token);
 
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
+const Tag = zig_node.NodeTag;
 
 const Diagnostic = diagnostic.Diagnostic;
 const DiagnosticError = diagnostic.DiagnosticError;
@@ -27,9 +28,6 @@ pub const Error = error {
     OutOfMemory,
 };
 
-// TODO: Create an arraylist Scope
-// for variable and label declarations
-// https://craftinginterpreters.com/local-variables.html
 pub const ProgramSymbol = struct {
     token_pos: TokenIndex,
     // Assume 0 to be the global scope.
@@ -47,10 +45,6 @@ pub const LabelSymbol = struct {
     depth: u8,
 };
 
-// If you will be accessing more than one field, it's
-// better to get the slice of all the fields first, and then
-// call 'items' on that. This provides better performance.
-// https://www.youtube.com/watch?v=UCvASZT7ELU&t
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
@@ -127,111 +121,37 @@ pub const Semantic = struct {
         }
     }
 
-    // fn analyzeExpr(self: *Semantic, node_index: NodeIndex) !void {
-    //     const node = self.nodes.get(node_index);
-    //     switch (node.tag) {
-    //         .number => try self.analyzeNumber(node),
-    //         .identifier => try self.analyzeProgramIdent(node.token_pos),
-    //         else => unreachable,
-    //     }
-    // }
-
-    /// By default, the maximum will be u8 (256).
-    // fn analyzeNumber(self: *Semantic, node: Node) !void {
-    //     const name = self.identName(node.token_pos);
-    //
-    //     // 10 is the default base for parseInt.
-    //     _ = std.fmt.parseInt(u8, name, 10) catch {
-    //         try self.report(.{ .simple = .int_overflow }, node.token_pos);
-    //         return;
-    //     };
-    // }
-
-    // TODO: Since both of these are opposites of one another.
-    // Converge them into one function analyzeIdent().
-    fn analyzeProgramIdent(self: *Semantic, token_pos: TokenIndex) !void {
-        const value_name = self.identName(token_pos);
-
-        if (!self.vars.contains(value_name)) {
-            try self.report(.{ .simple = .undeclared_var }, token_pos);
-            return;
-        }
-
-        if (self.labels.contains(value_name)) {
-            try self.report(.{ .simple = .duplicate_var }, token_pos);
-            return;
-        }
-    }
-
-    fn analyzeDialogueIdent(self: *Semantic, token_pos: TokenIndex) !void {
-        const value_name = self.identName(token_pos);
-
-        if (self.vars.contains(value_name)) {
-            try self.report(.{ .simple = .duplicate_var }, token_pos);
-            return;
-        }
-
-        if (!self.labels.contains(value_name)) {
-            try self.report(.{ .simple = .undeclared_label }, token_pos);
-            return;
-        }
-    }
-
-    fn analyzeIdent(self: *Semantic, node: Node) !void {
-        const token_pos = node.token_pos;
+    fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
         const name = self.identName(token_pos);
 
         const has_var = self.vars.contains(name);
         const has_label = self.labels.contains(name);
 
-        // TODO: Use switch(node.tag) instead.
-        // We don't need to use the data in the node.
-        // 
-        // TODO: Split identifier into 3 categories:
-        // 1) var_ident
-        // 2) label_ident
-        // 3) name_ident
-        //
-        // TODO: Remove from data:
-        // identifiers, numbers, and string
-        //
-        // It is redundant since NodeTag already explains it.
-        // So, add none to NodeData.
-        switch (node.data) {
-            .numbers => {
+        switch (tag) {
+            .number => {
                 _ = std.fmt.parseInt(u8, name, 10) catch {
                     try self.report(.{ .simple = .int_overflow }, token_pos);
-                    return;
                 };
             },
-            .identifier => {
+            .var_ident => {
                 if (!has_var) {
                     try self.report(.{ .simple = .undeclared_var }, token_pos);
-                    return;
                 }
 
                 if (has_label) {
                     try self.report(.{ .simple = .duplicate_var }, token_pos);
+                }
+            },
+            .label_ident => {
+                if (!has_label) {
+                    try self.report(.{ .simple = .undeclared_label }, token_pos);
+                }
+
+                if (has_var) {
+                    try self.report(.{ .simple = .duplicate_var }, token_pos);
                     return;
                 }
             },
-            // TODO: This label should be a label identifier.
-            //
-            // The following should fail:
-            // const narnia = 1
-            // Andrew: Let's go to Narnia! -> narnia
-            //
-            // .label => {
-            //     if (has_var) {
-            //         try self.report(.{ .simple = .duplicate_var }, token_pos);
-            //         return;
-            //     }
-            //
-            //     if (!has_label) {
-            //         try self.report(.{ .simple = .undeclared_label }, token_pos);
-            //         return;
-            //     }
-            // },
             else => {},
         }
     }
@@ -277,13 +197,14 @@ pub const Semantic = struct {
         const value_index = decl.value;
 
         const ident_node = self.nodes.get(ident_index);
+        const value_node = self.nodes.get(value_index);
         const name = self.identName(ident_node.token_pos);
 
         const mut_type = self.tokens.get(node.token_pos).tag;
         const mutability: ProgramSymbol.Mutability = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
-        try self.analyzeIdent(self.nodes.get(value_index));
+        try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
         // TODO: Create a method to simpify all of these repetitive calls
         // from other functions as well.
@@ -353,7 +274,7 @@ pub const Semantic = struct {
         const ident_node = self.nodes.get(ident_index);
         const value_node = self.nodes.get(value_index);
 
-        try self.analyzeIdent(value_node);
+        try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
         const ident_name = self.identName(ident_node.token_pos);
         const symbol = self.vars.get(ident_name) orelse {
@@ -387,22 +308,10 @@ pub const Semantic = struct {
         const left_node = self.nodes.get(binary.lhs);
         const right_node = self.nodes.get(binary.rhs);
 
-        try self.analyzeIdent(left_node);
-        try self.analyzeIdent(right_node);
+        try self.analyzeIdent(left_node.tag, left_node.token_pos);
+        try self.analyzeIdent(right_node.tag, left_node.token_pos);
     }
 
-    // TODO: The name of the dialogue line should throw an error
-    // when there exist a variable or label with the same name.
-    // Examples:
-    //
-    // const Andrew = 1
-    // Andrew: Hello world
-    //
-    // ~ Andrew
-    //    Andrew: Hello world
-    // end
-    //
-    // Both of these should fail.
     fn analyzeDialogue(self: *Semantic, node: Node) Error!void {
         const dialogue = node.data.dialogue;
         const start = dialogue.str.start;
@@ -415,12 +324,12 @@ pub const Semantic = struct {
         for (start..len) |i| {
             const str_node = self.nodes.get(i);
 
-            try self.analyzeIdent(str_node);
+            try self.analyzeIdent(str_node.tag, str_node.token_pos);
         }
 
         if (dialogue.branch == .goto) {
             const goto_node = self.nodes.get(dialogue.branch.goto);
-            try self.analyzeIdent(goto_node);
+            try self.analyzeIdent(goto_node.tag, goto_node.token_pos);
         }
     }
 };

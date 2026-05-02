@@ -82,9 +82,11 @@ pub const DiagnosticError = union(enum) {
 
     pub const SimpleError = enum {
         undetermined_string,
-        // Programming Errors
+        // Integer Errors
         int_overflow,
         int_underflow,
+
+        // Variable Errors
         undeclared_var,
         duplicate_var,
         modified_const,
@@ -93,6 +95,8 @@ pub const DiagnosticError = union(enum) {
         duplicate_label,
         undeclared_label,
         ambiguous_jump,
+
+        // Name Errors
     };
 
     pub fn message(err: DiagnosticError) []const u8 {

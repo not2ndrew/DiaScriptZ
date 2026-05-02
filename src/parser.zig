@@ -181,7 +181,8 @@ pub const Parser = struct {
     fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         // TODO: This is dangerous. Make sure to check if
         // the token pos is NOT beyond the length of slice.
-        if (self.tokens.get(self.token_pos + 1).tag == .colon) {
+        const is_within = self.token_pos + 1 < self.tokens.len;
+        if (is_within and self.tokens.get(self.token_pos + 1).tag == .colon) {
             return try self.parseDialogue();
         }
 
