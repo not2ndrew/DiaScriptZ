@@ -19,34 +19,24 @@ const Diagnostic = diagnostic.Diagnostic;
 const DiagnosticError = diagnostic.DiagnosticError;
 const Diagnostics = std.ArrayList(Diagnostic);
 
-const VarHashMap = std.hash_map.StringHashMap(ProgramSymbol);
-const LabelHashMap = std.hash_map.StringHashMap(LabelSymbol);
-const NameHashMap = std.hash_map.StringHashMap(void);
+const SymbolTable = std.array_hash_map.String(Symbol);
 
-pub const Error = error {
-    SemanticError,
-    OutOfMemory,
+pub const Symbol = struct {
+    token_pos: TokenIndex,
+    kind: Kind,
 };
 
-pub const NameKind = enum {
-    vars,
+pub const Kind = enum {
+    keyword_const,
+    keyword_var,
     label,
     name,
     none,
 };
 
-pub const ProgramSymbol = struct {
-    token_pos: TokenIndex,
-    mutability: Mutability,
-
-    pub const Mutability = enum {
-        keyword_const,
-        keyword_var,
-    };
-};
-
-pub const LabelSymbol = struct {
-    token_pos: TokenIndex,
+pub const Error = error {
+    SemanticError,
+    OutOfMemory,
 };
 
 pub const Semantic = struct {
@@ -56,9 +46,7 @@ pub const Semantic = struct {
     tokens: Tokens.Slice,
     errors: *Diagnostics,
 
-    vars: VarHashMap,
-    labels: LabelHashMap,
-    names: NameHashMap,
+    symbols: SymbolTable,
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
@@ -71,16 +59,12 @@ pub const Semantic = struct {
             .nodes = nodes,
             .tokens = tokens,
             .errors = errors,
-            .vars = VarHashMap.init(allocator),
-            .labels = LabelHashMap.init(allocator),
-            .names = NameHashMap.init(allocator),
+            .symbols = SymbolTable.empty,
         };
     }
 
     pub fn deinit(self: *Semantic) void {
-        self.vars.deinit();
-        self.labels.deinit();
-        self.names.deinit();
+        self.symbols.deinit(self.allocator);
     }
 
     fn report(self: *Semantic, diag_err: DiagnosticError, token_pos: TokenIndex) !void {
@@ -99,55 +83,42 @@ pub const Semantic = struct {
         return self.source[token.start..token.end];
     }
 
-    fn lookUpName(self: *Semantic, name: []const u8) NameKind {
-        if (self.vars.contains(name)) return .vars;
-        if (self.labels.contains(name)) return .label;
-        if (self.names.contains(name)) return .name;
-        return .none;
-    }
+    fn lookUpKind(self: *Semantic, name: []const u8) Kind {
+        if (self.symbols.get(name)) |symbol| {
+            return symbol.kind;
+        }
 
-    fn checkNameConflict(self: *Semantic, name: []const u8, token_pos: TokenIndex) !void {
-        return switch(self.lookUpName(name)) {
-            .vars => try self.report(.{ .simple = .duplicate_var }, token_pos),
-            .labels => try self.report(.{ .simple = .duplicate_label }, token_pos),
-            .name => try self.report(.{ .simple = .ident_mismatch }, token_pos),
-            .none => {},
-        };
+        return .none;
     }
 
     fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
         const name = self.identName(token_pos);
+        const symbol = try self.symbols.getOrPut(self.allocator, name);
 
-        const has_var = self.vars.contains(name);
-        const has_label = self.labels.contains(name);
+        if (!symbol.found_existing) {
+            switch (tag) {
+                .var_ident => try self.report(.{ .simple = .undeclared_var }, token_pos),
+                .label_ident => try self.report(.{ .simple = .undeclared_label }, token_pos),
+                else => {},
+            }
+        }
+
+        const kind = symbol.value_ptr.*.kind;
 
         switch (tag) {
             .number => {
                 _ = std.fmt.parseInt(u8, name, 10) catch {
                     try self.report(.{ .simple = .int_overflow }, token_pos);
-                    return;
                 };
             },
             .var_ident => {
-                if (!has_var) {
-                    try self.report(.{ .simple = .undeclared_var }, token_pos);
-                    return;
-                }
-
-                if (has_label) {
+                if (kind != .keyword_var or kind != .keyword_const) {
                     try self.report(.{ .simple = .ident_mismatch }, token_pos);
-                    return;
                 }
             },
             .label_ident => {
-                if (!has_label) {
-                    try self.report(.{ .simple = .undeclared_label }, token_pos);
-                    return;
-                }
-
-                if (has_var) {
+                if (kind != .label) {
                     try self.report(.{ .simple = .ident_mismatch }, token_pos);
-                    return;
                 }
             },
             else => {},
@@ -198,31 +169,31 @@ pub const Semantic = struct {
         const value_node = self.nodes.get(value_index);
 
         const mut_type = self.tokens.get(node.token_pos).tag;
-        const mutability: ProgramSymbol.Mutability = if (mut_type == .keyword_const)
+        const mutability: Kind = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
         try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
-        const kind = self.lookUpName(name);
+        const kind = self.lookUpKind(name);
 
         if (kind != .none) {
             return switch (kind) {
-                .vars => try self.report(.{ .simple = .duplicate_var }, token_pos),
+                .keyword_var, .keyword_const => try self.report(.{ .simple = .duplicate_var }, token_pos),
                 else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
             };
         }
 
-        const entry = try self.vars.getOrPut(name);
+        const entry = try self.symbols.getOrPut(self.allocator, name);
         entry.value_ptr.* = .{
             .token_pos = token_pos,
-            .mutability = mutability,
+            .kind = mutability,
         };
     }
 
     fn analyzeLabel(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const kind = self.lookUpName(name);
+        const kind = self.lookUpKind(name);
 
         if (kind != .none) {
             return switch (kind) {
@@ -231,16 +202,17 @@ pub const Semantic = struct {
             };
         }
 
-        const entry = try self.labels.getOrPut(name);
+        const entry = try self.symbols.getOrPut(self.allocator, name);
         entry.value_ptr.* = .{
             .token_pos = token_pos,
+            .kind = kind,
         };
     }
 
     fn analyzeName(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const kind = self.lookUpName(name);
+        const kind = self.lookUpKind(name);
 
         if (kind != .none) {
             return switch (kind) {
@@ -249,9 +221,11 @@ pub const Semantic = struct {
             };
         }
 
-        // Avoid scanning the same name repeatedly
-        // by storing into string hashmap.
-        try self.names.put(name, {});
+        const entry = try self.symbols.getOrPut(self.allocator, name);
+        entry.value_ptr.* = .{
+            .token_pos = token_pos,
+            .kind = kind,
+        };
     }
 
     fn analyzeAssign(self: *Semantic, node: Node) Error!void {
@@ -262,21 +236,19 @@ pub const Semantic = struct {
         const ident_node = self.nodes.get(ident_index);
         const value_node = self.nodes.get(value_index);
 
+        const id_token_pos = ident_node.token_pos;
+
         try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
-        // TODO: Simplify this code of block.
-        const ident_name = self.identName(ident_node.token_pos);
-        const symbol = self.vars.get(ident_name) orelse {
-            return try self.report(.{ .simple = .undeclared_var }, ident_node.token_pos);
+        const ident_name = self.identName(id_token_pos);
+        const kind = self.lookUpKind(ident_name);
+
+        return switch (kind) {
+            .label, .name => try self.report(.{ .simple = .ident_mismatch }, id_token_pos),
+            .none => try self.report(.{ .simple = .undeclared_var }, id_token_pos),
+            .keyword_const => try self.report(.{ .simple = .modified_const }, id_token_pos),
+            else => {},
         };
-
-        if (self.labels.contains(ident_name)) {
-            return try self.report(.{ .simple = .ident_mismatch }, ident_node.token_pos);
-        }
-
-        if (symbol.mutability == .keyword_const) {
-            return try self.report(.{ .simple = .modified_const }, ident_node.token_pos);
-        }
     }
 
     fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
