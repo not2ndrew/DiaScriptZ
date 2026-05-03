@@ -84,6 +84,7 @@ pub const DiagnosticError = union(enum) {
         undetermined_string,
         // Integer Errors
         int_overflow,
+        // Maybe instead of underflow, it will default to 0.
         int_underflow,
 
         // Variable Errors
@@ -92,25 +93,51 @@ pub const DiagnosticError = union(enum) {
         modified_const,
 
         // Dialogue Errors
+        // missing_speaker,
+        // invalid_speaker,
+        empty_dialogue,
+
+        // Label Errors
         duplicate_label,
         undeclared_label,
-        ambiguous_jump,
+        invalid_jump_target,
+        self_jump,
 
-        // Name Errors
+        // Choice Errors
+        // empty_choice
+        // invalid_choice_target,
+        // duplicate_choice // Idk if I should add it
+        
+        // Identifier Errors
+        ident_mismatch, // generic collision across namespaces
+        // reserved_name // using a keyword
     };
 
     pub fn message(err: DiagnosticError) []const u8 {
         return switch (err) {
             .unexpected_token => "unexpected token",
             .simple => |e| switch (e) {
+                // Integer
+                .int_overflow => "integer overflow",
+                .int_underflow => "integer underflow",
+
+                // Variables
                 .undeclared_var => "use of undeclared variable",
                 .duplicate_var => "duplicate variable name",
                 .modified_const => "cannot modify constant",
-                .int_overflow => "integer overflow",
-                .int_underflow => "integer underflow",
+
+                // Dialogue
+                .empty_dialogue => "dialogue is empty",
+
+                // Labels
                 .undeclared_label => "use of undeclared label block",
-                .ambiguous_jump => "dialogue jumps too ambiguous",
                 .duplicate_label => "duplicate label struct name",
+                .invalid_jump_target => "invalid jump target",
+                .self_jump => "cannot jump to itself.",
+
+                // Identifier
+                // TODO: Use two names to show where the error came from.
+                .ident_mismatch => "Identifier '___' already declared as ___",
                 .undetermined_string => "undetermined string",
             },
         };
