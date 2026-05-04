@@ -31,9 +31,21 @@ pub const Diagnostic = struct {
 // where x is col and y is line
 //
 // We can trade an array of 8 bytes for performance.
+
+fn cmp(a: u8, b: u8) std.math.Order {
+    if (a < b) return .lt
+    else if (a > b) return .gt
+    else return .eq;
+}
+
 fn getLineCol(source: []const u8, byte_pos: usize) struct { line: usize, col: usize } {
     var line: usize = 1;
     var col: usize = 1;
+
+    // Testing Zig's Binary Search.
+    // const num: u8 = 5;
+    // const test_num = std.sort.binarySearch(u8, source, num, cmp);
+    // _ = test_num;
 
     var i: usize = 0;
     while (i < byte_pos and i < source.len) {

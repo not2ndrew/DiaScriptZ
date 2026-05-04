@@ -24,20 +24,22 @@ const SymbolTable = std.array_hash_map.String(Symbol);
 pub const Symbol = struct {
     token_pos: TokenIndex,
     kind: Kind,
+
+    pub const Kind = enum {
+        keyword_const,
+        keyword_var,
+        label,
+        name,
+        none,
+    };
 };
 
-pub const Kind = enum {
-    keyword_const,
-    keyword_var,
-    label,
-    name,
-    none,
-};
-
-pub const Error = error {
-    SemanticError,
+pub const SemanticError = error {
     OutOfMemory,
+    NoScopeToEnd,
 };
+
+const Error = SemanticError || Allocator.Error;
 
 pub const Semantic = struct {
     allocator: Allocator,
@@ -46,7 +48,7 @@ pub const Semantic = struct {
     tokens: Tokens.Slice,
     errors: *Diagnostics,
 
-    symbols: SymbolTable,
+    symbols: std.ArrayList(SymbolTable),
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
@@ -59,11 +61,16 @@ pub const Semantic = struct {
             .nodes = nodes,
             .tokens = tokens,
             .errors = errors,
-            .symbols = SymbolTable.empty,
+            .symbols = std.ArrayList(SymbolTable).empty,
         };
     }
 
     pub fn deinit(self: *Semantic) void {
+        const len = self.symbols.items.len;
+        for (0..len) |i| {
+            const table = &self.symbols.items[len - 1 - i];
+            table.deinit(self.allocator);
+        }
         self.symbols.deinit(self.allocator);
     }
 
@@ -83,8 +90,20 @@ pub const Semantic = struct {
         return self.source[token.start..token.end];
     }
 
-    fn lookUpKind(self: *Semantic, name: []const u8) Kind {
-        if (self.symbols.get(name)) |symbol| {
+    fn addScope(self: *Semantic) Error!void {
+        try self.symbols.append(self.allocator, .empty);
+    }
+
+    fn endScope(self: *Semantic) Error!void {
+        if (self.symbols.items.len == 0) return Error.NoScopeToEnd;
+        const table = &self.symbols.items[self.symbols.items.len - 1];
+        table.deinit(self.allocator);
+        _ = self.symbols.pop();
+    }
+
+    fn lookUpKind(self: *Semantic, name: []const u8) Symbol.Kind {
+        const table = self.symbols.getLast();
+        if (table.get(name)) |symbol| {
             return symbol.kind;
         }
 
@@ -93,41 +112,41 @@ pub const Semantic = struct {
 
     fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
         const name = self.identName(token_pos);
-        const symbol = try self.symbols.getOrPut(self.allocator, name);
+        const table = &self.symbols.items[self.symbols.items.len - 1];
 
-        if (!symbol.found_existing) {
+        if (table.get(name)) |symbol| {
+            const kind = symbol.kind;
+            switch (tag) {
+                .number => {
+                    _ = std.fmt.parseInt(u8, name, 10) catch {
+                        try self.report(.{ .simple = .int_overflow }, token_pos);
+                    };
+                },
+                .var_ident => {
+                    if (kind != .keyword_var and kind != .keyword_const) {
+                        try self.report(.{ .simple = .ident_mismatch }, token_pos);
+                    }
+                },
+                .label_ident => {
+                    if (kind != .label) {
+                        try self.report(.{ .simple = .ident_mismatch }, token_pos);
+                    }
+                },
+                else => {},
+            }
+        } else {
             switch (tag) {
                 .var_ident => try self.report(.{ .simple = .undeclared_var }, token_pos),
                 .label_ident => try self.report(.{ .simple = .undeclared_label }, token_pos),
                 else => {},
             }
         }
-
-        const kind = symbol.value_ptr.*.kind;
-
-        switch (tag) {
-            .number => {
-                _ = std.fmt.parseInt(u8, name, 10) catch {
-                    try self.report(.{ .simple = .int_overflow }, token_pos);
-                };
-            },
-            .var_ident => {
-                if (kind != .keyword_var or kind != .keyword_const) {
-                    try self.report(.{ .simple = .ident_mismatch }, token_pos);
-                }
-            },
-            .label_ident => {
-                if (kind != .label) {
-                    try self.report(.{ .simple = .ident_mismatch }, token_pos);
-                }
-            },
-            else => {},
-        }
     }
 
     // The last node of a post-traversal list
     // is the root node.
     pub fn analyze(self: *Semantic) Error!void {
+        try self.symbols.append(self.allocator, SymbolTable.empty);
         const root_node = self.nodes.get(self.nodes.len - 1);
 
         for (root_node.data.block) |stmt_index| {
@@ -163,29 +182,31 @@ pub const Semantic = struct {
         const value_index = decl.value;
 
         const ident_node = self.nodes.get(ident_index);
-        const token_pos = ident_node.token_pos;
-        const name = self.identName(token_pos);
+        const id_token_pos = ident_node.token_pos;
+        const name = self.identName(id_token_pos);
 
         const value_node = self.nodes.get(value_index);
 
         const mut_type = self.tokens.get(node.token_pos).tag;
-        const mutability: Kind = if (mut_type == .keyword_const)
+        const mutability: Symbol.Kind = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
         try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
-        const kind = self.lookUpKind(name);
+        const table = &self.symbols.items[self.symbols.items.len - 1];
+        const entry = try table.getOrPut(self.allocator, name);
 
-        if (kind != .none) {
-            return switch (kind) {
-                .keyword_var, .keyword_const => try self.report(.{ .simple = .duplicate_var }, token_pos),
-                else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
+        if (entry.found_existing) {
+            return switch (entry.value_ptr.kind) {
+                .keyword_var, .keyword_const => {
+                    try self.report(.{ .simple = .duplicate_var }, id_token_pos);
+                },
+                else => try self.report(.{ .simple = .ident_mismatch }, id_token_pos),
             };
         }
 
-        const entry = try self.symbols.getOrPut(self.allocator, name);
         entry.value_ptr.* = .{
-            .token_pos = token_pos,
+            .token_pos = id_token_pos,
             .kind = mutability,
         };
     }
@@ -193,38 +214,38 @@ pub const Semantic = struct {
     fn analyzeLabel(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const kind = self.lookUpKind(name);
+        const table = &self.symbols.items[self.symbols.items.len - 1];
+        const entry = try table.getOrPut(self.allocator, name);
 
-        if (kind != .none) {
-            return switch (kind) {
+        if (entry.found_existing) {
+            return switch(entry.value_ptr.kind) {
                 .label => try self.report(.{ .simple = .duplicate_label }, token_pos),
                 else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
             };
         }
 
-        const entry = try self.symbols.getOrPut(self.allocator, name);
         entry.value_ptr.* = .{
             .token_pos = token_pos,
-            .kind = kind,
+            .kind = .label,
         };
     }
 
     fn analyzeName(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const kind = self.lookUpKind(name);
+        const table = &self.symbols.items[self.symbols.items.len - 1];
+        const entry = try table.getOrPut(self.allocator, name);
 
-        if (kind != .none) {
-            return switch (kind) {
+        if (entry.found_existing) {
+            return switch (entry.value_ptr.kind) {
                 .name => {},
                 else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
             };
         }
 
-        const entry = try self.symbols.getOrPut(self.allocator, name);
         entry.value_ptr.* = .{
             .token_pos = token_pos,
-            .kind = kind,
+            .kind = .name,
         };
     }
 
@@ -261,7 +282,9 @@ pub const Semantic = struct {
         const then_block = self.nodes.get(if_stmt.then_block);
         const block = then_block.data.block;
 
+        try self.addScope();
         try self.analyzeBlock(block);
+        try self.endScope();
     }
 
     fn analyzeCompare(self: *Semantic, node: Node) Error!void {
