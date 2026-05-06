@@ -1,9 +1,5 @@
 var x = 0
 
 if (x > 1) {
-	Andrew: x is below 1. Let's change it!
-	const x = 3
-} else {
-	Andrew: x is greater than 1. Let's change it!
-	const x = 3
+	x += 1
 }

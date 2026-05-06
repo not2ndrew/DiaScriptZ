@@ -102,7 +102,22 @@ pub const Semantic = struct {
         _ = self.symbols.pop();
     }
 
-    fn getLast(self: *Semantic) Error!*SymbolTable {
+    // Scan backwards (inner -> outer)
+    fn lookUp(self: *Semantic, name: []const u8) ?*Symbol {
+        var i: usize = self.symbols.items.len;
+
+        while (i > 0) {
+            i -= 1;
+            const table = self.symbols.items[i];
+            if (table.getPtr(name)) |symbol| {
+                return symbol;
+            }
+        }
+
+        return null;
+    }
+
+    fn currentScope(self: *Semantic) Error!*SymbolTable {
         if (self.symbols.items.len == 0) return Error.NoTableCreated;
 
         return &self.symbols.items[self.symbols.items.len - 1];
@@ -110,9 +125,8 @@ pub const Semantic = struct {
 
     fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
         const name = self.identName(token_pos);
-        const table = try self.getLast();
 
-        if (table.get(name)) |symbol| {
+        if (self.lookUp(name)) |symbol| {
             const kind = symbol.kind;
             switch (tag) {
                 .number => {
@@ -191,7 +205,7 @@ pub const Semantic = struct {
 
         try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
-        const table = try self.getLast();
+        const table = try self.currentScope();
         const entry = try table.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
@@ -212,7 +226,7 @@ pub const Semantic = struct {
     fn analyzeLabel(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const table = try self.getLast();
+        const table = try self.currentScope();
         const entry = try table.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
@@ -231,7 +245,7 @@ pub const Semantic = struct {
     fn analyzeName(self: *Semantic, node: Node) Error!void {
         const token_pos = node.token_pos;
         const name = self.identName(token_pos);
-        const table = try self.getLast();
+        const table = try self.currentScope();
         const entry = try table.getOrPut(self.allocator, name);
 
         if (entry.found_existing) {
@@ -260,16 +274,16 @@ pub const Semantic = struct {
         try self.analyzeIdent(value_node.tag, value_node.token_pos);
 
         const ident_name = self.identName(id_token_pos);
-        const table = try self.getLast();
-        const entry = try table.getOrPut(ident_name);
 
-        if (!entry.found_existing) {
-            return switch (entry.value_ptr.kind) {
+        if (self.lookUp(ident_name)) |symbol| {
+            return switch (symbol.kind) {
                 .label, .name => try self.report(.{ .simple = .ident_mismatch }, id_token_pos),
                 .none => try self.report(.{ .simple = .undeclared_var }, id_token_pos),
                 .keyword_const => try self.report(.{ .simple = .modified_const }, id_token_pos),
                 else => {},
             };
+        } else {
+            try self.report(.{ .simple = .undeclared_var }, id_token_pos);
         }
     }
 
