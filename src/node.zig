@@ -41,8 +41,8 @@ pub const NodeTag = enum {
     div_equal, // /=
 
     // Arithmetic operations
-    add,
-    sub,
+    plus,
+    minus,
     mult,
     div,
 
@@ -83,8 +83,8 @@ pub fn nodeTagFromCompare(token_tag: Tag) ?NodeTag {
 
 pub fn nodeTagFromBinary(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
-        .plus => .add,
-        .minus => .sub,
+        .plus => .plus,
+        .minus => .minus,
         .asterisk => .mult,
         .slash => .div,
         else => null,

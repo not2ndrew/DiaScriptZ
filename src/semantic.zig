@@ -155,6 +155,24 @@ pub const Semantic = struct {
         }
     }
 
+    fn analyzeValue(self: *Semantic, node_index: NodeIndex) Error!void {
+        const node = self.nodes.get(node_index);
+
+        switch (node.tag) {
+            .plus, .minus, .mult, .div => {
+                const binary = node.data.binary;
+                try self.analyzeValue(binary.lhs);
+                try self.analyzeValue(binary.rhs);
+            },
+            .plus_equal, .minus_equal,
+            .mult_equal, .div_equal => {
+                const assign = node.data.assign;
+                try self.analyzeValue(assign.value);
+            },
+            else => try self.analyzeIdent(node.tag, node.token_pos),
+        }
+    }
+
     // The last node of a post-traversal list
     // is the root node.
     pub fn analyze(self: *Semantic) Error!void {
@@ -194,8 +212,6 @@ pub const Semantic = struct {
         const value_index = decl.value;
 
         const ident_node = self.nodes.get(ident_index);
-        const value_node = self.nodes.get(value_index);
-        
         const id_token_pos = ident_node.token_pos;
         const name = self.identName(id_token_pos);
 
@@ -203,7 +219,7 @@ pub const Semantic = struct {
         const mutability: Symbol.Kind = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
-        try self.analyzeIdent(value_node.tag, value_node.token_pos);
+        try self.analyzeValue(value_index);
 
         const table = try self.currentScope();
         const entry = try table.getOrPut(self.allocator, name);
@@ -267,11 +283,9 @@ pub const Semantic = struct {
         const value_index = assign.value;
 
         const ident_node = self.nodes.get(ident_index);
-        const value_node = self.nodes.get(value_index);
-
         const id_token_pos = ident_node.token_pos;
 
-        try self.analyzeIdent(value_node.tag, value_node.token_pos);
+        try self.analyzeValue(value_index);
 
         const ident_name = self.identName(id_token_pos);
 
