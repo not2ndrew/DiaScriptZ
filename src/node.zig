@@ -18,10 +18,8 @@ pub const NodeTag = enum {
     dialogue,
     choice,
     
-    // If stmts
+    // Block
     block,
-    then_block,
-    else_block,
 
     // Single characters
     assign, // =
@@ -114,8 +112,8 @@ pub const Range = struct {
 
 // TODO: every data using none will pay the full cost of dialogue.
 // Try to reduce the size of the largest field.
-pub const NodeData = union(enum) {
-    none,
+pub const NodeData = union {
+    none: void,
 
     // Expressions
     binary: struct {
@@ -139,8 +137,8 @@ pub const NodeData = union(enum) {
     block: Block,
     dialogue: struct {
         str: Range,
-        branch: union(enum) {
-            none,
+        branch: union {
+            none: void,
             goto: NodeIndex,
         },
     },

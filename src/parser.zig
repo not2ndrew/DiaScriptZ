@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const Ast = @import("ast.zig").Ast;
+const ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -21,7 +21,7 @@ const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
 const nodeTagFromScene = zig_node.nodeTagFromScene;
 
-const AstError = Ast.Error;
+const AstError = ast.Error;
 const ErrorTag = AstError.Tag;
 
 const Tokens = std.MultiArrayList(Token);
@@ -52,18 +52,8 @@ pub const Parser = struct {
     }
 
     fn reportUnexpected(self: *Parser, tag: ErrorTag, expected: TokenTag) !void {
-        var token = self.peekToken();
-
-        // Prev only copies the token, it does not modify it
-        if (token.tag == .EOF) {
-            const prev = self.tokens.get(self.token_pos - 1);
-            token.start = prev.end;
-            token.end = prev.end;
-        }
-
         try self.errors.append(self.allocator, .{
-            .start = @intCast(token.start),
-            .end = @intCast(token.end),
+            .token_pos = self.token_pos,
             .tag = tag,
             .extra = .{ .expected_tag = expected },
         });
@@ -200,7 +190,6 @@ pub const Parser = struct {
 
         const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
             try self.reportUnexpected(.expected_arith_op, .assign);
-            // try self.reportUnexpected(.assign);
             return ParserError.ParseError;
         };
 
@@ -251,7 +240,6 @@ pub const Parser = struct {
 
         const compare_tag = nodeTagFromCompare(op_tag) orelse {
             try self.reportUnexpected(.expected_compar_op, .equals);
-            // try self.reportUnexpected(.equals);
             return Error.ParseError;
         };
 
@@ -329,7 +317,7 @@ pub const Parser = struct {
         while (true) : (i += 1) {
             switch (self.peekTag()) {
                 .string => {
-                    _ = try self.addNode(.string, self.token_pos, .none);
+                    _ = try self.addNode(.string, self.token_pos, .{ .none = {} });
 
                     self.next();
                 },
@@ -338,7 +326,7 @@ pub const Parser = struct {
                     const ident = try self.expect(.identifier);
 
                     _ = try self.expect(.inter_close);
-                    _ = try self.addNode(.var_ident, ident, .none);
+                    _ = try self.addNode(.var_ident, ident, .{ .none = {} });
                 },
                 else => break,
             }
@@ -372,7 +360,7 @@ pub const Parser = struct {
             return self.addNode(tag, ident_pos, .{
                 .dialogue = .{
                     .str = .{ .start = start, .len = len },
-                    .branch = .none
+                    .branch = .{ .none = {} } 
                 }
             });
         }
@@ -403,7 +391,7 @@ pub const Parser = struct {
         
         return switch (tag) {
             .var_ident, .label_ident,
-            .name_ident, .anonymous => try self.addNode(tag, ident_pos, .none),
+            .name_ident, .anonymous => try self.addNode(tag, ident_pos, .{ .none = {} }),
             else => unreachable,
         };
     }
@@ -418,7 +406,6 @@ pub const Parser = struct {
 
             const binary_tag = nodeTagFromBinary(tag) orelse {
                 try self.reportUnexpected(.expected_arith_op, .plus);
-                // try self.reportUnexpected(.plus);
                 return ParserError.ParseError;
             };
             const op_tok = self.token_pos;
@@ -444,7 +431,6 @@ pub const Parser = struct {
 
             const binary_tag = nodeTagFromBinary(tag) orelse {
                 try self.reportUnexpected(.expected_arith_op, .asterisk);
-                // try self.reportUnexpected(.asterisk);
                 return ParserError.ParseError;
             };
             const op_tok = self.token_pos;
@@ -467,11 +453,11 @@ pub const Parser = struct {
         switch (self.peekTag()) {
             .number => {
                 self.next();
-                return self.addNode(.number, idx, .none);
+                return self.addNode(.number, idx, .{ .none = {} });
             },
             .identifier => {
                 self.next();
-                return self.addNode(.var_ident, idx, .none);
+                return self.addNode(.var_ident, idx, .{ .none = {} });
             },
             .open_paren => {
                 self.next();
