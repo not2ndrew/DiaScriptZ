@@ -1,7 +1,6 @@
 const std = @import("std");
 const Ast = @import("ast.zig");
 const Semantic = @import("semantic.zig").Semantic;
-const Sink = @import("diagnostic.zig").DiagnosticSink;
 
 const Io = std.Io;
 const Init = std.process.Init;
@@ -27,16 +26,15 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     var ast = try Ast.parse(allocator, lines);
     defer ast.deinit();
 
-    var semantic = Semantic.init(
-        allocator, lines, ast.nodes,
-        ast.tokens, &ast.errors
-    );
-    defer semantic.deinit();
+    // var semantic = Semantic.init(
+    //     allocator, lines, ast.nodes,
+    //     ast.tokens, &ast.errors
+    // );
+    // defer semantic.deinit();
+    //
+    // try semantic.analyze();
 
-    try semantic.analyze();
-
-    var sink = Sink.init(lines, ast.errors.items);
-    sink.printErrors(file_name);
+    ast.printErrors(file_name);
 }
 
 /// Make sure to free memory!!!

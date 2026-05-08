@@ -1,27 +1,28 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const Diagnostic = @import("diagnostic.zig").Diagnostic;
 const Ast = @import("ast.zig").Ast;
 
 const Allocator = std.mem.Allocator;
 
-const NodeIndex = zig_node.NodeIndex;
-const TokenIndex = tok.TokenIndex;
-
-const Token = tok.Token;
-const TokenTag = tok.Tag;
-
-const Tag = zig_node.NodeTag;
 const Node = zig_node.Node;
+const Tag = zig_node.NodeTag;
+const NodeIndex = zig_node.NodeIndex;
 const NodeData = zig_node.NodeData;
 const NodeRange = zig_node.NodeRange;
 const invalid_node = zig_node.invalid_node;
+
+const Token = tok.Token;
+const TokenTag = tok.Tag;
+const TokenIndex = tok.TokenIndex;
 
 const nodeTagFromArithmetic = zig_node.nodeTagFromArithmetic;
 const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
 const nodeTagFromScene = zig_node.nodeTagFromScene;
+
+const AstError = Ast.Error;
+const ErrorTag = AstError.Tag;
 
 const Tokens = std.MultiArrayList(Token);
 
@@ -36,7 +37,7 @@ pub const Parser = struct {
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node),
 
-    errors: std.ArrayList(Diagnostic),
+    errors: std.ArrayList(AstError),
 
     token_pos: u32,
 
@@ -50,7 +51,7 @@ pub const Parser = struct {
         };
     }
 
-    fn reportUnexpected(self: *Parser, expected: TokenTag) !void {
+    fn reportUnexpected(self: *Parser, tag: ErrorTag, expected: TokenTag) !void {
         var token = self.peekToken();
 
         // Prev only copies the token, it does not modify it
@@ -61,14 +62,10 @@ pub const Parser = struct {
         }
 
         try self.errors.append(self.allocator, .{
-            .severity = .note,
-            .err = .{
-                .unexpected_token = .{
-                    .expected = expected, .found = token.tag 
-                } 
-            },
             .start = @intCast(token.start),
             .end = @intCast(token.end),
+            .tag = tag,
+            .extra = .{ .expected_tag = expected },
         });
     }
 
@@ -99,7 +96,7 @@ pub const Parser = struct {
         const idx = self.token_pos;
 
         if (self.peekTag() != tag) {
-            try self.reportUnexpected(tag);
+            try self.reportUnexpected(.expected_expr, tag);
             return Error.ParseError;
         }
 
@@ -156,7 +153,7 @@ pub const Parser = struct {
             .choice_marker => try self.parseChoice(),
             .tilde => try self.parseLabel(),
             else => {
-                try self.reportUnexpected(.identifier);
+                try self.reportUnexpected(.expected_expr, .identifier);
                 return Error.ParseError;
             }
         };
@@ -202,7 +199,8 @@ pub const Parser = struct {
         const expr = try self.parseExpr();
 
         const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
-            try self.reportUnexpected(.assign);
+            try self.reportUnexpected(.expected_arith_op, .assign);
+            // try self.reportUnexpected(.assign);
             return ParserError.ParseError;
         };
 
@@ -252,7 +250,8 @@ pub const Parser = struct {
         const op_tag = self.peekTag();
 
         const compare_tag = nodeTagFromCompare(op_tag) orelse {
-            try self.reportUnexpected(.equals);
+            try self.reportUnexpected(.expected_compar_op, .equals);
+            // try self.reportUnexpected(.equals);
             return Error.ParseError;
         };
 
@@ -346,7 +345,7 @@ pub const Parser = struct {
         }
 
         if (i == 0) {
-            try self.reportUnexpected(.string);
+            try self.reportUnexpected(.expected_dialogue, .string);
             return Error.ParseError;
         }
 
@@ -418,7 +417,8 @@ pub const Parser = struct {
             if (tag != .plus and tag != .minus) break;
 
             const binary_tag = nodeTagFromBinary(tag) orelse {
-                try self.reportUnexpected(.plus);
+                try self.reportUnexpected(.expected_arith_op, .plus);
+                // try self.reportUnexpected(.plus);
                 return ParserError.ParseError;
             };
             const op_tok = self.token_pos;
@@ -443,7 +443,8 @@ pub const Parser = struct {
             if (tag != .asterisk and tag != .slash) break;
 
             const binary_tag = nodeTagFromBinary(tag) orelse {
-                try self.reportUnexpected(.asterisk);
+                try self.reportUnexpected(.expected_arith_op, .asterisk);
+                // try self.reportUnexpected(.asterisk);
                 return ParserError.ParseError;
             };
             const op_tok = self.token_pos;
@@ -481,7 +482,7 @@ pub const Parser = struct {
                 return expr;
             },
             else => {
-                try self.reportUnexpected(.number);
+                try self.reportUnexpected(.expected_expr, .number);
                 return Error.ParseError;
             },
         }

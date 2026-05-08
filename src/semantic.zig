@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const diagnostic = @import("diagnostic.zig");
+const Ast = @import("ast.zig").Ast;
 
 const Allocator = std.mem.Allocator;
 
@@ -14,10 +14,6 @@ const Tokens = std.MultiArrayList(Token);
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
 const Tag = zig_node.NodeTag;
-
-const Diagnostic = diagnostic.Diagnostic;
-const DiagnosticError = diagnostic.DiagnosticError;
-const Diagnostics = std.ArrayList(Diagnostic);
 
 const SymbolTable = std.array_hash_map.String(Symbol);
 
@@ -46,14 +42,14 @@ pub const Semantic = struct {
     source: []const u8,
     nodes: Nodes.Slice,
     tokens: Tokens.Slice,
-    errors: *Diagnostics,
+    errors: *std.ArrayList(Ast.Error),
 
     symbols: std.ArrayList(SymbolTable),
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
         nodes: Nodes.Slice,
-        tokens: Tokens.Slice, errors: *Diagnostics,
+        tokens: Tokens.Slice, errors: *std.ArrayList(Ast.Error),
     ) Semantic {
         return .{
             .allocator = allocator,
@@ -74,12 +70,12 @@ pub const Semantic = struct {
         self.symbols.deinit(self.allocator);
     }
 
-    fn report(self: *Semantic, diag_err: DiagnosticError, token_pos: TokenIndex) !void {
+    fn report(self: *Semantic, err: Ast.Error, token_pos: TokenIndex) !void {
         const token = self.tokens.get(token_pos);
 
         try self.errors.append(self.allocator, .{
             .severity = .err,
-            .err = diag_err,
+            .err = err,
             .start = @intCast(token.start),
             .end = @intCast(token.end),
         });
@@ -219,8 +215,6 @@ pub const Semantic = struct {
         const mutability: Symbol.Kind = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
-        try self.analyzeValue(value_index);
-
         const table = try self.currentScope();
         const entry = try table.getOrPut(self.allocator, name);
 
@@ -237,6 +231,8 @@ pub const Semantic = struct {
             .token_pos = id_token_pos,
             .kind = mutability,
         };
+
+        try self.analyzeValue(value_index);
     }
 
     fn analyzeLabel(self: *Semantic, node: Node) Error!void {
