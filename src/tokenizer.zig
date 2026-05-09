@@ -27,12 +27,17 @@ pub const Tokenizer = struct {
     mode: Mode,
     line_start: bool,
 
-    pub fn init(buffer: []const u8) Tokenizer {
+    allocator: Allocator,
+    line_starts: std.ArrayList(usize),
+
+    pub fn init(buffer: []const u8, allocator: Allocator) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
             .mode = .normal,
             .line_start = true,
+            .allocator = allocator,
+            .line_starts = .empty,
         };
     }
 
@@ -46,6 +51,9 @@ pub const Tokenizer = struct {
                     self.index += 1;
                     self.mode = .normal;
                     self.line_start = true;
+                    self.line_starts.append(self.allocator, self.index + 1) catch {
+                        std.debug.print("Out of memory\n", .{});
+                    };
                 },
                 else => return,
             }

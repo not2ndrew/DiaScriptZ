@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const Ast = @import("ast.zig").Ast;
+const ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,6 +14,9 @@ const Tokens = std.MultiArrayList(Token);
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
 const Tag = zig_node.NodeTag;
+
+const AstError = ast.Error;
+const ErrorTag = ast.Error.Tag;
 
 const SymbolTable = std.array_hash_map.String(Symbol);
 
@@ -42,14 +45,14 @@ pub const Semantic = struct {
     source: []const u8,
     nodes: Nodes.Slice,
     tokens: Tokens.Slice,
-    errors: *std.ArrayList(Ast.Error),
+    errors: *std.ArrayList(AstError),
 
     symbols: std.ArrayList(SymbolTable),
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
         nodes: Nodes.Slice,
-        tokens: Tokens.Slice, errors: *std.ArrayList(Ast.Error),
+        tokens: Tokens.Slice, errors: *std.ArrayList(AstError),
     ) Semantic {
         return .{
             .allocator = allocator,
@@ -70,14 +73,12 @@ pub const Semantic = struct {
         self.symbols.deinit(self.allocator);
     }
 
-    fn report(self: *Semantic, err: Ast.Error, token_pos: TokenIndex) !void {
-        const token = self.tokens.get(token_pos);
-
+    // Semantic analysis has different types of errors.
+    fn report(self: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
         try self.errors.append(self.allocator, .{
-            .severity = .err,
-            .err = err,
-            .start = @intCast(token.start),
-            .end = @intCast(token.end),
+            .token_pos = token_pos,
+            .tag = tag,
+            .extra = .{ .none = {} },
         });
     }
 
@@ -127,25 +128,25 @@ pub const Semantic = struct {
             switch (tag) {
                 .number => {
                     _ = std.fmt.parseInt(u8, name, 10) catch {
-                        try self.report(.{ .simple = .int_overflow }, token_pos);
+                        try self.report(token_pos, .int_overflow);
                     };
                 },
                 .var_ident => {
                     if (kind != .keyword_var and kind != .keyword_const) {
-                        try self.report(.{ .simple = .ident_mismatch }, token_pos);
+                        try self.report(token_pos, .ident_mismatch);
                     }
                 },
                 .label_ident => {
                     if (kind != .label) {
-                        try self.report(.{ .simple = .ident_mismatch }, token_pos);
+                        try self.report(token_pos, .ident_mismatch);
                     }
                 },
                 else => {},
             }
         } else {
             switch (tag) {
-                .var_ident => try self.report(.{ .simple = .undeclared_var }, token_pos),
-                .label_ident => try self.report(.{ .simple = .undeclared_label }, token_pos),
+                .var_ident => try self.report(token_pos, .undeclared_var),
+                .label_ident => try self.report(token_pos, .undeclared_label),
                 else => {},
             }
         }
@@ -221,9 +222,9 @@ pub const Semantic = struct {
         if (entry.found_existing) {
             return switch (entry.value_ptr.kind) {
                 .keyword_var, .keyword_const => {
-                    try self.report(.{ .simple = .duplicate_var }, id_token_pos);
+                    try self.report(id_token_pos, .duplicate_var);
                 },
-                else => try self.report(.{ .simple = .ident_mismatch }, id_token_pos),
+                else => try self.report(id_token_pos, .ident_mismatch),
             };
         }
 
@@ -243,8 +244,8 @@ pub const Semantic = struct {
 
         if (entry.found_existing) {
             return switch (entry.value_ptr.kind) {
-                .label => try self.report(.{ .simple = .duplicate_label }, token_pos),
-                else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
+                .label => try self.report(token_pos, .duplicate_label),
+                else => try self.report(token_pos, .ident_mismatch),
             };
         }
 
@@ -263,7 +264,7 @@ pub const Semantic = struct {
         if (entry.found_existing) {
             return switch (entry.value_ptr.kind) {
                 .name => {},
-                else => try self.report(.{ .simple = .ident_mismatch }, token_pos),
+                else => try self.report(token_pos, .ident_mismatch),
             };
         }
 
@@ -287,13 +288,13 @@ pub const Semantic = struct {
 
         if (self.lookUp(ident_name)) |symbol| {
             return switch (symbol.kind) {
-                .label, .name => try self.report(.{ .simple = .ident_mismatch }, id_token_pos),
-                .none => try self.report(.{ .simple = .undeclared_var }, id_token_pos),
-                .keyword_const => try self.report(.{ .simple = .modified_const }, id_token_pos),
+                .label, .name => try self.report(id_token_pos, .ident_mismatch),
+                .none => try self.report(id_token_pos, .undeclared_var),
+                .keyword_const => try self.report(id_token_pos, .modified_const),
                 else => {},
             };
         } else {
-            try self.report(.{ .simple = .undeclared_var }, id_token_pos);
+            try self.report(id_token_pos, .undeclared_var);
         }
     }
 
@@ -338,9 +339,9 @@ pub const Semantic = struct {
             try self.analyzeIdent(str_node.tag, str_node.token_pos);
         }
 
-        if (dialogue.branch == .goto) {
-            const goto_node = self.nodes.get(dialogue.branch.goto);
-            try self.analyzeIdent(goto_node.tag, goto_node.token_pos);
-        }
+        // if (dialogue.branch == .goto) {
+        //     const goto_node = self.nodes.get(dialogue.branch.goto);
+        //     try self.analyzeIdent(goto_node.tag, goto_node.token_pos);
+        // }
     }
 };

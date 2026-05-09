@@ -137,7 +137,7 @@ pub const NodeData = union {
     block: Block,
     dialogue: struct {
         str: Range,
-        branch: union {
+        branch: union(enum) {
             none: void,
             goto: NodeIndex,
         },

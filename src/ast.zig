@@ -21,10 +21,20 @@ pub const Error = struct {
     extra: Extra = .{ .none = {} },
 
     pub const Tag = enum {
+        // Parsing Errors
         expected_expr,
         expected_arith_op,
         expected_compar_op,
         expected_dialogue,
+
+        // Semantic Errors
+        int_overflow,
+        ident_mismatch,
+        duplicate_var,
+        duplicate_label,
+        undeclared_var,
+        undeclared_label,
+        modified_const,
     };
 
     pub const Extra = union {
@@ -38,7 +48,9 @@ pub const Ast = struct {
     source: []const u8,
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node).Slice,
+
     errors: std.ArrayList(Error),
+    line_starts: []usize,
 
     /// It is best to deinitalize at the end of semantic analysis.
     pub fn deinit(self: *Ast) void {
@@ -53,25 +65,64 @@ pub const Ast = struct {
         self.nodes.deinit(self.allocator);
         self.tokens.deinit(self.allocator);
         self.errors.deinit(self.allocator);
+        self.allocator.free(self.line_starts);
     }
 
     pub fn printErrors(self: *Ast, file_name: []const u8) void {
         for (self.errors.items) |err| {
             const token = self.tokens.get(err.token_pos);
             const msg = errorMessage(err.tag);
-            const pos = getLineCol(self.source, token.start);
+            const pos = self.getLineCol(token.start);
             const line_slice = getLineSlice(self.source, token.start);
+
+            // Caret indicator for error
+            var buf: [30]u8 = undefined;
+            const spaces = buf[0..@min(pos.col, buf.len)];
+            @memset(spaces, ' ');
 
             std.debug.print(
                 \\{s}:{d}:{d} error: {s}
                 \\     |
-                \\{d:4}| {s}
+                \\{d: >4} | {s}
+                \\     |{s}^
+                \\
                 ,
-                .{ file_name, pos.line, pos.col, msg, pos.col, line_slice }
+                .{
+                    file_name, pos.line, pos.col, msg, 
+                    pos.line, line_slice,
+                    spaces
+                }
             );
-
-            printError(err, pos.col, token.tag);
         }
+    }
+
+    // TODO: this is O(n)
+    // where n = num_of_errs * source_size
+    //
+    // Store an array of line_starts
+    // then binary search containing byte_pos.
+    // Compute columns as byte_pos - line_start.
+    // Should become O(log n)
+    //
+    // line_start is a byte_pos after a newline.
+    fn getLineCol(self: *Ast, byte_pos: usize) struct { line: usize, col: usize } {
+        const source = self.source;
+        var line: usize = 1;
+        var col: usize = 1;
+
+        var i: usize = 0;
+        while (i < byte_pos and i < source.len) {
+            if (source[i] == '\n') {
+                line += 1;
+                col = 1;
+            } else {
+                col += 1;
+            }
+
+            i += 1;
+        }
+
+        return .{ .line = line, .col = col };
     }
 };
 
@@ -81,7 +132,7 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
     defer tokens.deinit(allocator);
 
     // lines => tokens
-    var tokenizer = Tokenizer.init(buf);
+    var tokenizer = Tokenizer.init(buf, allocator);
 
     while (true) {
         const token = tokenizer.next();
@@ -89,10 +140,12 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
         if (token.tag == .EOF) break;
     }
 
-    return parseFromTokens(allocator, buf, tokens.toOwnedSlice());
+    const line_starts = try tokenizer.line_starts.toOwnedSlice(allocator);
+
+    return parseFromTokens(allocator, buf, tokens.toOwnedSlice(), line_starts);
 }
 
-fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) !Ast {
+fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice, line_starts: []usize) !Ast {
     var parser = try Parser.init(allocator, tokens);
 
     // tokens => AST of stmt nodes
@@ -104,36 +157,9 @@ fn parseFromTokens(allocator: Allocator, buf: []const u8, tokens: Tokens.Slice) 
         .source = buf,
         .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
-        .errors = parser.errors
+        .errors = parser.errors,
+        .line_starts = line_starts,
     };
-}
-
-// TODO: Search for every '\n' during init.
-// Get an array of '\n' from tokenizer.
-// Then binary search line num,
-// then compute column = byte_pos - line num
-//
-// The reason is there are x * y total bytes to scan
-// where x is col and y is line
-//
-// We can trade an array of 8 bytes for performance.
-fn getLineCol(source: []const u8, byte_pos: usize) struct { line: usize, col: usize } {
-    var line: usize = 1;
-    var col: usize = 1;
-
-    var i: usize = 0;
-    while (i < byte_pos and i < source.len) {
-        if (source[i] == '\n') {
-            line += 1;
-            col = 1;
-        } else {
-            col += 1;
-        }
-
-        i += 1;
-    }
-
-    return .{ .line = line, .col = col };
 }
 
 fn getLineSlice(source: []const u8, byte_pos: usize) []const u8 {
@@ -159,44 +185,19 @@ fn getLineSlice(source: []const u8, byte_pos: usize) []const u8 {
 
 fn errorMessage(tag: Error.Tag) []const u8 {
     return switch(tag) {
+        // Parsing Errors
         .expected_expr => "Expected expression",
-        .expected_arith_op => "Expected Arithmetic Operator",
-        .expected_compar_op => "Expected Comparison Operator",
-        .expected_dialogue => "Expected Dialogue",
+        .expected_arith_op => "Expected arithmetic operator",
+        .expected_compar_op => "Expected comparison operator",
+        .expected_dialogue => "Expected dialogue",
+
+        // Semantic Errors
+        .int_overflow => "Integer overflow",
+        .ident_mismatch => "Identifier mismatch",
+        .duplicate_var => "Duplicate variable",
+        .duplicate_label => "Duplicate label",
+        .undeclared_label => "Label not declared",
+        .undeclared_var => "Variable not declared",
+        .modified_const => "Modified const",
     };
-}
-
-// TODO: Convert token tags to actual strings.
-fn printError(err: Error, col: usize, tag: TokenTag) void {
-    // Assume some amount of memory
-    var buf: [100]u8 = undefined;
-    const spaces = buf[0..@min(col, buf.len)];
-    @memset(spaces, ' ');
-
-    switch (err.tag) {
-        .expected_expr => {
-            std.debug.print(
-                "{s}\n --> Expected {t}, Found {t}\n\n",
-                .{ spaces, err.extra.expected_tag, tag }
-            );
-        },
-        .expected_arith_op => {
-            std.debug.print(
-                "{s}\n --> Expected arithmetic operator, found {t}\n\n",
-                .{ spaces, tag }
-            );
-        },
-        .expected_compar_op => {
-            std.debug.print(
-                "{s}\n --> Expected comparison operator, found {t}\n\n",
-                .{ spaces, tag }
-            );
-        },
-        .expected_dialogue => {
-            std.debug.print(
-                "{s}\n --> Dialogue is empty\n\n",
-                .{ spaces }
-            );
-        },
-    }
 }
