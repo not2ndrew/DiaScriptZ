@@ -96,31 +96,30 @@ pub const Ast = struct {
         }
     }
 
-    // TODO: this is O(n)
-    // where n = num_of_errs * source_size
-    //
-    // Store an array of line_starts
-    // then binary search containing byte_pos.
-    // Compute columns as byte_pos - line_start.
-    // Should become O(log n)
-    //
-    // line_start is a byte_pos after a newline.
     fn getLineCol(self: *Ast, byte_pos: usize) struct { line: usize, col: usize } {
-        const source = self.source;
-        var line: usize = 1;
-        var col: usize = 1;
+        const line_starts = self.line_starts;
+        var low: usize = 0;
+        var high: usize = line_starts.len - 1;
+        var line_idx: usize = 0;
 
-        var i: usize = 0;
-        while (i < byte_pos and i < source.len) {
-            if (source[i] == '\n') {
-                line += 1;
-                col = 1;
+        while (low < high) {
+            // Avoid overflowing in the midpoint calculation.
+            const mid = low + (high - low) / 2;
+            const value = line_starts[mid];
+
+            if (value < byte_pos) {
+                line_idx = mid;
+                low = mid + 1;
+            } else if (value > byte_pos) {
+                high = mid - 1;
             } else {
-                col += 1;
+                line_idx = mid;
+                break;
             }
-
-            i += 1;
         }
+
+        const line = line_idx + 1;
+        const col = byte_pos - line_starts[line_idx] + 1;
 
         return .{ .line = line, .col = col };
     }
@@ -132,7 +131,7 @@ pub fn parse(allocator: Allocator, buf: []const u8) !Ast {
     defer tokens.deinit(allocator);
 
     // lines => tokens
-    var tokenizer = Tokenizer.init(buf, allocator);
+    var tokenizer = try Tokenizer.init(buf, allocator);
 
     while (true) {
         const token = tokenizer.next();

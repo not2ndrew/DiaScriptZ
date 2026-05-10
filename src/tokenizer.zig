@@ -30,14 +30,17 @@ pub const Tokenizer = struct {
     allocator: Allocator,
     line_starts: std.ArrayList(usize),
 
-    pub fn init(buffer: []const u8, allocator: Allocator) Tokenizer {
+    pub fn init(buffer: []const u8, allocator: Allocator) !Tokenizer {
+        var line_starts = std.ArrayList(usize).empty;
+        try line_starts.append(allocator, 0);
+
         return .{
             .buffer = buffer,
             .index = 0,
             .mode = .normal,
             .line_start = true,
             .allocator = allocator,
-            .line_starts = .empty,
+            .line_starts = line_starts,
         };
     }
 
@@ -51,7 +54,7 @@ pub const Tokenizer = struct {
                     self.index += 1;
                     self.mode = .normal;
                     self.line_start = true;
-                    self.line_starts.append(self.allocator, self.index + 1) catch {
+                    self.line_starts.append(self.allocator, self.index) catch {
                         std.debug.print("Out of memory\n", .{});
                     };
                 },
@@ -60,7 +63,9 @@ pub const Tokenizer = struct {
         }
     }
 
-    fn match(self: *Tokenizer, c: u8) bool {
+    /// Checks if the next character matches c.\n
+    /// Increment token_pos if true. Otherwise, false.
+    fn matchNext(self: *Tokenizer, c: u8) bool {
         if (self.index < self.buffer.len and self.buffer[self.index] == c) {
             self.index += 1;
             return true;
@@ -80,7 +85,7 @@ pub const Tokenizer = struct {
             }
         }
 
-        if (self.buffer[self.index] == '{') {
+        if (self.index < buffer.len and buffer[self.index] == '{') {
             self.mode = .interpolation;
         } else {
             self.mode = .normal;
@@ -118,17 +123,15 @@ pub const Tokenizer = struct {
         switch (buffer[self.index]) {
             '+' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .plus_equal else .plus;
+                result.tag = if (self.matchNext('=')) .plus_equal else .plus;
             },
             '-' => {
                 result.start = self.index;
                 self.index += 1;
 
-                if (self.match('=')) {
-                    self.index += 1;
+                if (self.matchNext('=')) {
                     result.tag = .minus_equal;
-                } else if (self.match('>')) {
-                    self.index += 1;
+                } else if (self.matchNext('>')) {
                     result.tag = .goto;
                 } else {
                     result.tag = .minus;
@@ -142,17 +145,17 @@ pub const Tokenizer = struct {
                     result.tag = .choice_marker;
                 } else {
                     self.index += 1;
-                    result.tag = if (self.match('=')) .asterisk_equal else .asterisk;
+                    result.tag = if (self.matchNext('=')) .asterisk_equal else .asterisk;
                 }
             },
             '/' => {
                 result.start = self.index;
                 self.index += 1;
 
-                if (self.match('=')) {
+                if (self.matchNext('=')) {
                     self.index += 1;
                     result.tag = .slash_equal;
-                } else if (self.match('/')) {
+                } else if (self.matchNext('/')) {
                     self.index += 1; // Consume second '/'
                     while (self.index < len and buffer[self.index] != '\n') {
                         self.index += 1;
@@ -165,19 +168,19 @@ pub const Tokenizer = struct {
             },
             '=' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .equals else .assign;
+                result.tag = if (self.matchNext('=')) .equals else .assign;
             },
             '!' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .not_equal else .exclamation;
+                result.tag = if (self.matchNext('=')) .not_equal else .exclamation;
             },
             '<' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .less_or_equal else .less;
+                result.tag = if (self.matchNext('=')) .less_or_equal else .less;
             },
             '>' => {
                 self.index += 1;
-                result.tag = if (self.match('=')) .greater_or_equal else .greater;
+                result.tag = if (self.matchNext('=')) .greater_or_equal else .greater;
             },
             '(' => {
                 self.index += 1;
@@ -226,7 +229,7 @@ pub const Tokenizer = struct {
                 result.tag = .underscore;
             },
             'a' ... 'z', 'A' ... 'Z' => {
-                while (self.index < len and isIdentChar(self.buffer[self.index])) {
+                while (self.index < len and isIdentChar(buffer[self.index])) {
                     self.index += 1;
                 }
 
