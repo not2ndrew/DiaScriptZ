@@ -57,7 +57,7 @@ pub const Ast = struct {
         for (0..self.nodes.len) |i| {
             const node = self.nodes.get(i);
             switch (node.tag) {
-                .block => self.allocator.free(node.data.block),
+                .block, .label => self.allocator.free(node.data.block),
                 else => {},
             }
         }
@@ -99,25 +99,22 @@ pub const Ast = struct {
     fn getLineCol(self: *Ast, byte_pos: usize) struct { line: usize, col: usize } {
         const line_starts = self.line_starts;
         var low: usize = 0;
-        var high: usize = line_starts.len - 1;
+        var high: usize = line_starts.len;
         var line_idx: usize = 0;
 
+        // Testing new binary search approach.
         while (low < high) {
-            // Avoid overflowing in the midpoint calculation.
             const mid = low + (high - low) / 2;
             const value = line_starts[mid];
 
-            if (value < byte_pos) {
-                line_idx = mid;
+            if (value <= byte_pos) {
                 low = mid + 1;
-            } else if (value > byte_pos) {
-                high = mid - 1;
             } else {
-                line_idx = mid;
-                break;
+                high = mid;
             }
         }
 
+        line_idx = low - 1;
         const line = line_idx + 1;
         const col = byte_pos - line_starts[line_idx] + 1;
 

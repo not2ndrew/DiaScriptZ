@@ -5,20 +5,20 @@ const ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
-const NodeIndex = zig_node.NodeIndex;
-const TokenIndex = tok.TokenIndex;
-
 const Token = tok.Token;
 const Tokens = std.MultiArrayList(Token);
+const TokenIndex = tok.TokenIndex;
 
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
+const NodeIndex = zig_node.NodeIndex;
 const Tag = zig_node.NodeTag;
 
 const AstError = ast.Error;
 const ErrorTag = ast.Error.Tag;
 
 const SymbolTable = std.array_hash_map.String(Symbol);
+const UnresolvedLabels = std.ArrayList(TokenIndex);
 
 pub const Symbol = struct {
     token_pos: TokenIndex,
@@ -47,7 +47,14 @@ pub const Semantic = struct {
     tokens: Tokens.Slice,
     errors: *std.ArrayList(AstError),
 
-    symbols: std.ArrayList(SymbolTable),
+    tables: std.ArrayList(SymbolTable),
+    // TODO: Create an unresolved_jump arraylist? or hashmap.
+    // When you encounter a label, register it immediately.
+    // When you encounter a jump two options
+    // 1) Resolve it immediately
+    // 2) Store in unresolved_jump for later.
+    // After parsing finishes, resolve all fixups.
+    unresolved_labels: UnresolvedLabels,
 
     pub fn init(
         allocator: Allocator, source: []const u8, 
@@ -60,17 +67,19 @@ pub const Semantic = struct {
             .nodes = nodes,
             .tokens = tokens,
             .errors = errors,
-            .symbols = std.ArrayList(SymbolTable).empty,
+            .tables = std.ArrayList(SymbolTable).empty,
+            .unresolved_labels = UnresolvedLabels.empty,
         };
     }
 
     pub fn deinit(self: *Semantic) void {
-        const len = self.symbols.items.len;
+        const len = self.tables.items.len;
         for (0..len) |i| {
-            const table = &self.symbols.items[len - 1 - i];
+            const table = &self.tables.items[len - 1 - i];
             table.deinit(self.allocator);
         }
-        self.symbols.deinit(self.allocator);
+        self.tables.deinit(self.allocator);
+        self.unresolved_labels.deinit(self.allocator);
     }
 
     // Semantic analysis has different types of errors.
@@ -88,24 +97,24 @@ pub const Semantic = struct {
     }
 
     fn addScope(self: *Semantic) Error!void {
-        try self.symbols.append(self.allocator, .empty);
+        try self.tables.append(self.allocator, .empty);
     }
 
     fn endScope(self: *Semantic) Error!void {
-        if (self.symbols.items.len == 0) return Error.NoTableCreated;
+        if (self.tables.items.len == 0) return Error.NoTableCreated;
 
-        const table = &self.symbols.items[self.symbols.items.len - 1];
+        const table = try self.currentScope();
         table.deinit(self.allocator);
-        _ = self.symbols.pop();
+        _ = self.tables.pop();
     }
 
     // Scan backwards (inner -> outer)
     fn lookUp(self: *Semantic, name: []const u8) ?*Symbol {
-        var i: usize = self.symbols.items.len;
+        var i: usize = self.tables.items.len;
 
         while (i > 0) {
             i -= 1;
-            const table = self.symbols.items[i];
+            const table = self.tables.items[i];
             if (table.getPtr(name)) |symbol| {
                 return symbol;
             }
@@ -115,9 +124,9 @@ pub const Semantic = struct {
     }
 
     fn currentScope(self: *Semantic) Error!*SymbolTable {
-        if (self.symbols.items.len == 0) return Error.NoTableCreated;
+        if (self.tables.items.len == 0) return Error.NoTableCreated;
 
-        return &self.symbols.items[self.symbols.items.len - 1];
+        return &self.tables.items[self.tables.items.len - 1];
     }
 
     fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
@@ -146,7 +155,10 @@ pub const Semantic = struct {
         } else {
             switch (tag) {
                 .var_ident => try self.report(token_pos, .undeclared_var),
-                .label_ident => try self.report(token_pos, .undeclared_label),
+                .label_ident => {
+                    // try self.unresolved_labels.append(self.allocator, token_pos);
+                    try self.report(token_pos, .undeclared_label);
+                },
                 else => {},
             }
         }
@@ -173,7 +185,7 @@ pub const Semantic = struct {
     // The last node of a post-traversal list
     // is the root node.
     pub fn analyze(self: *Semantic) Error!void {
-        try self.symbols.append(self.allocator, SymbolTable.empty);
+        try self.tables.append(self.allocator, SymbolTable.empty);
         const root_node = self.nodes.get(self.nodes.len - 1);
 
         for (root_node.data.block) |stmt_index| {
@@ -182,9 +194,11 @@ pub const Semantic = struct {
     }
 
     fn analyzeBlock(self: *Semantic, stmts: []NodeIndex) Error!void {
+        try self.addScope();
         for (stmts) |stmt_index| {
             try self.analyzeStmt(stmt_index);
         }
+        try self.endScope();
     }
 
     fn analyzeStmt(self: *Semantic, node_index: NodeIndex) Error!void {
@@ -308,9 +322,7 @@ pub const Semantic = struct {
         const then_block = self.nodes.get(if_stmt.then_block);
         const block = then_block.data.block;
 
-        try self.addScope();
         try self.analyzeBlock(block);
-        try self.endScope();
     }
 
     fn analyzeCompare(self: *Semantic, node: Node) Error!void {
@@ -339,9 +351,9 @@ pub const Semantic = struct {
             try self.analyzeIdent(str_node.tag, str_node.token_pos);
         }
 
-        // if (dialogue.branch == .goto) {
-        //     const goto_node = self.nodes.get(dialogue.branch.goto);
-        //     try self.analyzeIdent(goto_node.tag, goto_node.token_pos);
-        // }
+        if (dialogue.branch == .goto) {
+            const goto_node = self.nodes.get(dialogue.branch.goto);
+            try self.analyzeIdent(goto_node.tag, goto_node.token_pos);
+        }
     }
 };

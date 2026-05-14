@@ -138,10 +138,11 @@ pub const Parser = struct {
     fn parseStmt(self: *Parser) Error!NodeIndex {
         return switch (self.peekTag()) {
             .keyword_const, .keyword_var => try self.parseDeclar(),
-            .identifier, .underscore => try self.parseIdentStmt(),
+            .identifier => try self.parseIdentStmt(),
             .keyword_if => try self.parseIfStmt(),
             .choice_marker => try self.parseChoice(),
             .tilde => try self.parseLabel(),
+            .underscore => try self.parseAnonymousDialogue(),
             else => {
                 try self.reportUnexpected(.expected_expr, .identifier);
                 return Error.ParseError;
@@ -154,7 +155,7 @@ pub const Parser = struct {
         const decl_pos = self.token_pos;
         self.next();
 
-        const ident = try self.parseIdent(.var_ident);
+        const ident = try self.parseGenericIdent(.var_ident);
         _ = try self.expect(.assign);
         const value = try self.parseExpr();
 
@@ -173,7 +174,7 @@ pub const Parser = struct {
             return try self.parseDialogue();
         }
 
-        const ident_pos = try self.parseIdent(.var_ident);
+        const ident_pos = try self.parseGenericIdent(.var_ident);
         const next_tag = self.peekTag();
 
         return switch (next_tag) {
@@ -288,15 +289,14 @@ pub const Parser = struct {
 
     // dialogue = ( "_" | identifier ) ":" string ;
     fn parseDialogue(self: *Parser) Error!NodeIndex {
-        const tag = self.peekTag();
-
-        const ident_pos = if (tag == .underscore)
-            try self.parseIdent(.anonymous)
-        else
-            try self.parseIdent(.name_ident);
-
+        const ident_pos = try self.parseGenericIdent(.name_ident);
         _ = try self.expect(.colon);
+        return try self.parseGoto(ident_pos, .dialogue);
+    }
 
+    fn parseAnonymousDialogue(self: *Parser) Error!NodeIndex {
+        const ident_pos = try self.parseAnonymousIdent();
+        _ = try self.expect(.colon);
         return try self.parseGoto(ident_pos, .dialogue);
     }
 
@@ -348,7 +348,7 @@ pub const Parser = struct {
         if (self.peekTag() == .goto) {
             self.next();
 
-            const goto = try self.parseIdent(.label_ident);
+            const goto = try self.parseGenericIdent(.label_ident);
 
             return self.addNode(tag, ident_pos, .{
                 .dialogue = .{
@@ -371,7 +371,7 @@ pub const Parser = struct {
         _ = try self.expect(.tilde);
 
         const ident_pos = self.token_pos;
-        _ = try self.parseIdent(.label_ident);
+        _ = try self.parseGenericIdent(.label_ident);
 
         const slice = try self.parseStmtListUntil(.keyword_end);
 
@@ -386,14 +386,19 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
-    fn parseIdent(self: *Parser, tag: Tag) Error!NodeIndex {
+    fn parseGenericIdent(self: *Parser, tag: Tag) Error!NodeIndex {
         const ident_pos = try self.expect(.identifier);
         
         return switch (tag) {
             .var_ident, .label_ident,
-            .name_ident, .anonymous => try self.addNode(tag, ident_pos, .{ .none = {} }),
+            .name_ident => try self.addNode(tag, ident_pos, .{ .none = {} }),
             else => unreachable,
         };
+    }
+
+    fn parseAnonymousIdent(self: *Parser) Error!NodeIndex {
+        const ident_pos = try self.expect(.underscore);
+        return try self.addNode(.anonymous, ident_pos, .{ .none = {} });
     }
 
     // expr = term { ( "+" | "-" ) term } ;
