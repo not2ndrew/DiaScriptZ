@@ -13,6 +13,7 @@ const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
 const NodeIndex = zig_node.NodeIndex;
 const Tag = zig_node.NodeTag;
+const invalid_node = zig_node.invalid_node;
 
 const AstError = ast.Error;
 const ErrorTag = ast.Error.Tag;
@@ -29,7 +30,6 @@ pub const Symbol = struct {
         keyword_var,
         label,
         name,
-        none,
     };
 };
 
@@ -40,6 +40,9 @@ pub const SemanticError = error {
 
 const Error = SemanticError || Allocator.Error;
 
+// Program variables and label variables are handled differently.
+// Program variables must be declared first before using it.
+// Label variables must contain a label block in the same scope.
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
@@ -48,12 +51,6 @@ pub const Semantic = struct {
     errors: *std.ArrayList(AstError),
 
     tables: std.ArrayList(SymbolTable),
-    // TODO: Create an unresolved_jump arraylist? or hashmap.
-    // When you encounter a label, register it immediately.
-    // When you encounter a jump two options
-    // 1) Resolve it immediately
-    // 2) Store in unresolved_jump for later.
-    // After parsing finishes, resolve all fixups.
     unresolved_labels: UnresolvedLabels,
 
     pub fn init(
@@ -104,6 +101,20 @@ pub const Semantic = struct {
         if (self.tables.items.len == 0) return Error.NoTableCreated;
 
         const table = try self.currentScope();
+
+        var i: usize = 0;
+        while (i < self.unresolved_labels.items.len) {
+            const token_pos = self.unresolved_labels.items[i];
+            const name = self.identName(token_pos);
+
+            if (table.contains(name)) {
+                _ = self.unresolved_labels.orderedRemove(i);
+            } else {
+                try self.report(token_pos, .undeclared_label);
+                i += 1;
+            }
+        }
+
         table.deinit(self.allocator);
         _ = self.tables.pop();
     }
@@ -114,7 +125,7 @@ pub const Semantic = struct {
 
         while (i > 0) {
             i -= 1;
-            const table = self.tables.items[i];
+            const table = &self.tables.items[i];
             if (table.getPtr(name)) |symbol| {
                 return symbol;
             }
@@ -156,8 +167,7 @@ pub const Semantic = struct {
             switch (tag) {
                 .var_ident => try self.report(token_pos, .undeclared_var),
                 .label_ident => {
-                    // try self.unresolved_labels.append(self.allocator, token_pos);
-                    try self.report(token_pos, .undeclared_label);
+                    try self.unresolved_labels.append(self.allocator, token_pos);
                 },
                 else => {},
             }
@@ -185,12 +195,8 @@ pub const Semantic = struct {
     // The last node of a post-traversal list
     // is the root node.
     pub fn analyze(self: *Semantic) Error!void {
-        try self.tables.append(self.allocator, SymbolTable.empty);
         const root_node = self.nodes.get(self.nodes.len - 1);
-
-        for (root_node.data.block) |stmt_index| {
-            try self.analyzeStmt(stmt_index);
-        }
+        try self.analyzeBlock(root_node.data.block);
     }
 
     fn analyzeBlock(self: *Semantic, stmts: []NodeIndex) Error!void {
@@ -303,7 +309,6 @@ pub const Semantic = struct {
         if (self.lookUp(ident_name)) |symbol| {
             return switch (symbol.kind) {
                 .label, .name => try self.report(id_token_pos, .ident_mismatch),
-                .none => try self.report(id_token_pos, .undeclared_var),
                 .keyword_const => try self.report(id_token_pos, .modified_const),
                 else => {},
             };
@@ -313,16 +318,21 @@ pub const Semantic = struct {
     }
 
     fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
+        // CONDITION
         const if_stmt = node.data.if_stmt;
         const cond_index = if_stmt.condition;
 
         const cond_node = self.nodes.get(cond_index);
         try self.analyzeCompare(cond_node);
 
-        const then_block = self.nodes.get(if_stmt.then_block);
-        const block = then_block.data.block;
+        // THEN AND ELSE BLOCKS
+        const then_node = self.nodes.get(if_stmt.then_block);
+        try self.analyzeBlock(then_node.data.block);
 
-        try self.analyzeBlock(block);
+        if (if_stmt.else_block != invalid_node) {
+            const else_node = self.nodes.get(if_stmt.else_block);
+            try self.analyzeBlock(else_node.data.block);
+        }
     }
 
     fn analyzeCompare(self: *Semantic, node: Node) Error!void {
@@ -339,7 +349,9 @@ pub const Semantic = struct {
         const start = dialogue.str.start;
         const len = start + dialogue.str.len;
 
-        // Every dialogue line must start with a named node
+        // TODO: This is dangerous. Try to find a different way.
+        // From the parser design, every dialogue 
+        // line must start with a name identifier node 
         // followed by the dialogue node itself.
         const ident = start - 1;
         const ident_node = self.nodes.get(ident);
@@ -347,7 +359,6 @@ pub const Semantic = struct {
 
         for (start..len) |i| {
             const str_node = self.nodes.get(i);
-
             try self.analyzeIdent(str_node.tag, str_node.token_pos);
         }
 

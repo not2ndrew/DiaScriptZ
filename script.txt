@@ -1,6 +1,9 @@
 var x = 2
+
 if (x > 1) {
-_ : baa
-* abc -> foo
-* def -> boo
+    var x = 5
+    x = 7
+} else {
+    var x = 3
+    x += 1
 }
