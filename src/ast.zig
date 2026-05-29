@@ -138,7 +138,7 @@ pub const Ast = struct {
                 return w.writeAll("Expected expression, found EOF");
             },
             .unexpected_token => {
-                return w.print("Expected expression, found '{s}'", .{str});
+                return w.print("Expected expression '{t}', found '{s}'", .{err.extra.expected_tag, str});
             },
             .expected_ident => {
                 return w.print("Expected identifier, found '{s}'", .{str});
@@ -158,7 +158,7 @@ pub const Ast = struct {
                 return w.writeAll("Integer overflow");
             },
             .ident_mismatch => {
-                return w.print("TODO: Write error for '{s}'", .{str});
+                return w.print("Identifer '{s}' already taken", .{str});
             },
             .duplicate_var => {
                 return w.print("Variable '{s}' already exist", .{str});
@@ -175,9 +175,6 @@ pub const Ast = struct {
             .modified_const => {
                 return w.print("Cannot modify constant '{s}'", .{str});
             },
-            // else => {
-            //     return w.print("Test msg", .{});
-            // }
         }
     }
 };

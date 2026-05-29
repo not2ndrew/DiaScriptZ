@@ -18,6 +18,14 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     var ast = try Ast.parse(allocator, lines);
     defer ast.deinit();
 
+    // for (ast.tokens.items(.tag)) |tag| {
+    //     std.debug.print("Tag: {t}\n", .{tag});
+    // }
+
+    // TODO: The following lines cause an infinite loop:
+    // ~ Name
+    // foo: Hello World
+    // end
     var semantic = Semantic.init(
         allocator, lines, ast.nodes,
         ast.tokens, ast.extra_data, &ast.errors

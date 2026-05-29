@@ -35,7 +35,6 @@ pub const Tokenizer = struct {
     // line_start is used for dialogue choice marker.
     line_start: bool,
     insert_semi: bool,
-    is_label: bool,
 
     allocator: Allocator,
     line_starts: std.ArrayList(usize),
@@ -50,7 +49,6 @@ pub const Tokenizer = struct {
             .mode = .normal,
             .line_start = true,
             .insert_semi = false,
-            .is_label = false,
             .allocator = allocator,
             .line_starts = line_starts,
         };
@@ -162,7 +160,6 @@ pub const Tokenizer = struct {
                 // We only reach here if self.insert_semi
                 // is true
                 self.insert_semi = false;
-                self.is_label = false;
                 result.tag = .newline;
                 // Turn off line_starts for now.
                 // Sometimes, line_starts goes outside the maximum
@@ -262,7 +259,6 @@ pub const Tokenizer = struct {
                 self.mode = .string;
             },
             '~' => {
-                self.is_label = true;
                 result.tag = .tilde;
             },
             '_' => {
@@ -277,12 +273,19 @@ pub const Tokenizer = struct {
                 if (keywords.get(buffer[result.start..self.index])) |uniqueId| {
                     result.tag = uniqueId;
                 } else {
-                    if (self.is_label)
-                        self.insert_semi = false
-                    else
-                        self.insert_semi = true;
                     result.tag = .identifier;
                 }
+
+                // TODO: The following fails
+                // ~ name const x = 0 end
+
+                // switch (result.tag) {
+                //     .identifier, .number,
+                //     .string, .close_paren,
+                //     .close_brace, .keyword_end
+                //     => self.insert_semi = true,
+                //     else => self.insert_semi = false,
+                // }
             },
             '0' ... '9' => {
                 while (self.index < len and isDigit(buffer[self.index])) {

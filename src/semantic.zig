@@ -143,11 +143,6 @@ pub const Semantic = struct {
         if (self.lookUp(name)) |symbol| {
             const kind = symbol.kind;
             switch (tag) {
-                .number => {
-                    _ = std.fmt.parseInt(u8, name, 10) catch {
-                        try self.report(token_pos, .int_overflow);
-                    };
-                },
                 .var_ident => {
                     if (kind != .keyword_var and kind != .keyword_const) {
                         try self.report(token_pos, .ident_mismatch);
@@ -162,6 +157,12 @@ pub const Semantic = struct {
             }
         } else {
             switch (tag) {
+                .number => {
+                    _ = std.fmt.parseInt(u8, name, 10) catch |err| {
+                        if (err == std.fmt.ParseIntError.Overflow)
+                            try self.report(token_pos, .int_overflow);
+                    };
+                },
                 .var_ident => try self.report(token_pos, .undeclared_var),
                 .label_ident => {
                     try self.unresolved_labels.append(self.allocator, token_pos);
@@ -272,9 +273,7 @@ pub const Semantic = struct {
         }
 
         const range = node.data.range;
-        const start = range.start;
-        const end = start + range.len;
-        try self.analyzeBlock(start, end);
+        try self.analyzeBlock(range.start, range.len);
 
         entry.value_ptr.* = .{
             .token_pos = token_pos,

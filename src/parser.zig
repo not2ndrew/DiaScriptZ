@@ -92,11 +92,12 @@ pub const Parser = struct {
         const found = self.peekTag();
 
         if (found != expected) {
+            const token_pos = if (found == .EOF) idx - 2
+                else if (found == .newline) idx - 1
+                else idx;
+
             try self.errors.append(self.allocator, .{
-                .token_pos = if (found == .EOF)
-                    idx - 1  // Point the caret to the newline
-                else
-                    idx,
+                .token_pos = token_pos,
                 .tag = .unexpected_token,
                 .extra = .{ .expected_tag = expected }
             });
@@ -106,6 +107,20 @@ pub const Parser = struct {
 
         self.next();
         return idx;
+    }
+
+    fn expectStmtEnd(self: *Parser) Error!void {
+        const tag = self.peekTag();
+        switch (tag) {
+            .newline => {
+                self.next();
+            },
+            .close_brace, .keyword_end,
+            .EOF => {
+                // implicit terminator
+            },
+            else => return Error.ParseError,
+        }
     }
 
     fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: Data) !NodeIndex {
@@ -182,7 +197,7 @@ pub const Parser = struct {
         const ident = try self.parseGenericIdent(.var_ident);
         _ = try self.expect(.assign);
         const value = try self.parseExpr();
-        _ = try self.expect(.newline);
+        try self.expectStmtEnd();
 
         return try self.addNode(.declar_stmt, decl_pos, .{
             .node_and_node = .{ ident, value }
@@ -214,7 +229,7 @@ pub const Parser = struct {
     fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
         const assign_pos = try self.expect(assign_tag);
         const expr = try self.parseExpr();
-        _ = try self.expect(.newline);
+        try self.expectStmtEnd();
 
         const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
             try self.reportUnexpected(.expected_arith_op, .assign);
@@ -339,7 +354,7 @@ pub const Parser = struct {
         const goto = try self.parseDialogueGoto();
         try dia_parts.append(self.allocator, goto);
 
-        _ = try self.expect(.newline);
+        try self.expectStmtEnd();
 
         const range = try self.commitDialogueData(dia_parts.items);
         return try self.addNode(tag, token_pos, .{

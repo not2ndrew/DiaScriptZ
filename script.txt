@@ -1,3 +1,4 @@
-~ name
-x = 10
+~ Name
+foo: Hello World
+baa: Nice to meet you
 end
