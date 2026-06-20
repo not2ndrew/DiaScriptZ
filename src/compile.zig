@@ -9,6 +9,8 @@ const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 const DelimiterError = std.Io.Reader.DelimiterError;
 
+const DiagRenderer = diag.DiagRenderer;
+
 pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
     // ===== ARENA ALLOCATOR =====
 
@@ -16,8 +18,19 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
 
-    var ast = try tree.parse(allocator, lines);
-    defer ast.deinit(allocator);
+    // Generate AST from lines
+    var parse_tree = try tree.parse(allocator, lines);
+    defer parse_tree.deinit(allocator);
+
+    // Diagnostics
+    var renderer: DiagRenderer = .{
+        .source_file = parse_tree.source_file,
+        .tokens = parse_tree.ast.tokens,
+    };
+
+    const errors = try parse_tree.errors.toOwnedSlice(allocator);
+    defer allocator.free(errors);
+    try renderer.printErrors(errors, allocator, file_name);
 }
 
 /// Make sure to free the []const u8 result!!!

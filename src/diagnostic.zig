@@ -93,7 +93,7 @@ pub const SourceFile = struct {
 };
 
 pub const DiagRenderer = struct {
-    source: *const SourceFile,
+    source_file: SourceFile,
     tokens: Tokens.Slice,
 
     pub fn printErrors(
@@ -108,9 +108,9 @@ pub const DiagRenderer = struct {
 
         for (errors) |err| {
             const token = self.tokens.get(err.token_pos);
-            try errorMessage(writer, err);
-            const pos = self.source.getLineCol(token.start);
-            const line_slice = self.source.getLineSlice(token.start);
+            try self.errorMessage(writer, err);
+            const pos = self.source_file.getLineCol(token.start);
+            const line_slice = self.source_file.getLineSlice(token.start);
 
             // Caret indicator for error
             var buf: [30]u8 = undefined;
@@ -137,7 +137,7 @@ pub const DiagRenderer = struct {
 
     fn errorMessage(self: *DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
-        const str = self.source[token.start..token.end];
+        const str = self.source_file.source[token.start..token.end];
         switch (err.tag) {
             // Parsing Errors
             .unexpected_EOF => {

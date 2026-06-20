@@ -60,12 +60,11 @@ pub const Tokenizer = struct {
     }
 
     fn nextNonWsChar(self: *Tokenizer) void {
-        var i = self.index;
-        while (i < self.buffer.len) {
-            const c = self.buffer[i];
+        while (self.index < self.buffer.len) {
+            const c = self.buffer[self.index];
             switch (c) {
-                ' ', '\r', '\t', '\n' => i += 1,
-                else => return i, 
+                ' ', '\r', '\t', '\n' => self.index += 1,
+                else => return, 
             }
         }
     }

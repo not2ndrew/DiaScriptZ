@@ -28,26 +28,28 @@ pub const Ast = struct {
     // 1) Variable-length AST payload storage
     // 2) Stores continuous ranges of NodeIndex values referenced by nodes.
     extra_data: []u32,
+
+    pub fn deinit(self: *Ast) void {
+        self.nodes.deinit(self.allocator);
+        self.tokens.deinit(self.allocator);
+        self.allocator.free(self.extra_data);
+    }
 };
 
-// pub const ParseResult = struct {
-//     ast: Ast,
-//     source_file: SourceFile,
-//     errors: std.ArrayList(Error),
-// };
-
 pub const ParseResult = struct {
+    ast: Ast,
     source_file: SourceFile,
+    errors: std.ArrayList(Error),
 
     pub fn deinit(self: *ParseResult, allocator: Allocator) void {
         allocator.free(self.source_file.line_starts);
+        self.ast.deinit();
     }
 };
 
 /// Make sure to deinit() nodes, stmts, and tokens
 pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     var tokens: Tokens = .empty;
-    defer tokens.deinit(allocator);
 
     var line_starts: std.ArrayList(usize) = .empty;
     defer line_starts.deinit(allocator);
@@ -68,45 +70,32 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
         if (token.tag == .EOF) break;
     }
 
-    return .{
-        .source_file = .{
-            .line_starts = try line_starts.toOwnedSlice(allocator),
-            .source = buf,
-        }
+    const source_file: SourceFile = .{
+        .line_starts = try line_starts.toOwnedSlice(allocator),
+        .source = buf,
     };
 
-    // const line_starts = try tokenizer.line_starts.toOwnedSlice(allocator);
-    // // Dangerous!!!
-    // allocator.free(line_starts);
-
-    // const source_file: SourceFile = .{
-    //     .line_starts = line_starts,
-    //     .source = buf,
-    // };
-
-    // return parseFromTokens(allocator, source_file, tokens.toOwnedSlice());
+    return parseFromTokens(allocator, source_file, tokens.toOwnedSlice());
 }
 
-// fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
-//     var parser = try Parser.init(allocator, tokens);
-//     defer parser.nodes.deinit(allocator);
-//     defer parser.extra_data.deinit(allocator);
-//     defer parser.errors.deinit(allocator);
-//
-//     // tokens => AST of stmt nodes
-//     _ = try parser.parseAll();
-//
-//     // Converting to slice removes all excess memory in nodes and stmts.
-//     const ast: Ast = .{
-//         .allocator = allocator,
-//         .tokens = tokens,
-//         .nodes = parser.nodes.toOwnedSlice(),
-//         .extra_data = try parser.extra_data.toOwnedSlice(allocator),
-//     };
-//
-//     return .{
-//         .ast = ast,
-//         .source_file = source_file,
-//         .errors = parser.errors,
-//     };
-// }
+fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
+    var parser = try Parser.init(allocator, tokens);
+
+    // tokens => AST of stmt nodes
+    try parser.parseAll();
+
+    // Converting to slice removes all excess memory in nodes and stmts.
+    // This also means you own the memory. So call deinit on ast when finished.
+    const ast: Ast = .{
+        .allocator = allocator,
+        .tokens = tokens,
+        .nodes = parser.nodes.toOwnedSlice(),
+        .extra_data = try parser.extra_data.toOwnedSlice(allocator),
+    };
+
+    return .{
+        .ast = ast,
+        .source_file = source_file,
+        .errors = parser.errors,
+    };
+}
