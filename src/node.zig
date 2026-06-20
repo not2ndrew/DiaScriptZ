@@ -50,7 +50,6 @@ pub const NodeTag = enum {
     name_ident,
 
     // Variable Names
-    identifier,
     number,
     string,
     anonymous,

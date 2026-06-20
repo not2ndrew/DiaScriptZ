@@ -1,6 +1,7 @@
 const std = @import("std");
-const Ast = @import("ast.zig");
+const tree = @import("ast.zig");
 const Semantic = @import("semantic.zig").Semantic;
+const diag = @import("diagnostic.zig");
 
 const Io = std.Io;
 const Init = std.process.Init;
@@ -15,29 +16,11 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
 
-    var ast = try Ast.parse(allocator, lines);
-    defer ast.deinit();
-
-    // for (ast.tokens.items(.tag)) |tag| {
-    //     std.debug.print("Tag: {t}\n", .{tag});
-    // }
-
-    // TODO: The following lines cause an infinite loop:
-    // ~ Name
-    // foo: Hello World
-    // end
-    var semantic = Semantic.init(
-        allocator, lines, ast.nodes,
-        ast.tokens, ast.extra_data, &ast.errors
-    );
-    defer semantic.deinit();
-
-    try semantic.analyze();
-
-    try ast.printErrors(file_name);
+    var ast = try tree.parse(allocator, lines);
+    defer ast.deinit(allocator);
 }
 
-/// Make sure to free memory!!!
+/// Make sure to free the []const u8 result!!!
 fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8 {
     const io = init.io;
     var lines: []u8 = undefined;

@@ -210,22 +210,24 @@ pub const Semantic = struct {
 
     fn analyzeStmt(self: *Semantic, node_index: NodeIndex) Error!void {
         const node = self.nodes.get(node_index);
-        switch (node.tag) {
+        try switch (node.tag) {
             // Collect declarations
-            .declar_stmt => try self.analyzeDeclar(node),
-            .label => try self.analyzeLabel(node),
+            .declar_stmt => self.analyzeDeclar(node),
+            .label => self.analyzeLabel(node),
 
             // Analyze stmts
             .assign, .plus_equal, .minus_equal,
-            .mult_equal, .div_equal => try self.analyzeAssign(node),
+            .mult_equal, .div_equal => self.analyzeAssign(node),
             .equals, .not_equal, .less, .greater,
-            .less_or_equal, .greater_or_equal => try self.analyzeCompare(node),
-            .if_stmt => try self.analyzeIfStmt(node),
-            .dialogue, .choice => try self.analyzeDialogue(node),
+            .less_or_equal, .greater_or_equal => self.analyzeCompare(node),
+            .if_stmt => self.analyzeIfStmt(node),
+            .dialogue, .choice => self.analyzeDialogue(node),
             else => {},
-        }
+        };
     }
 
+    // TODO: The following should fail.
+    // const i = i
     fn analyzeDeclar(self: *Semantic, node: Node) Error!void {
         const decl = node.data.node_and_node;
         const ident_index = decl.@"0";
@@ -353,7 +355,7 @@ pub const Semantic = struct {
 
     // From the dialogue format in Parser, the first and last element
     // is always the speaker and goto index respectively.
-    // [ speaker, dia_part_1, dia-part_2, ..., goto ]
+    // [ speaker, dia_part_1, dia_part_2, ..., goto ]
     fn analyzeDialogue(self: *Semantic, node: Node) Error!void {
         const dialogue = node.data.range;
         const start = dialogue.start;

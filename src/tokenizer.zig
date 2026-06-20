@@ -1,8 +1,6 @@
 const std = @import("std");
 const token = @import("token.zig");
 
-const Allocator = std.mem.Allocator;
-
 const Token = token.Token;
 const Tag = token.Tag;
 const TokenError = token.TokenError;
@@ -36,21 +34,13 @@ pub const Tokenizer = struct {
     line_start: bool,
     insert_semi: bool,
 
-    allocator: Allocator,
-    line_starts: std.ArrayList(usize),
-
-    pub fn init(buffer: []const u8, allocator: Allocator) !Tokenizer {
-        var line_starts = std.ArrayList(usize).empty;
-        try line_starts.append(allocator, 0);
-
+    pub fn init(buffer: []const u8) Tokenizer {
         return .{
             .buffer = buffer,
             .index = 0,
             .mode = .normal,
             .line_start = true,
             .insert_semi = false,
-            .allocator = allocator,
-            .line_starts = line_starts,
         };
     }
 
@@ -63,15 +53,13 @@ pub const Tokenizer = struct {
                     self.index += 1;
                     self.line_start = true;
                     self.mode = .normal;
-                    self.line_starts.append(self.allocator, self.index)
-                        catch unreachable;
                 },
                 else => return,
             }
         }
     }
 
-    fn nextNonWsChar(self: *Tokenizer) usize {
+    fn nextNonWsChar(self: *Tokenizer) void {
         var i = self.index;
         while (i < self.buffer.len) {
             const c = self.buffer[i];
@@ -80,8 +68,6 @@ pub const Tokenizer = struct {
                 else => return i, 
             }
         }
-
-        return self.buffer.len - 1;
     }
 
     /// Checks if the next character matches c.\n
@@ -164,9 +150,7 @@ pub const Tokenizer = struct {
                 // Turn off line_starts for now.
                 // Sometimes, line_starts goes outside the maximum
                 // rows.
-                const i = self.nextNonWsChar();
-                self.line_starts.append(self.allocator, i)
-                    catch unreachable;
+                self.nextNonWsChar();
             },
             '+' => {
                 self.insert_semi = false;
@@ -275,17 +259,6 @@ pub const Tokenizer = struct {
                 } else {
                     result.tag = .identifier;
                 }
-
-                // TODO: The following fails
-                // ~ name const x = 0 end
-
-                // switch (result.tag) {
-                //     .identifier, .number,
-                //     .string, .close_paren,
-                //     .close_brace, .keyword_end
-                //     => self.insert_semi = true,
-                //     else => self.insert_semi = false,
-                // }
             },
             '0' ... '9' => {
                 while (self.index < len and isDigit(buffer[self.index])) {

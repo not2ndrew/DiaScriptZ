@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const ast = @import("ast.zig");
+const AstError = @import("diagnostic.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
@@ -20,9 +20,6 @@ const nodeTagFromArithmetic = zig_node.nodeTagFromArithmetic;
 const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
 const nodeTagFromScene = zig_node.nodeTagFromScene;
-
-const AstError = ast.Error;
-const ErrorTag = AstError.Tag;
 
 const Tokens = std.MultiArrayList(Token);
 
@@ -51,7 +48,7 @@ pub const Parser = struct {
         };
     }
 
-    fn reportUnexpected(self: *Parser, tag: ErrorTag, expected: TokenTag) !void {
+    fn reportUnexpected(self: *Parser, tag: AstError.Tag, expected: TokenTag) !void {
         try self.errors.append(self.allocator, .{
             .token_pos = self.token_pos,
             .tag = tag,
@@ -175,13 +172,13 @@ pub const Parser = struct {
     // | dialogue
     // | choices 
     fn parseStmt(self: *Parser) Error!NodeIndex {
-        return switch (self.peekTag()) {
-            .keyword_const, .keyword_var => try self.parseDeclar(),
-            .identifier => try self.parseIdentStmt(),
-            .keyword_if => try self.parseIfStmt(),
-            .choice_marker => try self.parseChoice(),
-            .tilde => try self.parseLabel(),
-            .underscore => try self.parseAnonymousDialogue(),
+        return try switch (self.peekTag()) {
+            .keyword_const, .keyword_var => self.parseDeclar(),
+            .identifier => self.parseIdentStmt(),
+            .keyword_if => self.parseIfStmt(),
+            .choice_marker => self.parseChoice(),
+            .tilde => self.parseLabel(),
+            .underscore => self.parseAnonymousDialogue(),
             else => {
                 try self.reportUnexpected(.expected_ident, .identifier);
                 return Error.ParseError;
@@ -413,10 +410,6 @@ pub const Parser = struct {
 
     // label = “~” ident block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
-        // TODO: After the tilde, there should not be
-        // a newline token.
-        //
-        // Should be similar to an if statement.
         _ = try self.expect(.tilde);
 
         const ident_pos = self.token_pos;
@@ -546,8 +539,9 @@ pub const Parser = struct {
                 return expr;
             },
             else => {
-                _ = try self.expect(.number);
-                return Error.ParseError;
+                return self.expect(.number);
+                // _ = try self.expect(.number);
+                // return Error.ParseError;
             },
         }
     }

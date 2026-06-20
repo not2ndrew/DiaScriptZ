@@ -1,4 +1,1 @@
-~ Name
-foo: Hello World
-baa: Nice to meet you
-end
+const i = 1
