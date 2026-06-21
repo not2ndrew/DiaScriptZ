@@ -1,7 +1,8 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const ast = @import("ast.zig");
+const Ast = @import("ast.zig").Ast;
+const diag = @import("diagnostic.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -15,8 +16,8 @@ const NodeIndex = zig_node.NodeIndex;
 const Tag = zig_node.NodeTag;
 const invalid_node = zig_node.invalid_node;
 
-const AstError = ast.Error;
-const ErrorTag = ast.Error.Tag;
+const AstError = diag.Error;
+const ErrorTag = diag.Error.Tag;
 
 const SymbolTable = std.array_hash_map.String(Symbol);
 const UnresolvedLabels = std.ArrayList(TokenIndex);
@@ -46,25 +47,24 @@ const Error = SemanticError || Allocator.Error;
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
-    nodes: Nodes.Slice,
-    tokens: Tokens.Slice,
-    extra_data: []u32,
+    ast: *Ast,
     errors: *std.ArrayList(AstError),
+    // nodes: Nodes.Slice,
+    // tokens: Tokens.Slice,
+    // extra_data: []u32,
+    // errors: *std.ArrayList(AstError),
 
     tables: std.ArrayList(SymbolTable),
     unresolved_labels: UnresolvedLabels,
 
     pub fn init(
-        allocator: Allocator, source: []const u8, 
-        nodes: Nodes.Slice, tokens: Tokens.Slice,
-        extra_data: []u32, errors: *std.ArrayList(AstError),
+        allocator: Allocator, source: []const u8,
+        ast: *Ast, errors: *std.ArrayList(AstError)
     ) Semantic {
         return .{
             .allocator = allocator,
             .source = source,
-            .nodes = nodes,
-            .tokens = tokens,
-            .extra_data = extra_data,
+            .ast = ast,
             .errors = errors,
             .tables = std.ArrayList(SymbolTable).empty,
             .unresolved_labels = UnresolvedLabels.empty,
@@ -86,7 +86,7 @@ pub const Semantic = struct {
     }
 
     fn identName(self: *Semantic, token_pos: TokenIndex) []const u8 {
-        const token = self.tokens.get(token_pos);
+        const token = self.ast.tokens.get(token_pos);
         return self.source[token.start..token.end];
     }
 
@@ -173,7 +173,7 @@ pub const Semantic = struct {
     }
 
     fn analyzeValue(self: *Semantic, node_index: NodeIndex) Error!void {
-        const node = self.nodes.get(node_index);
+        const node = self.ast.nodes.get(node_index);
 
         switch (node.tag) {
             .plus, .minus, .mult, .div => {
@@ -193,7 +193,7 @@ pub const Semantic = struct {
     // The last node of a post-traversal list
     // is the root node.
     pub fn analyze(self: *Semantic) Error!void {
-        const root_node = self.nodes.get(self.nodes.len - 1);
+        const root_node = self.ast.nodes.get(self.ast.nodes.len - 1);
         const range = root_node.data.range;
         try self.analyzeBlock(range.start, range.len);
     }
@@ -202,14 +202,14 @@ pub const Semantic = struct {
         const end = start + len;
         try self.addScope();
         for (start..end) |idx| {
-            const node_index = self.extra_data[idx];
+            const node_index = self.ast.extra_data[idx];
             try self.analyzeStmt(node_index);
         }
         try self.endScope();
     }
 
     fn analyzeStmt(self: *Semantic, node_index: NodeIndex) Error!void {
-        const node = self.nodes.get(node_index);
+        const node = self.ast.nodes.get(node_index);
         try switch (node.tag) {
             // Collect declarations
             .declar_stmt => self.analyzeDeclar(node),
@@ -233,11 +233,11 @@ pub const Semantic = struct {
         const ident_index = decl.@"0";
         const value_index = decl.@"1";
 
-        const ident_node = self.nodes.get(ident_index);
+        const ident_node = self.ast.nodes.get(ident_index);
         const id_token_pos = ident_node.token_pos;
         const name = self.identName(id_token_pos);
 
-        const mut_type = self.tokens.get(node.token_pos).tag;
+        const mut_type = self.ast.tokens.get(node.token_pos).tag;
         const mutability: Symbol.Kind = if (mut_type == .keyword_const)
             .keyword_const else .keyword_var;
 
@@ -307,7 +307,7 @@ pub const Semantic = struct {
         const ident_index = assign.@"0";
         const value_index = assign.@"1";
 
-        const ident_node = self.nodes.get(ident_index);
+        const ident_node = self.ast.nodes.get(ident_index);
         const id_token_pos = ident_node.token_pos;
 
         try self.analyzeValue(value_index);
@@ -335,7 +335,7 @@ pub const Semantic = struct {
         try self.addScope();
 
         for (start..end) |idx| {
-            const node_index = self.extra_data[idx];
+            const node_index = self.ast.extra_data[idx];
             if (node_index != invalid_node) {
                 try self.analyzeStmt(node_index);
             }
@@ -346,8 +346,8 @@ pub const Semantic = struct {
 
     fn analyzeCompare(self: *Semantic, node: Node) Error!void {
         const binary = node.data.node_and_node;
-        const left_node = self.nodes.get(binary.@"0");
-        const right_node = self.nodes.get(binary.@"1");
+        const left_node = self.ast.nodes.get(binary.@"0");
+        const right_node = self.ast.nodes.get(binary.@"1");
 
         try self.analyzeIdent(left_node.tag, left_node.token_pos);
         try self.analyzeIdent(right_node.tag, right_node.token_pos);
@@ -363,21 +363,21 @@ pub const Semantic = struct {
         const new_start = start + 1;
         const goto = end - 1;
 
-        const speaker = self.extra_data[start];
+        const speaker = self.ast.extra_data[start];
         if (speaker != invalid_node) {
-            const ident_node = self.nodes.get(speaker);
+            const ident_node = self.ast.nodes.get(speaker);
             try self.analyzeName(ident_node);
         }
 
         for (new_start..goto) |i| {
-            const dia_pos = self.extra_data[i];
-            const dia_node = self.nodes.get(dia_pos);
+            const dia_pos = self.ast.extra_data[i];
+            const dia_node = self.ast.nodes.get(dia_pos);
             try self.analyzeIdent(dia_node.tag, dia_node.token_pos);
         }
 
-        const goto_pos = self.extra_data[goto];
+        const goto_pos = self.ast.extra_data[goto];
         if (goto_pos != invalid_node) {
-            const ident_node = self.nodes.get(goto_pos);
+            const ident_node = self.ast.nodes.get(goto_pos);
             try self.analyzeIdent(ident_node.tag, ident_node.token_pos);
         }
     }

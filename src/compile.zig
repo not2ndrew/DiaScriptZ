@@ -22,6 +22,15 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     var parse_tree = try tree.parse(allocator, lines);
     defer parse_tree.deinit(allocator);
 
+    // Analyze AST
+    var semantic = Semantic.init(
+        allocator, parse_tree.source_file.source,
+        &parse_tree.ast, &parse_tree.errors
+    );
+    defer semantic.deinit();
+
+    try semantic.analyze();
+
     // Diagnostics
     var renderer: DiagRenderer = .{
         .source_file = parse_tree.source_file,

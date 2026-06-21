@@ -1,3 +1,2 @@
-const i = & 
-const i = &
-const i = &
+const i = 0 + 1
+i = 10
