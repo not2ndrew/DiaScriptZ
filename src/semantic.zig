@@ -49,10 +49,6 @@ pub const Semantic = struct {
     source: []const u8,
     ast: *Ast,
     errors: *std.ArrayList(AstError),
-    // nodes: Nodes.Slice,
-    // tokens: Tokens.Slice,
-    // extra_data: []u32,
-    // errors: *std.ArrayList(AstError),
 
     tables: std.ArrayList(SymbolTable),
     unresolved_labels: UnresolvedLabels,
@@ -192,10 +188,31 @@ pub const Semantic = struct {
 
     // The last node of a post-traversal list
     // is the root node.
-    pub fn analyze(self: *Semantic) Error!void {
-        const root_node = self.ast.nodes.get(self.ast.nodes.len - 1);
+    // pub fn analyze(self: *Semantic) Error!void {
+    //     const root_node = self.ast.nodes.get(self.ast.nodes.len - 1);
+    //     const range = root_node.data.range;
+    //     try self.analyzeBlock(range.start, range.len);
+    // }
+
+    pub fn analyze(
+        allocator: Allocator,
+        source: []const u8,
+        ast: *Ast,
+        errors: *std.ArrayList(AstError)
+    ) !void {
+        var semantic: Semantic = .{
+            .allocator = allocator,
+            .source = source,
+            .ast = ast,
+            .errors = errors,
+            .tables = std.ArrayList(SymbolTable).empty,
+            .unresolved_labels = UnresolvedLabels.empty,
+        };
+        defer semantic.deinit();
+
+        const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        try self.analyzeBlock(range.start, range.len);
+        try semantic.analyzeBlock(range.start, range.len);
     }
 
     fn analyzeBlock(self: *Semantic, start: u32, len: u32) Error!void {

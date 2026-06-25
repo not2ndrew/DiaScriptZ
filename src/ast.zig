@@ -57,7 +57,7 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     // line starts at index 0.
     try line_starts.append(allocator, 0);
 
-    // lines => tokens
+    // lines -> tokens
     var tokenizer = Tokenizer.init(buf);
 
     while (true) {
@@ -81,7 +81,7 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
 fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
     var parser = try Parser.init(allocator, tokens);
 
-    // tokens => AST of stmt nodes
+    // tokens -> AST
     try parser.parseAll();
 
     // Converting to slice removes all excess memory in nodes and stmts.

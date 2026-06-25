@@ -1,6 +1,7 @@
 const std = @import("std");
 const tree = @import("ast.zig");
 const Semantic = @import("semantic.zig").Semantic;
+const DiaIR = @import("dia_ir.zig").DiaIR;
 const diag = @import("diagnostic.zig");
 
 const Io = std.Io;
@@ -23,13 +24,10 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     defer parse_tree.deinit(allocator);
 
     // Analyze AST
-    var semantic = Semantic.init(
-        allocator, parse_tree.source_file.source,
-        &parse_tree.ast, &parse_tree.errors
-    );
-    defer semantic.deinit();
+    try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
-    try semantic.analyze();
+    // AST -> IR
+    try DiaIR.generate(allocator, &parse_tree.ast, lines);
 
     // Diagnostics
     var renderer: DiagRenderer = .{
