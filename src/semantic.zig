@@ -188,12 +188,6 @@ pub const Semantic = struct {
 
     // The last node of a post-traversal list
     // is the root node.
-    // pub fn analyze(self: *Semantic) Error!void {
-    //     const root_node = self.ast.nodes.get(self.ast.nodes.len - 1);
-    //     const range = root_node.data.range;
-    //     try self.analyzeBlock(range.start, range.len);
-    // }
-
     pub fn analyze(
         allocator: Allocator,
         source: []const u8,
