@@ -17,11 +17,13 @@ pub const Inst = struct {
 
     pub const Tag = enum {
         // Value-producing
+        nop,
         constant,
-        var_decl,
         load,
 
         // Store
+        // declaration statements such as "const" and "var"
+        // are handled in Semantic.
         store,
 
         // Arithmetic
@@ -29,6 +31,14 @@ pub const Inst = struct {
         minus,
         mult,
         div,
+
+        // comparison
+        eql,
+        not_eql,
+        less,
+        less_or_eql,
+        greater,
+        greater_or_eql,
 
         // Dialogue
         text,
@@ -39,16 +49,21 @@ pub const Inst = struct {
     };
 
     pub const Data = union {
-        none: void,
         uint: u8,
         token_pos: u32,
-        node_and_node: struct {
-            u32, u32,
+        binary: struct {
+            lhs: u32,
+            rhs: u32,
+        },
+        range: struct {
+            start: u32,
+            len: u32,
         },
     };
 };
 
 
+/// DiaIR is Intermediate Representation for DiascriptZ.
 pub const DiaIR = struct {
     ast: *Ast,
     source: []const u8,
@@ -65,6 +80,7 @@ pub const DiaIR = struct {
             .ast = ast,
             .source = source,
             .instructions = .empty,
+            .extra = .empty,
         };
         defer diaIR.deinit(allocator);
 
@@ -72,13 +88,25 @@ pub const DiaIR = struct {
         try diaIR.instructions.ensureTotalCapacity(allocator, ast.nodes.len);
         try diaIR.extra.ensureTotalCapacity(allocator, ast.nodes.len);
 
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(allocator);
+
         // Root node in a post-traversal order is the last node.
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
         diaIR.analyzeBlock(range.start, range.len);
 
-        // Perform code optimization here 
-        // self.folding();
+        const start: u32 = @intCast(diaIR.extra.items.len);
+        const len: u32 = @intCast(diaIR.stmts.items.len);
+        diaIR.extra.appendSliceAssumeCapacity(stmts.items);
+
+        // TODO: load tag should only be used for loading variables.
+        diaIR.instructions.appendAssumeCapacity(.{
+            .tag = .load,
+            .data = .{
+                .range = .{ .start = start, .len = len }
+            }
+        });
     }
 
     fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {
@@ -102,9 +130,13 @@ pub const DiaIR = struct {
             .plus_equal, .minus_equal,
             .mult_equal, .div_equal => self.analyzeDecl(node),
             
-            .equals, .not_equal, .less,
-            .less_or_equal, .greater,
-            .greater_or_equal => self.analyzeCompare(node),
+            // Comparison IR
+            .equals => self.evalBinary(.eql, node),
+            .not_equal => self.evalBinary(.not_eql, node),
+            .less => self.evalBinary(.less, node),
+            .less_or_equal => self.evalBinary(.less_or_eql, node),
+            .greater => self.evalBinary(.greater, node),
+            .greater_or_equal => self.evalBinary(.greater_or_eql, node),
 
             // Dialogue IR
             else => {},
@@ -112,17 +144,28 @@ pub const DiaIR = struct {
     }
 
     fn analyzeDecl(self: *DiaIR, node: Node) void {
-        const value_idx = node.data.node_and_node.@"1";
-        self.evalExpr(value_idx);
+        const decl = node.data.node_and_node;
+        const ident_idx = decl.@"0";
+        const value_idx = decl.@"1";
+
+        const ident = self.ast.nodes.get(ident_idx);
+        const value = self.evalExpr(value_idx);
+
+        self.instructions.appendAssumeCapacity(.{
+            .tag = .store,
+            .data = .{
+                .binary = .{ ident.token_pos, value }
+            }
+        });
     }
 
     fn analyzeCompare(self: *DiaIR, node: Node) void {
         const children = node.data.node_and_node;
-        self.evalExpr(children.@"0");
-        self.evalExpr(children.@"1");
+        _ = self.evalExpr(children.@"0");
+        _ = self.evalExpr(children.@"1");
     }
 
-    fn evalExpr(self: *DiaIR, node_idx: NodeIndex) void {
+    fn evalExpr(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
         switch (node.tag) {
@@ -136,38 +179,33 @@ pub const DiaIR = struct {
                 });
             },
             .var_ident => {
-                const mutability = self.ast.tokens.get(token_pos);
-                const tag = if (mutability.tag == .keyword_const)
-                    .constant else .var_decl;
-
                 self.instructions.appendAssumeCapacity(.{
-                    .tag = tag,
+                    .tag = .load,
                     .data = .{ .token_pos = token_pos }
                 });
             },
+            .plus => self.evalBinary(.plus, node),
+            .minus => self.evalBinary(.minus, node),
+            .mult => self.evalBinary(.mult, node),
+            .div => self.evalBinary(.div, node),
             else => {},
         }
+
+        const len: u32 = @intCast(self.instructions.items.len);
+        return len;
+    }
+
+    fn evalBinary(self: *DiaIR, comptime tag: Inst.Tag, node: Node) void {
+        const children = node.data.node_and_node;
+        const lhs = self.evalExpr(children.@"0");
+        const rhs = self.evalExpr(children.@"1");
+
+        self.instructions.appendAssumeCapacity(.{
+            .tag = tag,
+            .data = .{ .binary = .{
+                .lhs = lhs,
+                .rhs = rhs,
+            }}
+        });
     }
 };
-
-
-// TODO: Move this into code optimization phase.
-fn fold(tag: NodeTag, left: u8, right: u8) u8 {
-    switch (tag) {
-        .plus => {
-            return left + right;
-        },
-        .minus => {
-            return left - right;
-        },
-        .mult => {
-            return left * right;
-        },
-        .div => {
-            // Never divide by 0
-            if (right == 0) return 0;
-            return left / right;
-        },
-        else => return 0,
-    }
-}

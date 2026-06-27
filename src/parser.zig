@@ -113,9 +113,7 @@ pub const Parser = struct {
                 self.next();
             },
             .close_brace, .keyword_end,
-            .EOF => {
-                // implicit terminator
-            },
+            .EOF => {}, // implicit terminator
             else => return Error.ParseError,
         }
     }
@@ -373,10 +371,9 @@ pub const Parser = struct {
                 },
                 .inter_open => {
                     self.next();
-                    const ident = try self.expect(.identifier);
+                    const expr = try self.parseExpr();
                     _ = try self.expect(.inter_close);
-                    const var_index = try self.addNode(.var_ident, ident, .{ .none = {} });
-                    try dialogue.append(self.allocator, var_index);
+                    try dialogue.append(self.allocator, expr);
                 },
                 else => break,
             }

@@ -52,6 +52,7 @@ pub const Semantic = struct {
 
     tables: std.ArrayList(SymbolTable),
     unresolved_labels: UnresolvedLabels,
+    // const_num: ConstHashMap
 
     pub fn init(
         allocator: Allocator, source: []const u8,

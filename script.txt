@@ -1,1 +1,2 @@
-const i = 0 + 1 + 3 / 3
+const x = 4
+Name: There are { x + 3 } apples.
