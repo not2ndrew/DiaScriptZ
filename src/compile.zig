@@ -27,11 +27,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
     // AST -> IR
-    // Suggestion: Maybe skip this entirely
-    // Parser and DiaIR looks almost identical in structure, variables, and methods.
-    //
-    // Skip directly to code optimization
-    // try DiaIR.generate(allocator, &parse_tree.ast, lines);
+    try DiaIR.generate(allocator, &parse_tree.ast, lines);
 
     // Diagnostics
     var renderer: DiagRenderer = .{

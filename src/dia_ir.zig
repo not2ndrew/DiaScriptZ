@@ -8,6 +8,7 @@ const Allocator = std.mem.Allocator;
 const Node = zig_node.Node;
 const NodeIndex = zig_node.NodeIndex;
 const NodeTag = zig_node.NodeTag;
+const invalid_node = zig_node.invalid_node;
 
 const Nodes = std.MultiArrayList(Node).Slice;
 
@@ -25,6 +26,7 @@ pub const Inst = struct {
         // declaration statements such as "const" and "var"
         // are handled in Semantic.
         store,
+        block,
 
         // Arithmetic
         plus,
@@ -84,29 +86,17 @@ pub const DiaIR = struct {
         };
         defer diaIR.deinit(allocator);
 
-        // We expect as many diaIR instructions and extra as nodes.
-        try diaIR.instructions.ensureTotalCapacity(allocator, ast.nodes.len);
-        try diaIR.extra.ensureTotalCapacity(allocator, ast.nodes.len);
-
-        var stmts: std.ArrayList(u32) = .empty;
-        defer stmts.deinit(allocator);
+        // We expect as many diaIR instructions and extra as nodes and extra_data.
+        try diaIR.instructions.ensureTotalCapacityPrecise(allocator, ast.nodes.len);
+        try diaIR.extra.ensureTotalCapacityPrecise(allocator, ast.extra_data.len);
 
         // Root node in a post-traversal order is the last node.
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        diaIR.analyzeBlock(range.start, range.len);
-
-        const start: u32 = @intCast(diaIR.extra.items.len);
-        const len: u32 = @intCast(diaIR.stmts.items.len);
-        diaIR.extra.appendSliceAssumeCapacity(stmts.items);
-
-        // TODO: load tag should only be used for loading variables.
-        diaIR.instructions.appendAssumeCapacity(.{
-            .tag = .load,
-            .data = .{
-                .range = .{ .start = start, .len = len }
-            }
-        });
+        _ = try diaIR.analyzeBlock(allocator, range.start, range.len);
+        
+        std.debug.print("Extra capacity: {d}, len: {d}\n", .{diaIR.extra.capacity, diaIR.extra.items.len});
+        std.debug.print("Inst capacity: {d}, len: {d}\n", .{diaIR.instructions.capacity, diaIR.instructions.items.len});
     }
 
     fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {
@@ -114,85 +104,94 @@ pub const DiaIR = struct {
         return self.source[token.start..token.end];
     }
 
-    fn analyzeBlock(self: *DiaIR, start: u32, len: u32) void {
-        const end = start + len;
-        for (start..end) |idx| {
-            const node_idx = self.ast.extra_data[idx];
-            self.analyzeNode(node_idx);
-        }
+    fn appendInst(self: *DiaIR, comptime tag: Inst.Tag, data: Inst.Data) u32 {
+        self.instructions.appendAssumeCapacity(.{
+            .tag = tag,
+            .data = data,
+        });
+
+        const len: u32 = @intCast(self.instructions.items.len);
+        return len - 1;
     }
 
-    fn analyzeNode(self: *DiaIR, node_idx: NodeIndex) void {
+    fn analyzeBlock(self: *DiaIR, allocator: Allocator, start: u32, len: u32) !u32 {
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(allocator);
+
+        try stmts.ensureTotalCapacity(allocator, len);
+        const end = start + len;
+
+        for (start..end) |idx| {
+            const idx_cast: u32 = @intCast(idx);
+            const stmt_idx = self.ast.extra_data[idx_cast];
+            const inst_idx = self.analyzeNode(stmt_idx);
+            stmts.appendAssumeCapacity(inst_idx);
+        }
+
+        self.extra.appendSliceAssumeCapacity(stmts.items);
+
+        const range_start: u32 = @intCast(self.extra.items.len);
+        return self.appendInst(.block, .{
+            .range = .{
+                .start = range_start,
+                .len = len,
+            }
+        });
+    }
+
+    fn analyzeNode(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
-        switch (node.tag) {
+        return switch (node.tag) {
             // Arithmetic IR
             .declar_stmt, .assign,
             .plus_equal, .minus_equal,
             .mult_equal, .div_equal => self.analyzeDecl(node),
             
             // Comparison IR
-            .equals => self.evalBinary(.eql, node),
-            .not_equal => self.evalBinary(.not_eql, node),
-            .less => self.evalBinary(.less, node),
-            .less_or_equal => self.evalBinary(.less_or_eql, node),
-            .greater => self.evalBinary(.greater, node),
-            .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+            // .if_stmt => self.analyzeIfStmt(node),
+            // .equals => self.evalBinary(.eql, node),
+            // .not_equal => self.evalBinary(.not_eql, node),
+            // .less => self.evalBinary(.less, node),
+            // .less_or_equal => self.evalBinary(.less_or_eql, node),
+            // .greater => self.evalBinary(.greater, node),
+            // .greater_or_equal => self.evalBinary(.greater_or_eql, node),
 
             // Dialogue IR
-            else => {},
-        }
+            else => invalid_node,
+        };
     }
 
-    fn analyzeDecl(self: *DiaIR, node: Node) void {
+    fn analyzeDecl(self: *DiaIR, node: Node) u32 {
         const decl = node.data.node_and_node;
         const ident_idx = decl.@"0";
         const value_idx = decl.@"1";
 
         const ident = self.ast.nodes.get(ident_idx);
+        const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
         const value = self.evalExpr(value_idx);
 
-        self.instructions.appendAssumeCapacity(.{
-            .tag = .store,
-            .data = .{
-                .binary = .{ ident.token_pos, value }
-            }
+        return self.appendInst(.store, .{
+            .binary = .{ .lhs = ident_pos, .rhs = value }
         });
-    }
-
-    fn analyzeCompare(self: *DiaIR, node: Node) void {
-        const children = node.data.node_and_node;
-        _ = self.evalExpr(children.@"0");
-        _ = self.evalExpr(children.@"1");
     }
 
     fn evalExpr(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
-        switch (node.tag) {
+        return switch (node.tag) {
             .number => {
                 const text = self.identName(token_pos);
                 const num = std.fmt.parseInt(u8, text, 10) catch unreachable;
 
-                self.instructions.appendAssumeCapacity(.{
-                    .tag = .constant,
-                    .data = .{ .uint = num }
-                });
+                return self.appendInst(.constant, .{ .uint = num });
             },
-            .var_ident => {
-                self.instructions.appendAssumeCapacity(.{
-                    .tag = .load,
-                    .data = .{ .token_pos = token_pos }
-                });
-            },
-            .plus => self.evalBinary(.plus, node),
-            .minus => self.evalBinary(.minus, node),
-            .mult => self.evalBinary(.mult, node),
-            .div => self.evalBinary(.div, node),
-            else => {},
-        }
-
-        const len: u32 = @intCast(self.instructions.items.len);
-        return len;
+            .var_ident => self.appendInst(.load, .{ .token_pos = token_pos }),
+            // .plus => self.evalBinary(.plus, node),
+            // .minus => self.evalBinary(.minus, node),
+            // .mult => self.evalBinary(.mult, node),
+            // .div => self.evalBinary(.div, node),
+            else => 0,
+        };
     }
 
     fn evalBinary(self: *DiaIR, comptime tag: Inst.Tag, node: Node) void {
@@ -200,12 +199,8 @@ pub const DiaIR = struct {
         const lhs = self.evalExpr(children.@"0");
         const rhs = self.evalExpr(children.@"1");
 
-        self.instructions.appendAssumeCapacity(.{
-            .tag = tag,
-            .data = .{ .binary = .{
-                .lhs = lhs,
-                .rhs = rhs,
-            }}
+        return self.appendInst(tag, .{
+            .binary = .{ .lhs = lhs, .rhs = rhs }
         });
     }
 };
