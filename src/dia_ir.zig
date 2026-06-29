@@ -67,36 +67,35 @@ pub const Inst = struct {
 
 /// DiaIR is Intermediate Representation for DiascriptZ.
 pub const DiaIR = struct {
+    allocator: Allocator,
     ast: *Ast,
     source: []const u8,
     instructions: std.ArrayList(Inst),
     extra: std.ArrayList(u32),
 
-    pub fn deinit(self: *DiaIR, allocator: Allocator) void {
-        self.instructions.deinit(allocator);
-        self.extra.deinit(allocator);
+    pub fn deinit(self: *DiaIR) void {
+        self.instructions.deinit(self.allocator);
+        self.extra.deinit(self.allocator);
     }
 
     pub fn generate(allocator: Allocator, ast: *Ast, source: []const u8) !void {
         var diaIR: DiaIR = .{
+            .allocator = allocator,
             .ast = ast,
             .source = source,
             .instructions = .empty,
             .extra = .empty,
         };
-        defer diaIR.deinit(allocator);
+        defer diaIR.deinit();
 
         // We expect as many diaIR instructions and extra as nodes and extra_data.
-        try diaIR.instructions.ensureTotalCapacityPrecise(allocator, ast.nodes.len);
-        try diaIR.extra.ensureTotalCapacityPrecise(allocator, ast.extra_data.len);
+        try diaIR.instructions.ensureTotalCapacity(allocator, ast.nodes.len);
+        try diaIR.extra.ensureTotalCapacity(allocator, ast.extra_data.len);
 
         // Root node in a post-traversal order is the last node.
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        _ = try diaIR.analyzeBlock(allocator, range.start, range.len);
-        
-        std.debug.print("Extra capacity: {d}, len: {d}\n", .{diaIR.extra.capacity, diaIR.extra.items.len});
-        std.debug.print("Inst capacity: {d}, len: {d}\n", .{diaIR.instructions.capacity, diaIR.instructions.items.len});
+        _ = try diaIR.analyzeBlock(range.start, range.len);
     }
 
     fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {
@@ -114,11 +113,11 @@ pub const DiaIR = struct {
         return len - 1;
     }
 
-    fn analyzeBlock(self: *DiaIR, allocator: Allocator, start: u32, len: u32) !u32 {
+    fn analyzeBlock(self: *DiaIR, start: u32, len: u32) !u32 {
         var stmts: std.ArrayList(u32) = .empty;
-        defer stmts.deinit(allocator);
+        defer stmts.deinit(self.allocator);
 
-        try stmts.ensureTotalCapacity(allocator, len);
+        try stmts.ensureTotalCapacityPrecise(self.allocator, len);
         const end = start + len;
 
         for (start..end) |idx| {
@@ -148,14 +147,12 @@ pub const DiaIR = struct {
             .mult_equal, .div_equal => self.analyzeDecl(node),
             
             // Comparison IR
-            // .if_stmt => self.analyzeIfStmt(node),
-            // .equals => self.evalBinary(.eql, node),
-            // .not_equal => self.evalBinary(.not_eql, node),
-            // .less => self.evalBinary(.less, node),
-            // .less_or_equal => self.evalBinary(.less_or_eql, node),
-            // .greater => self.evalBinary(.greater, node),
-            // .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+            .if_stmt => self.analyzeIfStmt(node),
 
+            .block => {
+                const range = node.data.range;
+                return self.analyzeBlock(range.start, range.len) catch unreachable;
+            },
             // Dialogue IR
             else => invalid_node,
         };
@@ -175,6 +172,45 @@ pub const DiaIR = struct {
         });
     }
 
+    fn analyzeIfStmt(self: *DiaIR, node: Node) u32 {
+        const range = node.data.range;
+        const start = range.start;
+        const len = range.len;
+        // const end = start + len;
+
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(self.allocator);
+
+        stmts.ensureTotalCapacity(self.allocator, len) catch unreachable;
+
+        // TODO: Start does NOT return the correct index position.
+        std.debug.print("Start: {d}\n", .{start});
+        const condition_idx = self.ast.extra_data[start];
+        const compare = self.evalCompare(condition_idx);
+
+        stmts.appendAssumeCapacity(compare);
+
+        const then_idx = self.ast.extra_data[start + 1];
+        const then_block = self.analyzeNode(then_idx);
+
+        stmts.appendAssumeCapacity(then_block);
+
+        const else_idx = self.ast.extra_data[start + 2];
+        var else_block: u32 = invalid_node;
+        if (else_idx != invalid_node) {
+            else_block = self.analyzeNode(else_idx);
+        }
+
+        stmts.appendAssumeCapacity(else_block);
+
+        const extra_start: u32 = @intCast(self.extra.items.len);
+        self.extra.appendSliceAssumeCapacity(stmts.items);
+
+        return self.appendInst(.branch, .{
+            .range = .{ .start = extra_start, .len = len }
+        });
+    }
+
     fn evalExpr(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
@@ -186,15 +222,15 @@ pub const DiaIR = struct {
                 return self.appendInst(.constant, .{ .uint = num });
             },
             .var_ident => self.appendInst(.load, .{ .token_pos = token_pos }),
-            // .plus => self.evalBinary(.plus, node),
-            // .minus => self.evalBinary(.minus, node),
-            // .mult => self.evalBinary(.mult, node),
-            // .div => self.evalBinary(.div, node),
-            else => 0,
+            .plus => self.evalBinary(.plus, node),
+            .minus => self.evalBinary(.minus, node),
+            .mult => self.evalBinary(.mult, node),
+            .div => self.evalBinary(.div, node),
+            else => invalid_node,
         };
     }
 
-    fn evalBinary(self: *DiaIR, comptime tag: Inst.Tag, node: Node) void {
+    fn evalBinary(self: *DiaIR, comptime tag: Inst.Tag, node: Node) u32 {
         const children = node.data.node_and_node;
         const lhs = self.evalExpr(children.@"0");
         const rhs = self.evalExpr(children.@"1");
@@ -202,5 +238,18 @@ pub const DiaIR = struct {
         return self.appendInst(tag, .{
             .binary = .{ .lhs = lhs, .rhs = rhs }
         });
+    }
+
+    fn evalCompare(self: *DiaIR, node_idx: NodeIndex) u32 {
+        const node = self.ast.nodes.get(node_idx);
+        return switch (node.tag) {
+            .equals => self.evalBinary(.eql, node),
+            .not_equal => self.evalBinary(.not_eql, node),
+            .less => self.evalBinary(.less, node),
+            .less_or_equal => self.evalBinary(.less_or_eql, node),
+            .greater => self.evalBinary(.greater, node),
+            .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+            else => invalid_node,
+        };
     }
 };

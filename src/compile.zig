@@ -24,7 +24,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     defer parse_tree.deinit(allocator);
 
     // Analyze AST
-    try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
+    // try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
     // AST -> IR
     try DiaIR.generate(allocator, &parse_tree.ast, lines);

@@ -239,7 +239,6 @@ pub const Parser = struct {
     // if_stmt = "if" "(" compar_expr ")" block [ else_block ] ;
     // else_block = "else" stmts ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
-        const start: u32 = @intCast(self.extra_data.items.len);
         const if_pos = try self.expect(.keyword_if);
 
         _ = try self.expect(.open_paren);
@@ -254,6 +253,7 @@ pub const Parser = struct {
             else_block = try self.parseStmtBlock(.open_brace, .close_brace);
         }
 
+        const start: u32 = @intCast(self.extra_data.items.len);
         try self.extra_data.appendSlice(self.allocator, &[_]u32{
             condition, then_block, else_block,
         });
