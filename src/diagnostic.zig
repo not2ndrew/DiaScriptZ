@@ -144,7 +144,7 @@ pub const DiagRenderer = struct {
                 return w.writeAll("Expected expression, found EOF");
             },
             .unexpected_token => {
-                return w.print("Expected expression '{t}', found '{s}'", .{err.extra.expected_tag, str});
+                return w.print("Expected expression, found '{s}'", .{str});
             },
             .expected_ident => {
                 return w.print("Expected identifier, found '{s}'", .{str});

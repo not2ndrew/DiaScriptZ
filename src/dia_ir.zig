@@ -295,8 +295,6 @@ pub const DiaIR = struct {
     // Ex: x >= 1 is the equivalent of x > 1 OR x = 1
     //
     // List of things I need:
-    // 1) Create logical operators "and", "or", and "!"
-    // 2) Create boolean keywords "true" and "false"
     // 2) Tokenize "||" and "&&"
     // 3) Parse new conditions
     // 4) Semantic analyze
@@ -307,9 +305,9 @@ pub const DiaIR = struct {
             .equals => self.evalBinary(.eql, node),
             .not_equal => self.evalBinary(.not_eql, node),
             .less => self.evalBinary(.less, node),
-            // .less_or_equal => self.evalBinary(.less_or_eql, node),
+            .less_or_equal => self.evalBinary(.less_or_eql, node),
             .greater => self.evalBinary(.greater, node),
-            // .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+            .greater_or_equal => self.evalBinary(.greater_or_eql, node),
             else => invalid_node,
         };
     }

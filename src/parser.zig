@@ -178,7 +178,7 @@ pub const Parser = struct {
             .tilde => self.parseLabel(),
             .underscore => self.parseAnonymousDialogue(),
             else => {
-                try self.reportUnexpected(.expected_ident, .identifier);
+                self.next();
                 return Error.ParseError;
             }
         };
