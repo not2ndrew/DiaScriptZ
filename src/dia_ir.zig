@@ -41,6 +41,8 @@ pub const Inst = struct {
         less_or_eql,
         greater,
         greater_or_eql,
+        bool_or,
+        bool_and,
 
         // Dialogue
         text,
@@ -211,9 +213,12 @@ pub const DiaIR = struct {
         stmts.ensureTotalCapacity(self.allocator, len) catch unreachable;
 
         const condition_idx = self.ast.extra_data[start];
-        const compare = self.evalCompare(condition_idx);
+        const condition = self.evalCondition(condition_idx);
 
-        stmts.appendAssumeCapacity(compare);
+        stmts.appendAssumeCapacity(condition);
+        // const compare = self.evalCompare(condition_idx);
+
+        // stmts.appendAssumeCapacity(compare);
 
         const then_idx = self.ast.extra_data[start + 1];
         const then_block = self.analyzeNode(then_idx);
@@ -265,6 +270,26 @@ pub const DiaIR = struct {
         });
     }
 
+    fn evalCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
+        const node = self.ast.nodes.get(node_idx);
+
+        return switch (node.tag) {
+            .bool_and => self.evalConjunction(.bool_and, node),
+            .bool_or => self.evalConjunction(.bool_or, node),
+            else => self.evalCompare(node_idx),
+        };
+    }
+
+    fn evalConjunction(self: *DiaIR, comptime tag: Inst.Tag, node: Node) u32 {
+        const children = node.data.node_and_node;
+        const lhs = self.evalCondition(children.@"0");
+        const rhs = self.evalCondition(children.@"1");
+
+        return self.appendInst(tag, .{
+            .binary = .{ .lhs = lhs, .rhs = rhs }
+        });
+    }
+
     // TODO: Split combinational conditon statements into
     // two instructions.
     // Ex: x >= 1 is the equivalent of x > 1 OR x = 1
@@ -282,9 +307,9 @@ pub const DiaIR = struct {
             .equals => self.evalBinary(.eql, node),
             .not_equal => self.evalBinary(.not_eql, node),
             .less => self.evalBinary(.less, node),
-            .less_or_equal => self.evalBinary(.less_or_eql, node),
+            // .less_or_equal => self.evalBinary(.less_or_eql, node),
             .greater => self.evalBinary(.greater, node),
-            .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+            // .greater_or_equal => self.evalBinary(.greater_or_eql, node),
             else => invalid_node,
         };
     }

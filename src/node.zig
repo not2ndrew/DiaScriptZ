@@ -31,8 +31,8 @@ pub const NodeTag = enum {
     greater, // >
     less_or_equal, // <=
     greater_or_equal, // >=
-    keyword_and,
-    keyword_or,
+    bool_and,
+    bool_or,
 
     // Combination Arithmetic
     plus_equal, // +=

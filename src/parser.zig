@@ -275,7 +275,7 @@ pub const Parser = struct {
             self.next();
 
             const rhs = try self.parseConjunction();
-            node = try self.addNode(.keyword_or, op_tok, .{
+            node = try self.addNode(.bool_or, op_tok, .{
                 .node_and_node = .{ node, rhs }
             });
         }
@@ -292,7 +292,7 @@ pub const Parser = struct {
             self.next();
 
             const rhs = try self.parseBoolFactor();
-            node = try self.addNode(.keyword_and, op_tok, .{
+            node = try self.addNode(.bool_and, op_tok, .{
                 .node_and_node = .{ node, rhs }
             });
         }
