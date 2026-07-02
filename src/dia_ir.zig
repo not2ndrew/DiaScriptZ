@@ -96,6 +96,14 @@ pub const DiaIR = struct {
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
         _ = try diaIR.analyzeBlock(range.start, range.len);
+
+        for (ast.nodes.items(.tag)) |tag| {
+            std.debug.print("Node tag: {t}\n", .{tag});
+        }
+
+        for (diaIR.instructions.items) |inst| {
+            std.debug.print("Instruction Tag: {t}\n", .{inst.tag});
+        }
     }
 
     fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {
@@ -142,9 +150,11 @@ pub const DiaIR = struct {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
             // Arithmetic IR
-            .declar_stmt, .assign,
-            .plus_equal, .minus_equal,
-            .mult_equal, .div_equal => self.analyzeDecl(node),
+            .declar_stmt, .assign => self.analyzeDecl(node),
+            .plus_equal => self.analyzeArith(node, .plus),
+            .minus_equal => self.analyzeArith(node, .minus),
+            .mult_equal => self.analyzeArith(node, .mult),
+            .div_equal => self.analyzeArith(node, .div),
             
             // Comparison IR
             .if_stmt => self.analyzeIfStmt(node),
@@ -159,9 +169,9 @@ pub const DiaIR = struct {
     }
 
     fn analyzeDecl(self: *DiaIR, node: Node) u32 {
-        const decl = node.data.node_and_node;
-        const ident_idx = decl.@"0";
-        const value_idx = decl.@"1";
+        const assign = node.data.node_and_node;
+        const ident_idx = assign.@"0";
+        const value_idx = assign.@"1";
 
         const ident = self.ast.nodes.get(ident_idx);
         const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
@@ -172,19 +182,34 @@ pub const DiaIR = struct {
         });
     }
 
+    fn analyzeArith(self: *DiaIR, node: Node, comptime tag: Inst.Tag) u32 {
+        // Convert combinational arithmetic to singular arithmetic
+        const operand = node.data.node_and_node;
+        const ident_idx = operand.@"0";
+        const value_idx = operand.@"1";
+
+        const ident = self.ast.nodes.get(ident_idx);
+        const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
+
+        const combine = self.appendInst(tag, .{
+            .binary = .{ .lhs = ident_pos, .rhs = self.evalExpr(value_idx) }
+        });
+
+        return self.appendInst(.store, .{
+            .binary = .{ .lhs = ident_pos, .rhs = combine }
+        });
+    }
+
     fn analyzeIfStmt(self: *DiaIR, node: Node) u32 {
         const range = node.data.range;
         const start = range.start;
         const len = range.len;
-        // const end = start + len;
 
         var stmts: std.ArrayList(u32) = .empty;
         defer stmts.deinit(self.allocator);
 
         stmts.ensureTotalCapacity(self.allocator, len) catch unreachable;
 
-        // TODO: Start does NOT return the correct index position.
-        std.debug.print("Start: {d}\n", .{start});
         const condition_idx = self.ast.extra_data[start];
         const compare = self.evalCompare(condition_idx);
 
@@ -240,6 +265,17 @@ pub const DiaIR = struct {
         });
     }
 
+    // TODO: Split combinational conditon statements into
+    // two instructions.
+    // Ex: x >= 1 is the equivalent of x > 1 OR x = 1
+    //
+    // List of things I need:
+    // 1) Create logical operators "and", "or", and "!"
+    // 2) Create boolean keywords "true" and "false"
+    // 2) Tokenize "||" and "&&"
+    // 3) Parse new conditions
+    // 4) Semantic analyze
+    // 5) IR
     fn evalCompare(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {

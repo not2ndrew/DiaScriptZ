@@ -242,7 +242,8 @@ pub const Parser = struct {
         const if_pos = try self.expect(.keyword_if);
 
         _ = try self.expect(.open_paren);
-        const condition = try self.parseCompareExpr();
+        const condition = try self.parseCondition();
+        // const condition = try self.parseCompareExpr();
         _ = try self.expect(.close_paren);
 
         const then_block = try self.parseStmtBlock(.open_brace, .close_brace);
@@ -263,6 +264,53 @@ pub const Parser = struct {
         return self.addNode(.if_stmt, if_pos, .{
             .range = .{ .start = start, .len = 3 }
         });
+    }
+
+    // condition   = conjunction { "or" conjunction } ;
+    fn parseCondition(self: *Parser) Error!NodeIndex {
+        var node = try self.parseConjunction();
+
+        while (self.peekTag() == .keyword_or) {
+            const op_tok = self.token_pos;
+            self.next();
+
+            const rhs = try self.parseConjunction();
+            node = try self.addNode(.keyword_or, op_tok, .{
+                .node_and_node = .{ node, rhs }
+            });
+        }
+
+        return node;
+    }
+
+    // conjunction = boolean_factor { "and" boolean_factor } ;
+    fn parseConjunction(self: *Parser) Error!NodeIndex {
+        var node = try self.parseBoolFactor();
+
+        while (self.peekTag() == .keyword_and) {
+            const op_tok = self.token_pos;
+            self.next();
+
+            const rhs = try self.parseBoolFactor();
+            node = try self.addNode(.keyword_and, op_tok, .{
+                .node_and_node = .{ node, rhs }
+            });
+        }
+
+        return node;
+    }
+
+    // boolean_factor = "(" condition ")" | compar_expr ;
+    fn parseBoolFactor(self: *Parser) Error!NodeIndex {
+        if (self.peekTag() == .open_paren) {
+            self.next();
+            const node = try self.parseCondition();
+            _ = try self.expect(.close_paren);
+
+            return node;
+        }
+
+        return try self.parseCompareExpr();
     }
 
     // compar_expr = expr compar_op expr ;

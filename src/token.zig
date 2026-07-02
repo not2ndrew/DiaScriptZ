@@ -19,9 +19,10 @@ pub const Tag = enum {
     keyword_if,
     keyword_else,
     keyword_end,
+    keyword_and,
+    keyword_or,
     label,
     scene,
-    choice,
 
     // If Statement
     then_block,
@@ -80,4 +81,6 @@ pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "if", .keyword_if },
     .{ "else", .keyword_else },
     .{ "end", .keyword_end },
+    .{ "and", .keyword_and },
+    .{ "or", .keyword_or },
 });

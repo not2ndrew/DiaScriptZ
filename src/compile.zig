@@ -25,9 +25,12 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
 
     // Analyze AST
     // try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
+    for (parse_tree.ast.nodes.items(.tag)) |tag| {
+        std.debug.print("Node tag: {t}\n", .{tag});
+    }
 
     // AST -> IR
-    try DiaIR.generate(allocator, &parse_tree.ast, lines);
+    // try DiaIR.generate(allocator, &parse_tree.ast, lines);
 
     // Diagnostics
     var renderer: DiagRenderer = .{
