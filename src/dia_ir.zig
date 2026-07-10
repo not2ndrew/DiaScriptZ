@@ -26,6 +26,10 @@ pub const Inst = struct {
         // declaration statements such as "const" and "var"
         // are handled in Semantic.
         store,
+        // TODO: block is too vague.
+        // There are many types of blocks:
+        // 1) blocks in if_stmt,
+        // 2) blocks in labels
         block,
 
         // Arithmetic
@@ -161,7 +165,7 @@ pub const DiaIR = struct {
             // Comparison IR
             .if_stmt => self.analyzeIfStmt(node),
 
-            .block => {
+            .block, .label => {
                 const range = node.data.range;
                 return self.analyzeBlock(range.start, range.len) catch unreachable;
             },
@@ -184,8 +188,8 @@ pub const DiaIR = struct {
         });
     }
 
+    // Convert combinational arithmetic to singular arithmetic
     fn analyzeArith(self: *DiaIR, node: Node, comptime tag: Inst.Tag) u32 {
-        // Convert combinational arithmetic to singular arithmetic
         const operand = node.data.node_and_node;
         const ident_idx = operand.@"0";
         const value_idx = operand.@"1";
@@ -193,8 +197,10 @@ pub const DiaIR = struct {
         const ident = self.ast.nodes.get(ident_idx);
         const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
 
+        const ident_pos_2 = self.appendInst(.load, .{ .token_pos = ident.token_pos });
+        const expr = self.evalExpr(value_idx);
         const combine = self.appendInst(tag, .{
-            .binary = .{ .lhs = ident_pos, .rhs = self.evalExpr(value_idx) }
+            .binary = .{ .lhs = ident_pos_2, .rhs = expr }
         });
 
         return self.appendInst(.store, .{
@@ -213,12 +219,9 @@ pub const DiaIR = struct {
         stmts.ensureTotalCapacity(self.allocator, len) catch unreachable;
 
         const condition_idx = self.ast.extra_data[start];
-        const condition = self.evalCondition(condition_idx);
+        const condition = self.analyzeCondition(condition_idx);
 
         stmts.appendAssumeCapacity(condition);
-        // const compare = self.evalCompare(condition_idx);
-
-        // stmts.appendAssumeCapacity(compare);
 
         const then_idx = self.ast.extra_data[start + 1];
         const then_block = self.analyzeNode(then_idx);
@@ -239,6 +242,16 @@ pub const DiaIR = struct {
         return self.appendInst(.branch, .{
             .range = .{ .start = extra_start, .len = len }
         });
+    }
+
+    fn analyzeCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
+        const node = self.ast.nodes.get(node_idx);
+
+        return switch (node.tag) {
+            .bool_and => self.evalConjunction(.bool_and, node),
+            .bool_or => self.evalConjunction(.bool_or, node),
+            else => self.evalCompare(node_idx),
+        };
     }
 
     fn evalExpr(self: *DiaIR, node_idx: NodeIndex) u32 {
@@ -270,39 +283,20 @@ pub const DiaIR = struct {
         });
     }
 
-    fn evalCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
-        const node = self.ast.nodes.get(node_idx);
-
-        return switch (node.tag) {
-            .bool_and => self.evalConjunction(.bool_and, node),
-            .bool_or => self.evalConjunction(.bool_or, node),
-            else => self.evalCompare(node_idx),
-        };
-    }
-
     fn evalConjunction(self: *DiaIR, comptime tag: Inst.Tag, node: Node) u32 {
         const children = node.data.node_and_node;
-        const lhs = self.evalCondition(children.@"0");
-        const rhs = self.evalCondition(children.@"1");
+        const lhs = self.analyzeCondition(children.@"0");
+        const rhs = self.analyzeCondition(children.@"1");
 
         return self.appendInst(tag, .{
             .binary = .{ .lhs = lhs, .rhs = rhs }
         });
     }
 
-    // TODO: Split combinational conditon statements into
-    // two instructions.
-    // Ex: x >= 1 is the equivalent of x > 1 OR x = 1
-    //
-    // List of things I need:
-    // 2) Tokenize "||" and "&&"
-    // 3) Parse new conditions
-    // 4) Semantic analyze
-    // 5) IR
     fn evalCompare(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
-            .equals => self.evalBinary(.eql, node),
+            .equal_equal => self.evalBinary(.eql, node),
             .not_equal => self.evalBinary(.not_eql, node),
             .less => self.evalBinary(.less, node),
             .less_or_equal => self.evalBinary(.less_or_eql, node),

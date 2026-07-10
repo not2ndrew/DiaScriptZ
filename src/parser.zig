@@ -321,7 +321,7 @@ pub const Parser = struct {
         const op_tag = self.peekTag();
 
         const compare_tag = nodeTagFromCompare(op_tag) orelse {
-            try self.reportUnexpected(.expected_compar_op, .equals);
+            try self.reportUnexpected(.expected_compar_op, .equal_equal);
             return Error.ParseError;
         };
 

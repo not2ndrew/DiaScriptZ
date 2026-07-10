@@ -25,7 +25,7 @@ pub const NodeTag = enum {
     assign, // =
 
     // Comparison
-    equals, // ==
+    equal_equal, // ==
     not_equal, // !=
     less, // <
     greater, // >
@@ -70,7 +70,7 @@ pub fn nodeTagFromArithmetic(token_tag: Tag) ?NodeTag {
 
 pub fn nodeTagFromCompare(token_tag: Tag) ?NodeTag {
     return switch (token_tag) {
-        .equals => .equals,
+        .equal_equal => .equal_equal,
         .not_equal => .not_equal,
         .greater => .greater,
         .less => .less,

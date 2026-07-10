@@ -193,7 +193,7 @@ pub const Tokenizer = struct {
             },
             '=' => {
                 self.insert_semi = false;
-                result.tag = if (self.matchNext('=')) .equals else .assign;
+                result.tag = if (self.matchNext('=')) .equal_equal else .assign;
             },
             '!' => {
                 self.insert_semi = false;

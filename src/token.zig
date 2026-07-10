@@ -45,7 +45,7 @@ pub const Tag = enum {
     newline, // '\n'
 
     // Comparison
-    equals, // ==
+    equal_equal, // ==
     not_equal, // !=
     less, // <
     greater, // >
