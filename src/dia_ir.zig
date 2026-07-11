@@ -172,6 +172,7 @@ pub const DiaIR = struct {
             },
             // Dialogue IR
             .dialogue => self.analyzeDialogue(node),
+            .choice => self.analyzeChoice(node),
 
             // TODO: label also has a label_ident.
             // Append Inst for label.
@@ -252,12 +253,11 @@ pub const DiaIR = struct {
         const range = node.data.range;
         const start = range.start;
         const len = range.len;
-        const end = start + len;
 
-        var stmts: std.ArrayList(u32) = .empty;
-        defer stmts.deinit(self.allocator);
+        var parts: std.ArrayList(u32) = .empty;
+        defer parts.deinit(self.allocator);
 
-        stmts.ensureTotalCapacityPrecise(self.allocator, len) catch unreachable;
+        parts.ensureTotalCapacityPrecise(self.allocator, len) catch unreachable;
 
         const speaker_idx = self.ast.extra_data[start];
         var speaker: u32 = invalid_node;
@@ -273,12 +273,49 @@ pub const DiaIR = struct {
             });
         }
 
-        stmts.appendAssumeCapacity(speaker);
+        parts.appendAssumeCapacity(speaker);
 
-        for (start + 1..end - 1) |idx| {
+        // Skip the first increment since we have already added speaker.
+        self.analyzeDialogueParts(&parts, start + 1, len);
+
+        const extra_start: u32 = @intCast(self.extra.items.len);
+        self.extra.appendSliceAssumeCapacity(parts.items);
+
+        return self.appendInst(.block, .{
+            .range = .{ .start = extra_start, .len = len }
+        });
+    }
+
+    fn analyzeChoice(self: *DiaIR, node: Node) u32 {
+        const range = node.data.range;
+        const len = range.len;
+
+        var parts: std.ArrayList(u32) = .empty;
+        defer parts.deinit(self.allocator);
+
+        parts.ensureTotalCapacityPrecise(self.allocator, len) catch unreachable;
+
+        // Choice is the same as dialogue except
+        // speaker is an invalid node.
+        parts.appendAssumeCapacity(invalid_node);
+
+        // Skip the first increment since we have already added speaker.
+        self.analyzeDialogueParts(&parts, range.start + 1, len);
+
+        const extra_start: u32 = @intCast(self.extra.items.len);
+        self.extra.appendSliceAssumeCapacity(parts.items);
+
+        return self.appendInst(.block, .{
+            .range = .{ .start = extra_start, .len = len }
+        });
+    }
+
+    fn analyzeDialogueParts(self: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: u32) void {
+        const end = start + len;
+        for (start..end - 1) |idx| {
             const text_idx = self.ast.extra_data[idx];
             const text = self.evalText(text_idx);
-            stmts.appendAssumeCapacity(text);
+            parts.appendAssumeCapacity(text);
         }
 
         const jump_idx = self.ast.extra_data[end - 1];
@@ -290,14 +327,7 @@ pub const DiaIR = struct {
             });
         }
 
-        stmts.appendAssumeCapacity(jump);
-
-        const extra_start: u32 = @intCast(self.extra.items.len);
-        self.extra.appendSliceAssumeCapacity(stmts.items);
-
-        return self.appendInst(.block, .{
-            .range = .{ .start = extra_start, .len = len }
-        });
+        parts.appendAssumeCapacity(jump);
     }
 
     fn analyzeCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
