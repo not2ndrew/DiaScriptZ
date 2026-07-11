@@ -50,6 +50,7 @@ pub const Inst = struct {
 
         // Dialogue
         text,
+        unnamed_text,
 
         // Control flow
         jump,
@@ -137,7 +138,7 @@ pub const DiaIR = struct {
         for (start..end) |idx| {
             const idx_cast: u32 = @intCast(idx);
             const stmt_idx = self.ast.extra_data[idx_cast];
-            const inst_idx = self.analyzeNode(stmt_idx);
+            const inst_idx = self.analyzeStmt(stmt_idx);
             stmts.appendAssumeCapacity(inst_idx);
         }
 
@@ -152,7 +153,7 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeNode(self: *DiaIR, node_idx: NodeIndex) u32 {
+    fn analyzeStmt(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
             // Arithmetic IR
@@ -165,11 +166,16 @@ pub const DiaIR = struct {
             // Comparison IR
             .if_stmt => self.analyzeIfStmt(node),
 
-            .block, .label => {
+            .block, => {
                 const range = node.data.range;
                 return self.analyzeBlock(range.start, range.len) catch unreachable;
             },
             // Dialogue IR
+            .dialogue => self.analyzeDialogue(node),
+
+            // TODO: label also has a label_ident.
+            // Append Inst for label.
+             .label => invalid_node,
             else => invalid_node,
         };
     }
@@ -221,25 +227,75 @@ pub const DiaIR = struct {
         const condition_idx = self.ast.extra_data[start];
         const condition = self.analyzeCondition(condition_idx);
 
-        stmts.appendAssumeCapacity(condition);
-
         const then_idx = self.ast.extra_data[start + 1];
-        const then_block = self.analyzeNode(then_idx);
-
-        stmts.appendAssumeCapacity(then_block);
+        const then_block = self.analyzeStmt(then_idx);
 
         const else_idx = self.ast.extra_data[start + 2];
         var else_block: u32 = invalid_node;
         if (else_idx != invalid_node) {
-            else_block = self.analyzeNode(else_idx);
+            else_block = self.analyzeStmt(else_idx);
         }
 
+        stmts.appendAssumeCapacity(condition);
+        stmts.appendAssumeCapacity(then_block);
         stmts.appendAssumeCapacity(else_block);
 
         const extra_start: u32 = @intCast(self.extra.items.len);
         self.extra.appendSliceAssumeCapacity(stmts.items);
 
         return self.appendInst(.branch, .{
+            .range = .{ .start = extra_start, .len = len }
+        });
+    }
+
+    fn analyzeDialogue(self: *DiaIR, node: Node) u32 {
+        const range = node.data.range;
+        const start = range.start;
+        const len = range.len;
+        const end = start + len;
+
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(self.allocator);
+
+        stmts.ensureTotalCapacityPrecise(self.allocator, len) catch unreachable;
+
+        const speaker_idx = self.ast.extra_data[start];
+        var speaker: u32 = invalid_node;
+        const speak_tag = self.ast.nodes.get(speaker_idx).tag;
+
+        if (speak_tag == .name_ident) {
+            speaker = self.appendInst(.text, .{
+                .token_pos = node.token_pos,
+            });
+        } else {
+            speaker = self.appendInst(.unnamed_text, .{
+                .token_pos = node.token_pos,
+            });
+        }
+
+        stmts.appendAssumeCapacity(speaker);
+
+        for (start + 1..end - 1) |idx| {
+            const text_idx = self.ast.extra_data[idx];
+            const text = self.evalText(text_idx);
+            stmts.appendAssumeCapacity(text);
+        }
+
+        const jump_idx = self.ast.extra_data[end - 1];
+        var jump: u32 = invalid_node;
+        if (jump_idx != invalid_node) {
+            const jump_node = self.ast.nodes.get(jump_idx);
+            jump = self.appendInst(.jump, .{
+                .token_pos = jump_node.token_pos,
+            });
+        }
+
+        stmts.appendAssumeCapacity(jump);
+
+        const extra_start: u32 = @intCast(self.extra.items.len);
+        self.extra.appendSliceAssumeCapacity(stmts.items);
+
+        return self.appendInst(.block, .{
             .range = .{ .start = extra_start, .len = len }
         });
     }
@@ -303,6 +359,15 @@ pub const DiaIR = struct {
             .greater => self.evalBinary(.greater, node),
             .greater_or_equal => self.evalBinary(.greater_or_eql, node),
             else => invalid_node,
+        };
+    }
+
+    fn evalText(self: *DiaIR, node_idx: NodeIndex) u32 {
+        const node = self.ast.nodes.get(node_idx);
+        std.debug.print("Tag: {t}\n", .{node.tag});
+        return switch (node.tag) {
+            .string => self.appendInst(.bool_and, .{ .token_pos = node.token_pos }),
+            else => self.evalExpr(node_idx),
         };
     }
 };
