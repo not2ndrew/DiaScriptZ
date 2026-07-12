@@ -26,10 +26,6 @@ pub const Inst = struct {
         // declaration statements such as "const" and "var"
         // are handled in Semantic.
         store,
-        // TODO: block is too vague.
-        // There are many types of blocks:
-        // 1) blocks in if_stmt,
-        // 2) blocks in labels
         block,
 
         // Arithmetic
@@ -49,8 +45,8 @@ pub const Inst = struct {
         bool_and,
 
         // Dialogue
+        speaker,
         text,
-        unnamed_text,
 
         // Control flow
         jump,
@@ -102,7 +98,7 @@ pub const DiaIR = struct {
         // Root node in a post-traversal order is the last node.
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        _ = try diaIR.analyzeBlock(range.start, range.len);
+        _ = try diaIR.reduceBlock(range.start, range.len);
 
         for (ast.nodes.items(.tag)) |tag| {
             std.debug.print("Node tag: {t}\n", .{tag});
@@ -128,7 +124,7 @@ pub const DiaIR = struct {
         return len - 1;
     }
 
-    fn analyzeBlock(self: *DiaIR, start: u32, len: u32) !u32 {
+    fn reduceBlock(self: *DiaIR, start: u32, len: u32) !u32 {
         var stmts: std.ArrayList(u32) = .empty;
         defer stmts.deinit(self.allocator);
 
@@ -138,7 +134,7 @@ pub const DiaIR = struct {
         for (start..end) |idx| {
             const idx_cast: u32 = @intCast(idx);
             const stmt_idx = self.ast.extra_data[idx_cast];
-            const inst_idx = self.analyzeStmt(stmt_idx);
+            const inst_idx = self.reduceStmt(stmt_idx);
             stmts.appendAssumeCapacity(inst_idx);
         }
 
@@ -153,26 +149,26 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeStmt(self: *DiaIR, node_idx: NodeIndex) u32 {
+    fn reduceStmt(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
             // Arithmetic IR
-            .declar_stmt, .assign => self.analyzeDecl(node),
-            .plus_equal => self.analyzeArith(node, .plus),
-            .minus_equal => self.analyzeArith(node, .minus),
-            .mult_equal => self.analyzeArith(node, .mult),
-            .div_equal => self.analyzeArith(node, .div),
+            .declar_stmt, .assign => self.reduceDecl(node),
+            .plus_equal => self.reduceArith(node, .plus),
+            .minus_equal => self.reduceArith(node, .minus),
+            .mult_equal => self.reduceArith(node, .mult),
+            .div_equal => self.reduceArith(node, .div),
             
             // Comparison IR
-            .if_stmt => self.analyzeIfStmt(node),
+            .if_stmt => self.reduceIfStmt(node),
 
             .block, => {
                 const range = node.data.range;
-                return self.analyzeBlock(range.start, range.len) catch unreachable;
+                return self.reduceBlock(range.start, range.len) catch unreachable;
             },
             // Dialogue IR
-            .dialogue => self.analyzeDialogue(node),
-            .choice => self.analyzeChoice(node),
+            .dialogue => self.reduceDialogue(node),
+            .choice => self.reduceChoice(node),
 
             // TODO: label also has a label_ident.
             // Append Inst for label.
@@ -181,7 +177,7 @@ pub const DiaIR = struct {
         };
     }
 
-    fn analyzeDecl(self: *DiaIR, node: Node) u32 {
+    fn reduceDecl(self: *DiaIR, node: Node) u32 {
         const assign = node.data.node_and_node;
         const ident_idx = assign.@"0";
         const value_idx = assign.@"1";
@@ -196,7 +192,7 @@ pub const DiaIR = struct {
     }
 
     // Convert combinational arithmetic to singular arithmetic
-    fn analyzeArith(self: *DiaIR, node: Node, comptime tag: Inst.Tag) u32 {
+    fn reduceArith(self: *DiaIR, node: Node, comptime tag: Inst.Tag) u32 {
         const operand = node.data.node_and_node;
         const ident_idx = operand.@"0";
         const value_idx = operand.@"1";
@@ -215,7 +211,7 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeIfStmt(self: *DiaIR, node: Node) u32 {
+    fn reduceIfStmt(self: *DiaIR, node: Node) u32 {
         const range = node.data.range;
         const start = range.start;
         const len = range.len;
@@ -226,15 +222,15 @@ pub const DiaIR = struct {
         stmts.ensureTotalCapacity(self.allocator, len) catch unreachable;
 
         const condition_idx = self.ast.extra_data[start];
-        const condition = self.analyzeCondition(condition_idx);
+        const condition = self.reduceCondition(condition_idx);
 
         const then_idx = self.ast.extra_data[start + 1];
-        const then_block = self.analyzeStmt(then_idx);
+        const then_block = self.reduceStmt(then_idx);
 
         const else_idx = self.ast.extra_data[start + 2];
         var else_block: u32 = invalid_node;
         if (else_idx != invalid_node) {
-            else_block = self.analyzeStmt(else_idx);
+            else_block = self.reduceStmt(else_idx);
         }
 
         stmts.appendAssumeCapacity(condition);
@@ -249,7 +245,7 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeDialogue(self: *DiaIR, node: Node) u32 {
+    fn reduceDialogue(self: *DiaIR, node: Node) u32 {
         const range = node.data.range;
         const start = range.start;
         const len = range.len;
@@ -259,24 +255,12 @@ pub const DiaIR = struct {
 
         parts.ensureTotalCapacityPrecise(self.allocator, len) catch unreachable;
 
-        const speaker_idx = self.ast.extra_data[start];
-        var speaker: u32 = invalid_node;
-        const speak_tag = self.ast.nodes.get(speaker_idx).tag;
-
-        if (speak_tag == .name_ident) {
-            speaker = self.appendInst(.text, .{
-                .token_pos = node.token_pos,
-            });
-        } else {
-            speaker = self.appendInst(.unnamed_text, .{
-                .token_pos = node.token_pos,
-            });
-        }
-
+        const speaker = self.appendInst(.speaker, .{
+            .token_pos = node.token_pos,
+        });
         parts.appendAssumeCapacity(speaker);
 
-        // Skip the first increment since we have already added speaker.
-        self.analyzeDialogueParts(&parts, start + 1, len);
+        self.reduceDialogueParts(&parts, start, len);
 
         const extra_start: u32 = @intCast(self.extra.items.len);
         self.extra.appendSliceAssumeCapacity(parts.items);
@@ -286,7 +270,7 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeChoice(self: *DiaIR, node: Node) u32 {
+    fn reduceChoice(self: *DiaIR, node: Node) u32 {
         const range = node.data.range;
         const len = range.len;
 
@@ -299,8 +283,7 @@ pub const DiaIR = struct {
         // speaker is an invalid node.
         parts.appendAssumeCapacity(invalid_node);
 
-        // Skip the first increment since we have already added speaker.
-        self.analyzeDialogueParts(&parts, range.start + 1, len);
+        self.reduceDialogueParts(&parts, range.start, len);
 
         const extra_start: u32 = @intCast(self.extra.items.len);
         self.extra.appendSliceAssumeCapacity(parts.items);
@@ -310,9 +293,10 @@ pub const DiaIR = struct {
         });
     }
 
-    fn analyzeDialogueParts(self: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: u32) void {
+    // Dialogue parts scans the line and jump. NOT the speaker.
+    fn reduceDialogueParts(self: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: u32) void {
         const end = start + len;
-        for (start..end - 1) |idx| {
+        for (start + 1..end - 1) |idx| {
             const text_idx = self.ast.extra_data[idx];
             const text = self.evalText(text_idx);
             parts.appendAssumeCapacity(text);
@@ -330,7 +314,7 @@ pub const DiaIR = struct {
         parts.appendAssumeCapacity(jump);
     }
 
-    fn analyzeCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
+    fn reduceCondition(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
 
         return switch (node.tag) {
@@ -371,8 +355,8 @@ pub const DiaIR = struct {
 
     fn evalConjunction(self: *DiaIR, comptime tag: Inst.Tag, node: Node) u32 {
         const children = node.data.node_and_node;
-        const lhs = self.analyzeCondition(children.@"0");
-        const rhs = self.analyzeCondition(children.@"1");
+        const lhs = self.reduceCondition(children.@"0");
+        const rhs = self.reduceCondition(children.@"1");
 
         return self.appendInst(tag, .{
             .binary = .{ .lhs = lhs, .rhs = rhs }
@@ -394,9 +378,8 @@ pub const DiaIR = struct {
 
     fn evalText(self: *DiaIR, node_idx: NodeIndex) u32 {
         const node = self.ast.nodes.get(node_idx);
-        std.debug.print("Tag: {t}\n", .{node.tag});
         return switch (node.tag) {
-            .string => self.appendInst(.bool_and, .{ .token_pos = node.token_pos }),
+            .string => self.appendInst(.text, .{ .token_pos = node.token_pos }),
             else => self.evalExpr(node_idx),
         };
     }

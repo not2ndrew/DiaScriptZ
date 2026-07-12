@@ -109,6 +109,7 @@ pub const NodeData = union {
     range: Range,
 };
 
+// Start is the length of extra rather than the index of extra.
 pub const Range = struct {
     start: u32,
     len: u32,
