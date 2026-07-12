@@ -53,9 +53,27 @@ pub const Inst = struct {
         branch,
     };
 
+    // TODO: Maybe don't store token_pos
+    // every execution has to perform
+    // token_pos -> token -> source slice -> symbol lookup -> symbol
+    //
+    // Instead, store an index to where the symbol is stored.
+    // This requires symbol hashset from Semantic.
+    //
+    // That way, it is easier to extract
+    // symbolID -> symbol lookup -> symbol
+    //
+    // If we ever need the name of the symbol, then store token_pos.
+    //
+    // TODO: Don't do parseInt() and name look up in evalExpr().
+    // Both operations are done in Semantic.
+    //
+    // So, Symbol should store uint in its extra union data.
     pub const Data = union {
         uint: u8,
         token_pos: u32,
+        // symbolID: u32,
+        // labelID: u32,
         binary: struct {
             lhs: u32,
             rhs: u32,
