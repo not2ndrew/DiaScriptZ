@@ -19,8 +19,7 @@ const invalid_node = zig_node.invalid_node;
 const AstError = diag.Error;
 const ErrorTag = diag.Error.Tag;
 
-const SymbolTable = std.array_hash_map.String(Symbol);
-const UnresolvedLabels = std.ArrayList(TokenIndex);
+const SymbolTable = std.array_hash_map.String(void);
 
 pub const Symbol = struct {
     token_pos: TokenIndex,
@@ -50,9 +49,8 @@ pub const Semantic = struct {
     ast: *Ast,
     errors: *std.ArrayList(AstError),
 
-    tables: std.ArrayList(SymbolTable),
-    unresolved_labels: UnresolvedLabels,
-    // const_num: ConstHashMap
+    table: SymbolTable,
+    symbols: std.ArrayList(Symbol),
 
     pub fn init(
         allocator: Allocator, source: []const u8,
@@ -63,14 +61,14 @@ pub const Semantic = struct {
             .source = source,
             .ast = ast,
             .errors = errors,
-            .tables = std.ArrayList(SymbolTable).empty,
-            .unresolved_labels = UnresolvedLabels.empty,
+            .table = .empty,
+            .symbols = .empty,
         };
     }
 
     pub fn deinit(self: *Semantic) void {
-        self.tables.deinit(self.allocator);
-        self.unresolved_labels.deinit(self.allocator);
+        self.table.deinit(self.allocator);
+        self.symbols.deinit(self.allocator);
     }
 
     // Semantic analysis has different types of errors.
@@ -82,109 +80,9 @@ pub const Semantic = struct {
         });
     }
 
-    fn identName(self: *Semantic, token_pos: TokenIndex) []const u8 {
+    fn tokenPosToStr(self: *Semantic, token_pos: TokenIndex) []const u8 {
         const token = self.ast.tokens.get(token_pos);
         return self.source[token.start..token.end];
-    }
-
-    fn addScope(self: *Semantic) Error!void {
-        try self.tables.append(self.allocator, .empty);
-    }
-
-    fn endScope(self: *Semantic) Error!void {
-        if (self.tables.items.len == 0) return Error.NoTableCreated;
-
-        const table = try self.currentScope();
-
-        var i: usize = 0;
-        while (i < self.unresolved_labels.items.len) {
-            const token_pos = self.unresolved_labels.items[i];
-            const name = self.identName(token_pos);
-
-            if (table.contains(name)) {
-                _ = self.unresolved_labels.orderedRemove(i);
-            } else {
-                try self.report(token_pos, .undeclared_label);
-                i += 1;
-            }
-        }
-
-        table.deinit(self.allocator);
-        _ = self.tables.pop();
-    }
-
-    // Scan backwards (inner -> outer)
-    fn lookUp(self: *Semantic, name: []const u8) ?*Symbol {
-        var i: usize = self.tables.items.len;
-
-        while (i > 0) {
-            i -= 1;
-            const table = &self.tables.items[i];
-            if (table.getPtr(name)) |symbol| {
-                return symbol;
-            }
-        }
-
-        return null;
-    }
-
-    fn currentScope(self: *Semantic) Error!*SymbolTable {
-        if (self.tables.items.len == 0) return Error.NoTableCreated;
-
-        return &self.tables.items[self.tables.items.len - 1];
-    }
-
-    fn analyzeIdent(self: *Semantic, tag: Tag, token_pos: TokenIndex) !void {
-        const name = self.identName(token_pos);
-
-        if (self.lookUp(name)) |symbol| {
-            const kind = symbol.kind;
-            switch (tag) {
-                .var_ident => {
-                    if (kind != .keyword_var and kind != .keyword_const) {
-                        try self.report(token_pos, .ident_mismatch);
-                    }
-                },
-                .label_ident => {
-                    if (kind != .label) {
-                        try self.report(token_pos, .ident_mismatch);
-                    }
-                },
-                else => {},
-            }
-        } else {
-            switch (tag) {
-                .number => {
-                    _ = std.fmt.parseInt(u8, name, 10) catch |err| {
-                        if (err == std.fmt.ParseIntError.Overflow)
-                            try self.report(token_pos, .int_overflow);
-                    };
-                },
-                .var_ident => try self.report(token_pos, .undeclared_var),
-                .label_ident => {
-                    try self.unresolved_labels.append(self.allocator, token_pos);
-                },
-                else => {},
-            }
-        }
-    }
-
-    fn analyzeValue(self: *Semantic, node_index: NodeIndex) Error!void {
-        const node = self.ast.nodes.get(node_index);
-
-        switch (node.tag) {
-            .plus, .minus, .mult, .div => {
-                const binary = node.data.node_and_node;
-                try self.analyzeValue(binary.@"0");
-                try self.analyzeValue(binary.@"1");
-            },
-            .plus_equal, .minus_equal,
-            .mult_equal, .div_equal => {
-                const assign = node.data.node_and_node;
-                try self.analyzeValue(assign.@"1");
-            },
-            else => try self.analyzeIdent(node.tag, node.token_pos),
-        }
     }
 
     // The last node of a post-traversal list
@@ -201,7 +99,6 @@ pub const Semantic = struct {
             .ast = ast,
             .errors = errors,
             .tables = std.ArrayList(SymbolTable).empty,
-            .unresolved_labels = UnresolvedLabels.empty,
         };
         defer semantic.deinit();
 
@@ -220,177 +117,40 @@ pub const Semantic = struct {
         try self.endScope();
     }
 
-    fn analyzeStmt(self: *Semantic, node_index: NodeIndex) Error!void {
-        const node = self.ast.nodes.get(node_index);
-        try switch (node.tag) {
-            // Collect declarations
-            .declar_stmt => self.analyzeDeclar(node),
-            .label => self.analyzeLabel(node),
-
-            // Analyze stmts
-            .assign, .plus_equal, .minus_equal,
-            .mult_equal, .div_equal => self.analyzeAssign(node),
-            .equals, .not_equal, .less, .greater,
-            .less_or_equal, .greater_or_equal => self.analyzeCompare(node),
-            .if_stmt => self.analyzeIfStmt(node),
-            .dialogue, .choice => self.analyzeDialogue(node),
+    fn analyzeStmt(self: *Semantic, node_idx: NodeIndex) void {
+        const node = self.ast.nodes.get(node_idx);
+        switch (node.tag) {
+            .declar_stmt => try self.analyzeDecl(node),
             else => {},
-        };
+        }
     }
 
-    // TODO: The following should fail.
-    // const i = i
-    fn analyzeDeclar(self: *Semantic, node: Node) Error!void {
+    fn analyzeDecl(self: *Semantic, node: Node) !void {
         const decl = node.data.node_and_node;
-        const ident_index = decl.@"0";
-        const value_index = decl.@"1";
+        const ident_node = self.ast.nodes.get(decl.@"0");
+        const value_node = self.ast.nodes.get(decl.@"1");
 
-        const ident_node = self.ast.nodes.get(ident_index);
-        const id_token_pos = ident_node.token_pos;
-        const name = self.identName(id_token_pos);
+        const name = self.tokenPosToStr(ident_node.token_pos);
 
-        const mut_type = self.ast.tokens.get(node.token_pos).tag;
-        const mutability: Symbol.Kind = if (mut_type == .keyword_const)
-            .keyword_const else .keyword_var;
-
-        const table = try self.currentScope();
-        const entry = try table.getOrPut(self.allocator, name);
-
-        if (entry.found_existing) {
-            return switch (entry.value_ptr.kind) {
-                .keyword_var, .keyword_const => {
-                    try self.report(id_token_pos, .duplicate_var);
-                },
-                else => try self.report(id_token_pos, .ident_mismatch),
-            };
+        const entity = try self.table.getOrPut(self.allocator, name);
+        if (entity.found_existing) {
+            try self.report(ident_node.token_pos, .duplicate_var);
         }
-
-        entry.value_ptr.* = .{
-            .token_pos = id_token_pos,
-            .kind = mutability,
-        };
-
-        try self.analyzeValue(value_index);
     }
 
-    fn analyzeLabel(self: *Semantic, node: Node) Error!void {
+    fn checkExpr(self: *Semantic, node: Node) !void {
         const token_pos = node.token_pos;
-        const name = self.identName(token_pos);
-        const table = try self.currentScope();
-        const entry = try table.getOrPut(self.allocator, name);
-
-        if (entry.found_existing) {
-            return switch (entry.value_ptr.kind) {
-                .label => try self.report(token_pos, .duplicate_label),
-                else => try self.report(token_pos, .ident_mismatch),
-            };
-        }
-
-        const range = node.data.range;
-        try self.analyzeBlock(range.start, range.len);
-
-        entry.value_ptr.* = .{
-            .token_pos = token_pos,
-            .kind = .label,
-        };
-    }
-
-    fn analyzeName(self: *Semantic, node: Node) Error!void {
-        const token_pos = node.token_pos;
-        const name = self.identName(token_pos);
-        const table = try self.currentScope();
-        const entry = try table.getOrPut(self.allocator, name);
-
-        if (entry.found_existing) {
-            return switch (entry.value_ptr.kind) {
-                .name => {},
-                else => try self.report(token_pos, .ident_mismatch),
-            };
-        }
-
-        entry.value_ptr.* = .{
-            .token_pos = token_pos,
-            .kind = .name,
-        };
-    }
-
-    fn analyzeAssign(self: *Semantic, node: Node) Error!void {
-        const assign = node.data.node_and_node;
-        const ident_index = assign.@"0";
-        const value_index = assign.@"1";
-
-        const ident_node = self.ast.nodes.get(ident_index);
-        const id_token_pos = ident_node.token_pos;
-
-        try self.analyzeValue(value_index);
-
-        const ident_name = self.identName(id_token_pos);
-
-        if (self.lookUp(ident_name)) |symbol| {
-            return switch (symbol.kind) {
-                .label, .name => try self.report(id_token_pos, .ident_mismatch),
-                .keyword_const => try self.report(id_token_pos, .modified_const),
-                else => {},
-            };
-        } else {
-            try self.report(id_token_pos, .undeclared_var);
-        }
-    }
-
-    // In the parser, if_stmt is stored as follows:
-    // [ cond, then_block, else_block ]
-    fn analyzeIfStmt(self: *Semantic, node: Node) Error!void {
-        const range = node.data.range;
-        const start = range.start;
-        const end = start + range.len;
-
-        try self.addScope();
-
-        for (start..end) |idx| {
-            const node_index = self.ast.extra_data[idx];
-            if (node_index != invalid_node) {
-                try self.analyzeStmt(node_index);
-            }
-        }
-
-        try self.endScope();
-    }
-
-    fn analyzeCompare(self: *Semantic, node: Node) Error!void {
-        const binary = node.data.node_and_node;
-        const left_node = self.ast.nodes.get(binary.@"0");
-        const right_node = self.ast.nodes.get(binary.@"1");
-
-        try self.analyzeIdent(left_node.tag, left_node.token_pos);
-        try self.analyzeIdent(right_node.tag, right_node.token_pos);
-    }
-
-    // From the dialogue format in Parser, the first and last element
-    // is always the speaker and goto index respectively.
-    // [ speaker, dia_part_1, dia_part_2, ..., goto ]
-    fn analyzeDialogue(self: *Semantic, node: Node) Error!void {
-        const dialogue = node.data.range;
-        const start = dialogue.start;
-        const end = start + dialogue.len;
-        const new_start = start + 1;
-        const goto = end - 1;
-
-        const speaker = self.ast.extra_data[start];
-        if (speaker != invalid_node) {
-            const ident_node = self.ast.nodes.get(speaker);
-            try self.analyzeName(ident_node);
-        }
-
-        for (new_start..goto) |i| {
-            const dia_pos = self.ast.extra_data[i];
-            const dia_node = self.ast.nodes.get(dia_pos);
-            try self.analyzeIdent(dia_node.tag, dia_node.token_pos);
-        }
-
-        const goto_pos = self.ast.extra_data[goto];
-        if (goto_pos != invalid_node) {
-            const ident_node = self.ast.nodes.get(goto_pos);
-            try self.analyzeIdent(ident_node.tag, ident_node.token_pos);
+        switch (node.tag) {
+            .number => {
+                const str = self.tokenPosToStr(token_pos);
+                // Parse str to u8 in base 10 format
+                const num = std.fmt.parseInt(u8, str, 10) catch |err| {
+                    if (err == std.fmt.ParseIntError.Overflow) {
+                        try self.report(token_pos, .int_overflow);
+                    }
+                };
+            },
+            else => try self.report(token_pos, .unexpected_token),
         }
     }
 };
