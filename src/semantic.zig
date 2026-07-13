@@ -20,12 +20,14 @@ const AstError = diag.Error;
 const ErrorTag = diag.Error.Tag;
 
 pub const SymbolID = u32;
-const SymbolTable = std.array_hash_map.String(u32);
+const SymbolTable = std.array_hash_map.String(SymbolID);
 
-pub const Symbol = struct {
-    id: SymbolID,
+// TODO: Debating on whether I should include
+// token_pos in Local struct.
+pub const Local = struct {
+    scope: u32,
     kind: Kind,
-    data: Data,
+    state: State,
 
     pub const Kind = enum {
         keyword_const,
@@ -34,9 +36,9 @@ pub const Symbol = struct {
         name,
     };
 
-    pub const Data = union {
-        none: void,
-        num: u8,
+    pub const State = enum {
+        declaring,
+        defined,
     };
 };
 
@@ -44,7 +46,7 @@ pub const Symbol = struct {
 // Program variables must be declared first before using it.
 // Label variables must contain a label block in the same scope.
 //
-// Variable identifiers are never allowed to shadow identifiers from an outer scope
+// Global variable identifiers are never allowed to shadow identifiers from an outer scope
 // Ex:
 // const num = 10
 //
@@ -59,15 +61,14 @@ pub const Semantic = struct {
     errors: *std.ArrayList(AstError),
 
     table: SymbolTable,
-    symbols: std.ArrayList(Symbol),
     // https://www.reddit.com/r/Compilers/comments/rzbfs0/what_is_the_purpose_of_symbol_tables_what_are/
     // Read Nuoji's comment under "onlyonequickquest" post
-    local_vars: std.ArrayList(u32),
+    locals: std.ArrayList(Local),
+    scope_depth: u32,
 
     pub fn deinit(self: *Semantic) void {
         self.table.deinit(self.allocator);
-        self.symbols.deinit(self.allocator);
-        self.local_vars.deinit(self.allocator);
+        self.locals.deinit(self.allocator);
     }
 
     // Semantic analysis has different types of errors.
@@ -79,18 +80,14 @@ pub const Semantic = struct {
         });
     }
 
-    fn getSymbolID(self: *Semantic) u32 {
-        // Keep track of the variable's index NOT the length
-        // TODO: Maybe throw an error?
-        if (self.table.count() == 0) return 0;
-
-        const idx: u32 = @intCast(self.table.count() - 1);
-        return idx;
-    }
-
-    fn tokenPosToStr(self: *Semantic, token_pos: TokenIndex) []const u8 {
+    fn tokenSlice(self: *Semantic, token_pos: TokenIndex) []const u8 {
         const token = self.ast.tokens.get(token_pos);
         return self.source[token.start..token.end];
+    }
+
+    fn addLocal(self: *Semantic, local: Local) !void {
+        try self.locals.append(self.allocator, local);
+        self.scope_depth = local.scope;
     }
 
     // The last node of a post-traversal list
@@ -107,90 +104,82 @@ pub const Semantic = struct {
             .ast = ast,
             .errors = errors,
             .table = .empty,
-            .symbols = .empty,
-            .local_vars = .empty,
+            .locals = .empty,
+            .scope_depth = 0,
         };
         defer semantic.deinit();
 
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        try semantic.analyzeBlock(range.start, range.len);
+        try semantic.visitBlock(range.start, range.len);
     }
 
-    fn analyzeBlock(self: *Semantic, start: u32, len: u32) !void {
+    fn visitBlock(self: *Semantic, start: u32, len: u32) !void {
         const end = start + len;
         for (start..end) |idx| {
             const node_index = self.ast.extra_data[idx];
-            try self.analyzeStmt(node_index);
+            try self.visitStmt(node_index);
         }
     }
 
-    fn analyzeStmt(self: *Semantic, node_idx: NodeIndex) !void {
+    fn visitStmt(self: *Semantic, node_idx: NodeIndex) !void {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
-            .declar_stmt => self.analyzeDecl(node),
+            .declar_stmt => self.visitVarDecl(node),
             else => self.report(node.token_pos, .unexpected_token),
         };
     }
 
-    // TODO: Fix self-referencing declaration error
-    // const i = i
-    fn analyzeDecl(self: *Semantic, node: Node) !void {
+    fn visitVarDecl(self: *Semantic, node: Node) !void {
         const decl = node.data.node_and_node;
         const ident_node = self.ast.nodes.get(decl.@"0");
-        const value_node = self.ast.nodes.get(decl.@"1");
         const pos = ident_node.token_pos;
 
         const mut_type = self.ast.tokens.get(node.token_pos).tag;
-        var mutability: Symbol.Kind = .keyword_var;
+        var mutability: Local.Kind = .keyword_var;
 
-        if (mut_type == .keyword_const) {
+        if (mut_type == .keyword_const)
             mutability = .keyword_const;
-        }
 
-        const name = self.tokenPosToStr(pos);
+        const name = self.tokenSlice(pos);
+        const idx = self.locals.items.len;
+
+        try self.addLocal(.{
+            .scope = self.scope_depth,
+            .kind = mutability,
+            .state = .declaring,
+        });
 
         const entity = try self.table.getOrPut(self.allocator, name);
         if (entity.found_existing) {
             return switch (node.tag) {
-                .name_ident, .label_ident => try self.report(pos, .ident_mismatch),
+                .name_ident, .label_ident => self.report(pos, .ident_mismatch),
                 .var_ident => self.report(pos, .duplicate_var),
                 else => self.report(pos, .unexpected_token),
             };
         }
 
-        entity.value_ptr.* = self.getSymbolID();
+        entity.value_ptr.* = @intCast(idx);
 
-        try self.checkExpr(value_node, mutability);
+        try self.visitExpr(decl.@"1");
+
+        self.locals.items[idx].state = .defined;
     }
 
-    // TODO: Depending on my code, take the node_idx instead of node directly.
-    fn checkExpr(self: *Semantic, node: Node, kind: Symbol.Kind) !void {
+    fn visitExpr(self: *Semantic, node_idx: NodeIndex) !void {
+        const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
         switch (node.tag) {
-            .number => {
-                const str = self.tokenPosToStr(token_pos);
-                // Parse str to u8 in base 10 format
-                const num = std.fmt.parseInt(u8, str, 10) catch |err| {
-                    if (err == error.Overflow) {
-                        try self.report(token_pos, .int_overflow);
-                    }
-
-                    return err;
-                };
-
-                try self.symbols.append(self.allocator, .{
-                    .id = self.getSymbolID(),
-                    .kind = kind,
-                    .data = .{ .num = num },
-                });
-            },
+            .number => {},
             .var_ident => {
-                try self.symbols.append(self.allocator, .{
-                    .id = self.getSymbolID(),
-                    .kind = kind,
-                    .data = .{ .none = {} },
-                });
+                const name = self.tokenSlice(token_pos);
+                const idx = self.table.get(name) orelse
+                    return self.report(token_pos, .undeclared_var);
+
+                const sym = &self.locals.items[idx];
+
+                if (sym.state == .declaring)
+                    return self.report(token_pos, .undeclared_var);
             },
             else => try self.report(token_pos, .unexpected_token),
         }
