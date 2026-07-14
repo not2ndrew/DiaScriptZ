@@ -8,8 +8,6 @@ const Allocator = std.mem.Allocator;
 const Node = zig_node.Node;
 const Tag = zig_node.NodeTag;
 const NodeIndex = zig_node.NodeIndex;
-const Data = zig_node.NodeData;
-const Range = zig_node.Range;
 const invalid_node = zig_node.invalid_node;
 
 const Token = tok.Token;
@@ -118,7 +116,7 @@ pub const Parser = struct {
         }
     }
 
-    fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: Data) !NodeIndex {
+    fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
         try self.nodes.append(self.allocator, .{
             .tag = tag,
             .token_pos = token_pos,
@@ -445,7 +443,7 @@ pub const Parser = struct {
         return invalid_node;
     }
 
-    fn commitDialogueData(self: *Parser, dia_parts: []u32) Error!Range {
+    fn commitDialogueData(self: *Parser, dia_parts: []u32) Error!Node.Range {
         const start: u32 = @intCast(self.extra_data.items.len);
         const len: u32 = @intCast(dia_parts.len);
         try self.extra_data.appendSlice(self.allocator, dia_parts);
@@ -473,7 +471,7 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
-    fn collectStmtUntil(self: *Parser, end_tag: TokenTag) !Range {
+    fn collectStmtUntil(self: *Parser, end_tag: TokenTag) !Node.Range {
         var stmts: std.ArrayList(u32) = .empty;
         defer stmts.deinit(self.allocator);
 

@@ -100,18 +100,18 @@ pub fn nodeTagFromScene(token_tag: Tag) ?NodeTag {
 pub const Node = struct {
     tag: NodeTag,
     token_pos: TokenIndex,
-    data: NodeData,
-};
+    data: Data,
 
-pub const NodeData = union {
-    none: void,
-    node_and_node: struct { NodeIndex, NodeIndex },
-    range: Range,
-};
+    pub const Data = union {
+        none: void,
+        node_and_node: struct { NodeIndex, NodeIndex },
+        range: Range,
+    };
 
-// Start is the starting position of extra
-// rather than the index of extra.
-pub const Range = struct {
-    start: u32,
-    len: u32,
+    // Start is the starting position of extra
+    // rather than the index of extra.
+    pub const Range = struct {
+        start: u32,
+        len: u32,
+    };
 };

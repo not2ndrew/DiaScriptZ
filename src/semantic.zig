@@ -22,6 +22,8 @@ const ErrorTag = diag.Error.Tag;
 pub const SymbolID = u32;
 const SymbolTable = std.array_hash_map.String(SymbolID);
 
+const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
+
 // TODO: Debating on whether I should include
 // token_pos in Local struct.
 pub const Local = struct {
@@ -80,6 +82,14 @@ pub const Semantic = struct {
         });
     }
 
+    fn addScope(self: *Semantic) void {
+        self.scope_depth += 1;
+    }
+
+    fn endScope(self: *Semantic) void {
+        self.scope_depth -= 1;
+    }
+
     fn tokenSlice(self: *Semantic, token_pos: TokenIndex) []const u8 {
         const token = self.ast.tokens.get(token_pos);
         return self.source[token.start..token.end];
@@ -111,15 +121,24 @@ pub const Semantic = struct {
 
         const root_node = ast.nodes.get(ast.nodes.len - 1);
         const range = root_node.data.range;
-        try semantic.visitBlock(range.start, range.len);
+        const start = range.start;
+        const end = range.start + range.len;
+
+        for (start..end) |idx| {
+            const node_idx = ast.extra_data[idx];
+            try semantic.visitStmt(node_idx);
+        }
     }
 
     fn visitBlock(self: *Semantic, start: u32, len: u32) !void {
         const end = start + len;
+
+        self.addScope();
         for (start..end) |idx| {
             const node_index = self.ast.extra_data[idx];
             try self.visitStmt(node_index);
         }
+        self.endScope();
     }
 
     fn visitStmt(self: *Semantic, node_idx: NodeIndex) !void {
@@ -128,6 +147,7 @@ pub const Semantic = struct {
             .declar_stmt => self.visitVarDecl(node),
             .plus_equal, .minus_equal, .mult_equal, .div_equal
                 => self.visitAssign(node),
+            .if_stmt => self.visitIfStmt(node),
             else => self.report(node.token_pos, .unexpected_token),
         };
     }
@@ -190,6 +210,54 @@ pub const Semantic = struct {
         try self.visitExpr(assign.@"1");
     }
 
+    // if_stmt extra_data layout:
+    // [ condition, then_block, else_block ]
+    fn visitIfStmt(self: *Semantic, node: Node) !void {
+        const range = node.data.range;
+        const start = range.start;
+
+        const condition = self.ast.extra_data[start];
+        try self.visitCondition(condition);
+
+        const then_idx = self.ast.extra_data[start + 1];
+        const then_range = self.ast.nodes.get(then_idx).data.range;
+        try self.visitBlock(then_range.start, then_range.len);
+
+        const else_idx = self.ast.extra_data[start + 2];
+        if (else_idx != invalid_node) {
+            const else_block = self.ast.nodes.get(else_idx);
+            const else_range = else_block.data.range;
+            try self.visitBlock(else_range.start, else_range.len);
+        }
+    }
+
+    fn visitCondition(self: *Semantic, node_idx: NodeIndex) !void {
+        const node = self.ast.nodes.get(node_idx);
+        return switch (node.tag) {
+            .bool_and, .bool_or => self.visitBinary(node.data, visitCondition),
+            else => self.visitCompare(node_idx),
+        };
+    }
+
+    fn visitCompare(self: *Semantic, node_idx: NodeIndex) !void {
+        const node = self.ast.nodes.get(node_idx);
+        return switch (node.tag) {
+            .equal_equal, .not_equal, .less,
+            .less_or_equal, .greater,
+            .greater_or_equal => self.visitBinary(node.data, visitExpr),
+            else => self.report(node.token_pos, .unexpected_token),
+        };
+    }
+
+    fn visitBinary(self: *Semantic, data: Node.Data, comptime binOp: binaryOp) !void {
+        const binary = data.node_and_node;
+        const lhs = binary.@"0";
+        const rhs = binary.@"1";
+
+        try binOp(self, lhs);
+        try binOp(self, rhs);
+    }
+
     fn visitExpr(self: *Semantic, node_idx: NodeIndex) !void {
         const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
@@ -205,14 +273,11 @@ pub const Semantic = struct {
                 if (sym.state == .declaring)
                     return self.report(token_pos, .undeclared_var);
             },
-            .plus, .minus, .mult, .div => {
-                const binary = node.data.node_and_node;
-                const lhs = binary.@"0";
-                const rhs = binary.@"1";
-
-                try self.visitExpr(lhs);
-                try self.visitExpr(rhs);
-            },
+            // TODO: Handle mathematical errors,
+            // 1) When variable goes under 0
+            // 2) When variable goes over 256
+            // 3) Division by 0
+            .plus, .minus, .mult, .div => try self.visitBinary(node.data, visitExpr),
             else => try self.report(token_pos, .unexpected_token),
         }
     }

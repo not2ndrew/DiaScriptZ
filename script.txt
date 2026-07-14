@@ -1,2 +1,6 @@
-const i = 0
-i += 1
+var x = 2
+const y = 10
+if (x > 1 or y == 1) {
+    const z = 10
+	z += 1
+}
