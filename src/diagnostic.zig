@@ -184,4 +184,3 @@ pub const DiagRenderer = struct {
         }
     }
 };
-

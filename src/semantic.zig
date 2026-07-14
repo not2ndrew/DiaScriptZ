@@ -126,6 +126,8 @@ pub const Semantic = struct {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
             .declar_stmt => self.visitVarDecl(node),
+            .plus_equal, .minus_equal, .mult_equal, .div_equal
+                => self.visitAssign(node),
             else => self.report(node.token_pos, .unexpected_token),
         };
     }
@@ -166,6 +168,28 @@ pub const Semantic = struct {
         self.locals.items[idx].state = .defined;
     }
 
+    fn visitAssign(self: *Semantic, node: Node) !void {
+        const assign = node.data.node_and_node;
+        const ident_node = self.ast.nodes.get(assign.@"0");
+        const pos = ident_node.token_pos;
+        const ident_name = self.tokenSlice(pos);
+
+        const idx = self.table.get(ident_name) orelse
+            return self.report(pos, .undeclared_var);
+
+        switch (ident_node.tag) {
+            .var_ident => {
+                const local = self.locals.items[idx];
+                if (local.kind == .keyword_const)
+                    return self.report(pos, .modified_const);
+            },
+            .name_ident, .label_ident => return self.report(pos, .ident_mismatch),
+            else => return self.report(pos, .unexpected_token),
+        }
+
+        try self.visitExpr(assign.@"1");
+    }
+
     fn visitExpr(self: *Semantic, node_idx: NodeIndex) !void {
         const node = self.ast.nodes.get(node_idx);
         const token_pos = node.token_pos;
@@ -180,6 +204,14 @@ pub const Semantic = struct {
 
                 if (sym.state == .declaring)
                     return self.report(token_pos, .undeclared_var);
+            },
+            .plus, .minus, .mult, .div => {
+                const binary = node.data.node_and_node;
+                const lhs = binary.@"0";
+                const rhs = binary.@"1";
+
+                try self.visitExpr(lhs);
+                try self.visitExpr(rhs);
             },
             else => try self.report(token_pos, .unexpected_token),
         }
