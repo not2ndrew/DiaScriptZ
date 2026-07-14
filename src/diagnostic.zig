@@ -96,6 +96,21 @@ pub const DiagRenderer = struct {
     source_file: SourceFile,
     tokens: Tokens.Slice,
 
+    // TODO: The caret is incorrect
+    //
+    // Code:
+    // ---------
+    // var x = 1
+    // if (x > 1) {
+    //    var x = 2
+    // }
+    // ---------
+    // Diagnostics:
+    // script.txt:2:20 error: Variable 'x' already exist
+    //      |
+    //    2 |  var x = 2
+    //      |                    ^
+    //
     pub fn printErrors(
         self: *DiagRenderer,
         errors: []const Error,

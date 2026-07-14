@@ -24,9 +24,8 @@ const SymbolTable = std.array_hash_map.String(SymbolID);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
-// TODO: Debating on whether I should include
-// token_pos in Local struct.
 pub const Local = struct {
+    token_pos: TokenIndex,
     scope: u32,
     kind: Kind,
     state: State,
@@ -87,6 +86,16 @@ pub const Semantic = struct {
     }
 
     fn endScope(self: *Semantic) void {
+        while (self.locals.items.len > 0) {
+            const local = self.locals.items[self.locals.items.len - 1];
+
+            if (local.scope != self.scope_depth)
+                break;
+
+            const name = self.tokenSlice(local.token_pos);
+            _ = self.table.swapRemove(name);
+            _ = self.locals.pop();
+        }
         self.scope_depth -= 1;
     }
 
@@ -167,6 +176,7 @@ pub const Semantic = struct {
         const idx = self.locals.items.len;
 
         try self.addLocal(.{
+            .token_pos = pos,
             .scope = self.scope_depth,
             .kind = mutability,
             .state = .declaring,
@@ -174,7 +184,7 @@ pub const Semantic = struct {
 
         const entity = try self.table.getOrPut(self.allocator, name);
         if (entity.found_existing) {
-            return switch (node.tag) {
+            return switch (ident_node.tag) {
                 .name_ident, .label_ident => self.report(pos, .ident_mismatch),
                 .var_ident => self.report(pos, .duplicate_var),
                 else => self.report(pos, .unexpected_token),
@@ -213,8 +223,7 @@ pub const Semantic = struct {
     // if_stmt extra_data layout:
     // [ condition, then_block, else_block ]
     fn visitIfStmt(self: *Semantic, node: Node) !void {
-        const range = node.data.range;
-        const start = range.start;
+        const start = node.data.range.start;
 
         const condition = self.ast.extra_data[start];
         try self.visitCondition(condition);
@@ -273,12 +282,15 @@ pub const Semantic = struct {
                 if (sym.state == .declaring)
                     return self.report(token_pos, .undeclared_var);
             },
-            // TODO: Handle mathematical errors,
-            // 1) When variable goes under 0
-            // 2) When variable goes over 256
-            // 3) Division by 0
+            // TODO: Check for math errors
+            // 1) Integer overflow (0 and 256)
+            // 2) Division by 0
             .plus, .minus, .mult, .div => try self.visitBinary(node.data, visitExpr),
             else => try self.report(token_pos, .unexpected_token),
         }
     }
+
+    // ───────────────────────────────
+    //           DIALOGUE
+    // ───────────────────────────────
 };
