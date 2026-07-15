@@ -26,7 +26,6 @@ const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
 pub const Local = struct {
     token_pos: TokenIndex,
-    scope: u32,
     kind: Kind,
     state: State,
 
@@ -61,14 +60,15 @@ pub const Semantic = struct {
     ast: *Ast,
     errors: *std.ArrayList(AstError),
 
-    table: SymbolTable,
     // https://www.reddit.com/r/Compilers/comments/rzbfs0/what_is_the_purpose_of_symbol_tables_what_are/
     // Read Nuoji's comment under "onlyonequickquest" post
+    table: SymbolTable,
+    scope_count: std.ArrayList(u32),
     locals: std.ArrayList(Local),
-    scope_depth: u32,
 
     pub fn deinit(self: *Semantic) void {
         self.table.deinit(self.allocator);
+        self.scope_count.deinit(self.allocator);
         self.locals.deinit(self.allocator);
     }
 
@@ -82,21 +82,20 @@ pub const Semantic = struct {
     }
 
     fn addScope(self: *Semantic) void {
-        self.scope_depth += 1;
+        // TODO: Return semantic error for scopes.
+        if (self.scope_count.items.len >= 4) {}
+        self.scope_count.appendAssumeCapacity(0);
     }
 
     fn endScope(self: *Semantic) void {
-        while (self.locals.items.len > 0) {
-            const local = self.locals.items[self.locals.items.len - 1];
+        const count = self.scope_count.pop() orelse return;
 
-            if (local.scope != self.scope_depth)
-                break;
-
+        for (0..count) |_| {
+            const local = self.locals.pop().?;
             const name = self.tokenSlice(local.token_pos);
+
             _ = self.table.swapRemove(name);
-            _ = self.locals.pop();
         }
-        self.scope_depth -= 1;
     }
 
     fn tokenSlice(self: *Semantic, token_pos: TokenIndex) []const u8 {
@@ -106,7 +105,6 @@ pub const Semantic = struct {
 
     fn addLocal(self: *Semantic, local: Local) !void {
         try self.locals.append(self.allocator, local);
-        self.scope_depth = local.scope;
     }
 
     // The last node of a post-traversal list
@@ -123,8 +121,8 @@ pub const Semantic = struct {
             .ast = ast,
             .errors = errors,
             .table = .empty,
+            .scope_count = .empty,
             .locals = .empty,
-            .scope_depth = 0,
         };
         defer semantic.deinit();
 
@@ -132,6 +130,9 @@ pub const Semantic = struct {
         const range = root_node.data.range;
         const start = range.start;
         const end = range.start + range.len;
+
+        // Put a limit to how many scopes can be generated
+        try semantic.scope_count.ensureTotalCapacityPrecise(allocator, 4);
 
         for (start..end) |idx| {
             const node_idx = ast.extra_data[idx];
@@ -177,7 +178,6 @@ pub const Semantic = struct {
 
         try self.addLocal(.{
             .token_pos = pos,
-            .scope = self.scope_depth,
             .kind = mutability,
             .state = .declaring,
         });
@@ -293,4 +293,33 @@ pub const Semantic = struct {
     // ───────────────────────────────
     //           DIALOGUE
     // ───────────────────────────────
+
+    // Dialogue lines and dialogue branches contains
+    // the same format:
+    // [ speaker, dia_part_0, dia_part_1, ..., goto ]
+    // fn visitDialogue(self: *Semantic, node: Node) !void {
+    //     const range = node.data.range;
+    //     const start = range.start;
+    //     const speaker = self.ast.nodes.get(start);
+    //     const name = self.tokenSlice(speaker.token_pos);
+    //
+    //     const entity = try self.table.getOrPut(self.allocator, name);
+    //
+    //     if (entity.found_existing) {
+    //         switch (node.tag) {
+    //             .name_ident => {},
+    //             .var_ident, .label_ident
+    //             => return self.report(speaker.token_pos, .ident_mismatch),
+    //             else => return self.report(speaker.token_pos, .unexpected_token),
+    //         }
+    //     } else {
+    //         entity.value_ptr.* = @intCast(self.locals.items.len);
+    //     }
+    //
+    //     try self.visitDialogueParts(start, range.len);
+    // }
+    //
+    // fn visitDialogueParts(self: *Semantic, start: u32, len: u32) !void {
+    //
+    // }
 };
