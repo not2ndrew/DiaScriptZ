@@ -30,7 +30,7 @@ pub const Error = struct {
         duplicate_var,
         duplicate_label,
         undeclared_var,
-        undeclared_label,
+        unknown_jump,
         modified_const,
     };
 
@@ -190,8 +190,8 @@ pub const DiagRenderer = struct {
             .duplicate_label => {
                 return w.print("Label '{s}' already exist", .{str});
             },
-            .undeclared_label => {
-                return w.print("Label '{s}' not declared", .{str});
+            .unknown_jump => {
+                return w.print("Jump target '{s}' does not exist.", .{str});
             },
             .modified_const => {
                 return w.print("Cannot modify constant '{s}'", .{str});

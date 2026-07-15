@@ -83,6 +83,7 @@ pub const Semantic = struct {
 
     fn addScope(self: *Semantic) void {
         // TODO: Return semantic error for scopes.
+        // Solution: Place token_pos into extra union in Error struct.
         if (self.scope_count.items.len >= 4) {}
         self.scope_count.appendAssumeCapacity(0);
     }
@@ -301,15 +302,11 @@ pub const Semantic = struct {
     fn visitDialogue(self: *Semantic, node: Node) !void {
         const range = node.data.range;
         const start = range.start;
-        const speaker = self.ast.nodes.get(start);
+        const speaker_idx = self.ast.extra_data[start];
+        const speaker = self.ast.nodes.get(speaker_idx);
         const name = self.tokenSlice(speaker.token_pos);
 
         const entity = try self.table.getOrPut(self.allocator, name);
-        // TODO: The following errors are incorrect:
-        // _ : Hello -> World
-        // _ : Hello World 2 -> World_2
-
-        std.debug.print("Speaker: {t}\n", .{speaker.tag});
 
         // TODO: Append name_ident into locals arraylist.
         if (entity.found_existing) {
@@ -344,10 +341,8 @@ pub const Semantic = struct {
             const token_pos = jump_node.token_pos;
             const jump_name = self.tokenSlice(token_pos);
 
-            // TODO: report an error that states unknown jump target.
-            // Use a label.
             if (!self.table.contains(jump_name))
-                return self.report(token_pos, .undeclared_label);
+                return self.report(token_pos, .unknown_jump);
         }
     }
 
