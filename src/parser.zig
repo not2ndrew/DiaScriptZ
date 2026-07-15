@@ -248,7 +248,6 @@ pub const Parser = struct {
 
         _ = try self.expect(.open_paren);
         const condition = try self.parseCondition();
-        // const condition = try self.parseCompareExpr();
         _ = try self.expect(.close_paren);
 
         const then_block = try self.parseStmtBlock(.open_brace, .close_brace);
@@ -491,7 +490,7 @@ pub const Parser = struct {
             try stmts.append(self.allocator, stmt_index);
         }
 
-        _ = try self.expect(end_tag);
+        _ = try self.expectStmtEnd();
 
         const start: u32 = @intCast(self.extra_data.items.len);
         const len: u32 = @intCast(stmts.items.len);

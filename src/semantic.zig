@@ -46,14 +46,7 @@ pub const Local = struct {
 // Program variables must be declared first before using it.
 // Label variables must contain a label block in the same scope.
 //
-// Global variable identifiers are never allowed to shadow identifiers from an outer scope
-// Ex:
-// const num = 10
-//
-// ~ some_label
-//    // Compiler Error: Duplicate variable.
-//    const num = 1
-// end
+// Variable identifiers are never allowed to shadow identifiers from an outer scope
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
@@ -308,7 +301,6 @@ pub const Semantic = struct {
 
         const entity = try self.table.getOrPut(self.allocator, name);
 
-        // TODO: Append name_ident into locals arraylist.
         if (entity.found_existing) {
             switch (speaker.tag) {
                 .name_ident, .anonymous => {},

@@ -25,12 +25,17 @@ fn isIdentChar(c: u8) bool {
 // 2) number
 // 3) close brace
 // 4) close paren
+// 5) string
 //
 // Look at Go Language scanner:
 // https://go.dev/ref/spec#Semicolons
 fn isImplicitSemiColon(prev: Tag) bool {
-    return prev == .identifier or prev == .number or
-            prev == .close_brace or prev == .close_paren;
+    return switch (prev) {
+        .identifier, .number,
+        .close_paren, .close_brace,
+        .string => true,
+        else => false,
+    };
 }
 
 pub const Tokenizer = struct {
@@ -114,6 +119,7 @@ pub const Tokenizer = struct {
             }
         }
 
+        self.prev_tag = .string;
         return .{
             .tag = .string,
             .start = start,

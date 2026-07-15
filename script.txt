@@ -1,2 +1,5 @@
-_ : Hello -> World
-_ : Hello World 2 -> World_2
+var x = 10
+Andrew: Hello World
+if (x > 1) {
+   const Andrew = 10
+}
