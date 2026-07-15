@@ -19,20 +19,27 @@ fn isIdentChar(c: u8) bool {
     return isAlphabetic(c) or isDigit(c) or c == '_';
 }
 
-// Newline is ignored if:
-// 1) inside () [] {}
-// 2) prev token is an operator
-// 3) expression is syntactically incomplete.
+// Newline is added to the end of every statement
+// if the previous tag was:
+// 1) identifier
+// 2) number
+// 3) close brace
+// 4) close paren
 //
 // Look at Go Language scanner:
-// https://github.com/golang/go/blob/master/src/go/scanner/scanner.go
+// https://go.dev/ref/spec#Semicolons
+fn isImplicitSemiColon(prev: Tag) bool {
+    return prev == .identifier or prev == .number or
+            prev == .close_brace or prev == .close_paren;
+}
+
 pub const Tokenizer = struct {
     buffer: []const u8,
     index: usize,
     mode: Mode,
     // line_start is used for dialogue choice marker.
     line_start: bool,
-    insert_semi: bool,
+    prev_tag: Tag,
 
     pub fn init(buffer: []const u8) Tokenizer {
         return .{
@@ -40,7 +47,7 @@ pub const Tokenizer = struct {
             .index = 0,
             .mode = .normal,
             .line_start = true,
-            .insert_semi = false,
+            .prev_tag = .EOF,
         };
     }
 
@@ -49,7 +56,7 @@ pub const Tokenizer = struct {
             switch (self.buffer[self.index]) {
                 ' ', '\r', '\t' => self.index += 1,
                 '\n' => {
-                    if (self.insert_semi) return;
+                    if (isImplicitSemiColon(self.prev_tag)) return;
                     self.index += 1;
                     self.line_start = true;
                     self.mode = .normal;
@@ -100,7 +107,6 @@ pub const Tokenizer = struct {
                 },
                 '\n' => {
                     self.mode = .normal;
-                    self.insert_semi = true;
                     self.line_start = true;
                     break;
                 },
@@ -142,9 +148,8 @@ pub const Tokenizer = struct {
         
         switch (ch) {
             '\n' => {
-                // We only reach here if self.insert_semi
+                // We only reach here if the condition is fulfilled
                 // is true
-                self.insert_semi = false;
                 result.tag = .newline;
                 // Turn off line_starts for now.
                 // Sometimes, line_starts goes outside the maximum
@@ -152,11 +157,10 @@ pub const Tokenizer = struct {
                 self.nextNonWsChar();
             },
             '+' => {
-                self.insert_semi = false;
+                // self.insert_semi = false;
                 result.tag = if (self.matchNext('=')) .plus_equal else .plus;
             },
             '-' => {
-                self.insert_semi = false;
 
                 if (self.matchNext('=')) {
                     result.tag = .minus_equal;
@@ -172,13 +176,11 @@ pub const Tokenizer = struct {
                     self.line_start = false;
                     result.tag = .choice_marker;
                 } else {
-                    self.insert_semi = false;
                     result.tag = if (self.matchNext('=')) .asterisk_equal else .asterisk;
                 }
             },
             '/' => {
                 if (self.matchNext('=')) {
-                    self.insert_semi = false;
                     result.tag = .slash_equal;
                 } else if (self.matchNext('/')) {
                     while (self.index < len and buffer[self.index] != '\n') {
@@ -187,31 +189,25 @@ pub const Tokenizer = struct {
 
                     return self.next();
                 } else {
-                    self.insert_semi = false;
                     result.tag = .slash;
                 }
             },
             '=' => {
-                self.insert_semi = false;
                 result.tag = if (self.matchNext('=')) .equal_equal else .assign;
             },
             '!' => {
-                self.insert_semi = false;
                 result.tag = if (self.matchNext('=')) .not_equal else .exclamation;
             },
             '<' => {
-                self.insert_semi = false;
                 result.tag = if (self.matchNext('=')) .less_or_equal else .less;
             },
             '>' => {
-                self.insert_semi = false;
                 result.tag = if (self.matchNext('=')) .greater_or_equal else .greater;
             },
             '(' => {
                 result.tag = .open_paren;
             },
             ')' => {
-                self.insert_semi = true;
                 result.tag = .close_paren;
             },
             '{' => {
@@ -220,7 +216,6 @@ pub const Tokenizer = struct {
                         result.tag = .inter_open;
                     },
                     else => {
-                        self.insert_semi = false;
                         result.tag = .open_brace;
                     }
                 }
@@ -232,7 +227,6 @@ pub const Tokenizer = struct {
                         result.tag = .inter_close;
                     },
                     else => {
-                        self.insert_semi = false;
                         result.tag = .close_brace;
                     }
                 }
@@ -263,15 +257,14 @@ pub const Tokenizer = struct {
                 while (self.index < len and isDigit(buffer[self.index])) {
                     self.index += 1;
                 }
-                self.insert_semi = true;
                 result.tag = .number;
             },
             else => {
-                self.insert_semi = true;
                 result.tag = .invalid;
             }
         }
 
+        self.prev_tag = result.tag;
         if (result.tag != .newline) self.line_start = false;
         result.end = self.index;
         return result;

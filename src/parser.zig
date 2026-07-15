@@ -112,7 +112,14 @@ pub const Parser = struct {
             },
             .close_brace, .keyword_end,
             .EOF => {}, // implicit terminator
-            else => return Error.ParseError,
+            else => {
+                try self.errors.append(self.allocator, .{
+                    .token_pos = self.token_pos,
+                    .tag = .unexpected_token,
+                    .extra = .{ .none = {} }
+                });
+                return Error.ParseError;
+            },
         }
     }
 

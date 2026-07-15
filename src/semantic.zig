@@ -103,8 +103,9 @@ pub const Semantic = struct {
         return self.source[token.start..token.end];
     }
 
-    fn addLocal(self: *Semantic, local: Local) !void {
+    fn addLocal(self: *Semantic, local: Local) !u32 {
         try self.locals.append(self.allocator, local);
+        return @intCast(self.locals.items.len - 1);
     }
 
     // The last node of a post-traversal list
@@ -158,6 +159,7 @@ pub const Semantic = struct {
             .plus_equal, .minus_equal, .mult_equal, .div_equal
                 => self.visitAssign(node),
             .if_stmt => self.visitIfStmt(node),
+            .dialogue => self.visitDialogue(node),
             else => self.report(node.token_pos, .unexpected_token),
         };
     }
@@ -174,13 +176,6 @@ pub const Semantic = struct {
             mutability = .keyword_const;
 
         const name = self.tokenSlice(pos);
-        const idx = self.locals.items.len;
-
-        try self.addLocal(.{
-            .token_pos = pos,
-            .kind = mutability,
-            .state = .declaring,
-        });
 
         const entity = try self.table.getOrPut(self.allocator, name);
         if (entity.found_existing) {
@@ -191,7 +186,13 @@ pub const Semantic = struct {
             };
         }
 
-        entity.value_ptr.* = @intCast(idx);
+        const idx = try self.addLocal(.{
+            .token_pos = pos,
+            .kind = mutability,
+            .state = .declaring,
+        });
+
+        entity.value_ptr.* = idx;
 
         try self.visitExpr(decl.@"1");
 
@@ -297,29 +298,64 @@ pub const Semantic = struct {
     // Dialogue lines and dialogue branches contains
     // the same format:
     // [ speaker, dia_part_0, dia_part_1, ..., goto ]
-    // fn visitDialogue(self: *Semantic, node: Node) !void {
-    //     const range = node.data.range;
-    //     const start = range.start;
-    //     const speaker = self.ast.nodes.get(start);
-    //     const name = self.tokenSlice(speaker.token_pos);
-    //
-    //     const entity = try self.table.getOrPut(self.allocator, name);
-    //
-    //     if (entity.found_existing) {
-    //         switch (node.tag) {
-    //             .name_ident => {},
-    //             .var_ident, .label_ident
-    //             => return self.report(speaker.token_pos, .ident_mismatch),
-    //             else => return self.report(speaker.token_pos, .unexpected_token),
-    //         }
-    //     } else {
-    //         entity.value_ptr.* = @intCast(self.locals.items.len);
-    //     }
-    //
-    //     try self.visitDialogueParts(start, range.len);
-    // }
-    //
-    // fn visitDialogueParts(self: *Semantic, start: u32, len: u32) !void {
-    //
-    // }
+    fn visitDialogue(self: *Semantic, node: Node) !void {
+        const range = node.data.range;
+        const start = range.start;
+        const speaker = self.ast.nodes.get(start);
+        const name = self.tokenSlice(speaker.token_pos);
+
+        const entity = try self.table.getOrPut(self.allocator, name);
+        // TODO: The following errors are incorrect:
+        // _ : Hello -> World
+        // _ : Hello World 2 -> World_2
+
+        std.debug.print("Speaker: {t}\n", .{speaker.tag});
+
+        // TODO: Append name_ident into locals arraylist.
+        if (entity.found_existing) {
+            switch (speaker.tag) {
+                .name_ident, .anonymous => {},
+                .var_ident, .label_ident
+                => return self.report(speaker.token_pos, .ident_mismatch),
+                else => return self.report(speaker.token_pos, .unexpected_token),
+            }
+        } else {
+            const idx = try self.addLocal(.{
+                .token_pos = speaker.token_pos,
+                .kind = .name,
+                .state = .defined,
+            });
+            entity.value_ptr.* = idx;
+        }
+
+        try self.visitDialogueParts(start, range.len);
+    }
+
+    fn visitDialogueParts(self: *Semantic, start: u32, len: u32) !void {
+        const end = start + len;
+        for (start + 1..end - 1) |idx| {
+            const text_idx = self.ast.extra_data[idx];
+            try self.visitText(text_idx);
+        }
+
+        const jump = self.ast.extra_data[end - 1];
+        if (jump != invalid_node) {
+            const jump_node = self.ast.nodes.get(jump);
+            const token_pos = jump_node.token_pos;
+            const jump_name = self.tokenSlice(token_pos);
+
+            // TODO: report an error that states unknown jump target.
+            // Use a label.
+            if (!self.table.contains(jump_name))
+                return self.report(token_pos, .undeclared_label);
+        }
+    }
+
+    fn visitText(self: *Semantic, node_idx: NodeIndex) !void {
+        const node = self.ast.nodes.get(node_idx);
+        return switch (node.tag) {
+            .string => {},
+            else => self.visitExpr(node_idx),
+        };
+    }
 };

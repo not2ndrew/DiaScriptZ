@@ -23,6 +23,10 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     var parse_tree = try tree.parse(allocator, lines);
     defer parse_tree.deinit(allocator);
 
+    for (parse_tree.ast.nodes.items(.tag)) |tag| {
+        std.debug.print("Node Tag: {t}\n", .{tag});
+    }
+
     // Analyze AST
     try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 

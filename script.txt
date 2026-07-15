@@ -1,4 +1,2 @@
-var x = 1
-if (x > 1) {
-	var x = 2
-}
+_ : Hello -> World
+_ : Hello World 2 -> World_2
