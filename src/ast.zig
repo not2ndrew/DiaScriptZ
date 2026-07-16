@@ -64,9 +64,9 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
         const token = tokenizer.next();
         try tokens.append(allocator, token);
 
-        if (token.tag == .newline) {
+        if (token.tag == .newline)
             try line_starts.append(allocator, tokenizer.index);
-        }
+
         if (token.tag == .EOF) break;
     }
 

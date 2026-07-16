@@ -459,17 +459,40 @@ pub const Parser = struct {
 
     // label = “~” ident block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(self.allocator);
+
         _ = try self.expect(.tilde);
 
         const ident_pos = self.token_pos;
-        _ = try self.parseGenericIdent(.label_ident);
+        const label = try self.parseGenericIdent(.label_ident);
+        try stmts.append(self.allocator, label);
+        
+        // TODO: Change this later.
+        if (self.peekTag() == .newline) self.next();
 
-        const range = try self.collectStmtUntil(.keyword_end);
+        while (self.peekTag() != .keyword_end and self.peekTag() != .EOF) {
+            const stmt_index = self.parseStmt() catch {
+                self.synchronize();
+                continue;
+            };
+
+            try stmts.append(self.allocator, stmt_index);
+        }
+
+        _ = try self.expectStmtEnd();
+
+        const start: u32 = @intCast(self.extra_data.items.len);
+        const len: u32 = @intCast(stmts.items.len);
+        try self.extra_data.appendSlice(
+            self.allocator,
+            stmts.items
+        );
 
         // label extra_data layout:
-        // [ stmt_1, stmt_2, stmt_3, ... ]
+        // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
         return self.addNode(.label, ident_pos, .{
-            .range = .{ .start = range.start, .len = range.len }
+            .range = .{ .start = start, .len = len }
         });
     }
 
@@ -477,6 +500,7 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
+    // TODO: Maybe add &arraylist parameter so label could be added.
     fn collectStmtUntil(self: *Parser, end_tag: TokenTag) !Node.Range {
         var stmts: std.ArrayList(u32) = .empty;
         defer stmts.deinit(self.allocator);

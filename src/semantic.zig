@@ -154,6 +154,7 @@ pub const Semantic = struct {
                 => self.visitAssign(node),
             .if_stmt => self.visitIfStmt(node),
             .dialogue => self.visitDialogue(node),
+            .label => self.visitLabel(node),
             else => self.report(node.token_pos, .unexpected_token),
         };
     }
@@ -344,5 +345,39 @@ pub const Semantic = struct {
             .string => {},
             else => self.visitExpr(node_idx),
         };
+    }
+
+    // label extra_data layout:
+    // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
+    fn visitLabel(self: *Semantic, node: Node) !void {
+        // First index of a label block is always the label_ident
+        const range = node.data.range;
+        const start = range.start;
+        const len = range.len;
+
+        const label_idx = self.ast.extra_data[start];
+        const label = self.ast.nodes.get(label_idx);
+        const token_pos = label.token_pos;
+        const label_name = self.tokenSlice(token_pos);
+
+        const entity = try self.table.getOrPut(self.allocator, label_name);
+        if (entity.found_existing) {
+            return switch (label.tag) {
+                .var_ident => self.report(token_pos, .ident_mismatch),
+                .label_ident => self.report(token_pos, .duplicate_label),
+                else => self.report(token_pos, .unexpected_token),
+            };
+        }
+
+        const idx = try self.addLocal(.{
+            .token_pos = token_pos,
+            .kind = .label,
+            .state = .defined,
+        });
+        entity.value_ptr.* = idx;
+
+        // We have already scanned the first idx.
+        // So perform the rest in block.
+        try self.visitBlock(start + 1, len - 1);
     }
 };
