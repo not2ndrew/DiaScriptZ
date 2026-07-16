@@ -241,8 +241,8 @@ pub const Parser = struct {
         });
     }
 
-    // if_stmt = "if" "(" compar_expr ")" block [ else_block ] ;
-    // else_block = "else" stmts ;
+    // if_stmt = "if" "(" condition ")" stmt_block [ else_block ] ;
+    // else_block = "else" stmt_block ;
     fn parseIfStmt(self: *Parser) Error!NodeIndex {
         const if_pos = try self.expect(.keyword_if);
 
@@ -270,7 +270,7 @@ pub const Parser = struct {
         });
     }
 
-    // condition   = conjunction { "or" conjunction } ;
+    // condition  = conjunction { "or" conjunction } ;
     fn parseCondition(self: *Parser) Error!NodeIndex {
         var node = try self.parseConjunction();
 
@@ -341,8 +341,11 @@ pub const Parser = struct {
 
     // stmt_block = "{" { stmt } "}" ;
     fn parseStmtBlock(self: *Parser, comptime start_tag: TokenTag, comptime end_tag: TokenTag) Error!NodeIndex {
+        var stmts: std.ArrayList(u32) = .empty;
+        defer stmts.deinit(self.allocator);
+
         const block_pos = try self.expect(start_tag);
-        const range = try self.collectStmtUntil(end_tag);
+        const range = try self.collectStmtUntil(end_tag, &stmts);
 
         return try self.addNode(.block, block_pos, .{
             .range = .{ .start = range.start, .len = range.len }
@@ -467,32 +470,13 @@ pub const Parser = struct {
         const ident_pos = self.token_pos;
         const label = try self.parseGenericIdent(.label_ident);
         try stmts.append(self.allocator, label);
-        
-        // TODO: Change this later.
-        if (self.peekTag() == .newline) self.next();
 
-        while (self.peekTag() != .keyword_end and self.peekTag() != .EOF) {
-            const stmt_index = self.parseStmt() catch {
-                self.synchronize();
-                continue;
-            };
-
-            try stmts.append(self.allocator, stmt_index);
-        }
-
-        _ = try self.expectStmtEnd();
-
-        const start: u32 = @intCast(self.extra_data.items.len);
-        const len: u32 = @intCast(stmts.items.len);
-        try self.extra_data.appendSlice(
-            self.allocator,
-            stmts.items
-        );
+        const range = try self.collectStmtUntil(.keyword_end, &stmts);
 
         // label extra_data layout:
         // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
         return self.addNode(.label, ident_pos, .{
-            .range = .{ .start = start, .len = len }
+            .range = .{ .start = range.start, .len = range.len }
         });
     }
 
@@ -500,11 +484,7 @@ pub const Parser = struct {
     //           EXPRESSIONS
     // ───────────────────────────────
 
-    // TODO: Maybe add &arraylist parameter so label could be added.
-    fn collectStmtUntil(self: *Parser, end_tag: TokenTag) !Node.Range {
-        var stmts: std.ArrayList(u32) = .empty;
-        defer stmts.deinit(self.allocator);
-
+    fn collectStmtUntil(self: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !Node.Range {
         while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
             const stmt_index = self.parseStmt() catch {
                 self.synchronize();
