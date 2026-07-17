@@ -1,5 +1,2 @@
-name: Hello World -> A
-
-~ A
-   _ : World
-end
+var Andrew = 10
+Andrew: Hello

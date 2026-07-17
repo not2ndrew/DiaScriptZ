@@ -23,7 +23,7 @@ pub const SymbolID = u32;
 
 const MAX_NUM_SCOPES = 3;
 const LocalTable = std.array_hash_map.String(SymbolID);
-const LabelTable = std.array_hash_map.String(u32);
+const LabelTable = std.array_hash_map.String(void);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
@@ -35,7 +35,6 @@ pub const Local = struct {
     pub const Kind = enum {
         keyword_const,
         keyword_var,
-        label,
         name,
     };
 
@@ -48,17 +47,15 @@ pub const Local = struct {
 // Program variables and jump variables are handled differently.
 // Program variables must be declared first before using it.
 // Jump variables are forward declarations and must require a label block to connect.
-// Label blocks are global blocks.
 //
 // Variable identifiers are never allowed to shadow identifiers from an outer scope
+// Label blocks are global blocks.
 pub const Semantic = struct {
     allocator: Allocator,
     source: []const u8,
     ast: *Ast,
     errors: *std.ArrayList(AstError),
 
-    // https://www.reddit.com/r/Compilers/comments/rzbfs0/what_is_the_purpose_of_symbol_tables_what_are/
-    // Read Nuoji's comment under "onlyonequickquest" post
     scope_count: std.ArrayList(u32),
     local_table: LocalTable,
     label_table: LabelTable,
@@ -73,7 +70,6 @@ pub const Semantic = struct {
         self.unresolved_jumps.deinit(self.allocator);
     }
 
-    // Semantic analysis has different types of errors.
     fn report(self: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
         try self.errors.append(self.allocator, .{
             .token_pos = token_pos,
@@ -150,7 +146,7 @@ pub const Semantic = struct {
 
         for (self.unresolved_jumps.items) |token_pos| {
             const name = self.tokenSlice(token_pos);
-            _ = self.label_table.get(name) orelse {
+            self.label_table.get(name) orelse {
                 try self.report(token_pos, .unknown_jump);
                 continue;
             };
@@ -199,10 +195,10 @@ pub const Semantic = struct {
 
         const entity = try self.local_table.getOrPut(self.allocator, name);
         if (entity.found_existing) {
-            return switch (ident_node.tag) {
-                .name_ident, .label_ident => self.report(pos, .ident_mismatch),
-                .var_ident => self.report(pos, .duplicate_var),
-                else => self.report(pos, .unexpected_token),
+            const found = self.locals.items[entity.value_ptr.*];
+            return switch (found.kind) {
+                .name => self.report(pos, .ident_mismatch),
+                .keyword_var, .keyword_const => self.report(pos, .duplicate_var),
             };
         }
 
@@ -228,14 +224,12 @@ pub const Semantic = struct {
         const idx = self.local_table.get(ident_name) orelse
             return self.report(pos, .undeclared_var);
 
-        switch (ident_node.tag) {
-            .var_ident => {
-                const local = self.locals.items[idx];
-                if (local.kind == .keyword_const)
-                    return self.report(pos, .modified_const);
-            },
-            .name_ident, .label_ident => return self.report(pos, .ident_mismatch),
-            else => return self.report(pos, .unexpected_token),
+        const local = self.locals.items[idx];
+
+        switch (local.kind) {
+            .name => return self.report(pos, .ident_mismatch),
+            .keyword_const => return self.report(pos, .modified_const),
+            else => {},
         }
 
         try self.visitExpr(assign.@"1");
@@ -307,9 +301,7 @@ pub const Semantic = struct {
             // TODO: Check for math errors
             // 1) Integer overflow (0 and 256)
             // 2) Division by 0
-            // Debating on whether I should handle this in IR or here.
-            // I must use parseInt(num) to convert slice -> num.
-            // The issue is when I should parse the num.
+            // Create a union field to hold uint.
             .plus, .minus, .mult, .div => try self.visitBinary(node.data, visitExpr),
             else => try self.report(token_pos, .unexpected_token),
         }
@@ -332,11 +324,11 @@ pub const Semantic = struct {
         const entity = try self.local_table.getOrPut(self.allocator, name);
 
         if (entity.found_existing) {
-            switch (speaker.tag) {
-                .name_ident, .anonymous => {},
-                .var_ident, .label_ident
+            const found = self.locals.items[entity.value_ptr.*];
+            switch (found.kind) {
+                .name => {},
+                .keyword_var, .keyword_const
                 => return self.report(speaker.token_pos, .ident_mismatch),
-                else => return self.report(speaker.token_pos, .unexpected_token),
             }
         } else {
             const idx = try self.addLocal(.{
@@ -391,11 +383,7 @@ pub const Semantic = struct {
 
         const entity = try self.label_table.getOrPut(self.allocator, label_name);
         if (entity.found_existing) {
-            return switch (label.tag) {
-                .var_ident => self.report(token_pos, .ident_mismatch),
-                .label_ident => self.report(token_pos, .duplicate_label),
-                else => self.report(token_pos, .unexpected_token),
-            };
+            return self.report(token_pos, .duplicate_label);
         }
 
         // We have already scanned the first idx.

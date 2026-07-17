@@ -26,6 +26,8 @@ pub const Error = struct {
 
         // Semantic Errors
         int_overflow,
+        // TODO: Create a note to where the ident is used
+        // Note: Previous declaration here:
         ident_mismatch,
         duplicate_var,
         duplicate_label,
@@ -180,7 +182,7 @@ pub const DiagRenderer = struct {
                 return w.writeAll("Integer overflow");
             },
             .ident_mismatch => {
-                return w.print("Identifer '{s}' already taken", .{str});
+                return w.print("'{s}' is already defined as a INSERT_TYPE", .{str});
             },
             .duplicate_var => {
                 return w.print("Variable '{s}' already exist", .{str});
