@@ -22,7 +22,8 @@ const ErrorTag = diag.Error.Tag;
 pub const SymbolID = u32;
 
 const MAX_NUM_SCOPES = 3;
-const SymbolTable = std.array_hash_map.String(SymbolID);
+const LocalTable = std.array_hash_map.String(SymbolID);
+const LabelTable = std.array_hash_map.String(u32);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
@@ -59,13 +60,17 @@ pub const Semantic = struct {
     // https://www.reddit.com/r/Compilers/comments/rzbfs0/what_is_the_purpose_of_symbol_tables_what_are/
     // Read Nuoji's comment under "onlyonequickquest" post
     scope_count: std.ArrayList(u32),
-    table: SymbolTable,
+    local_table: LocalTable,
+    label_table: LabelTable,
     locals: std.ArrayList(Local),
+    unresolved_jumps: std.ArrayList(TokenIndex),
 
     pub fn deinit(self: *Semantic) void {
         self.scope_count.deinit(self.allocator);
-        self.table.deinit(self.allocator);
+        self.local_table.deinit(self.allocator);
+        self.label_table.deinit(self.allocator);
         self.locals.deinit(self.allocator);
+        self.unresolved_jumps.deinit(self.allocator);
     }
 
     // Semantic analysis has different types of errors.
@@ -91,7 +96,7 @@ pub const Semantic = struct {
             const local = self.locals.pop().?;
             const name = self.tokenSlice(local.token_pos);
 
-            _ = self.table.swapRemove(name);
+            _ = self.local_table.swapRemove(name);
         }
     }
 
@@ -119,22 +124,39 @@ pub const Semantic = struct {
             .ast = ast,
             .errors = errors,
             .scope_count = .empty,
-            .table = .empty,
+            .local_table = .empty,
+            .label_table = .empty,
             .locals = .empty,
+            .unresolved_jumps = .empty,
         };
         defer semantic.deinit();
 
-        const root_node = ast.nodes.get(ast.nodes.len - 1);
+        try semantic.visitRoot();
+    }
+
+    fn visitRoot(self: *Semantic) !void {
+        const root_node = self.ast.nodes.get(self.ast.nodes.len - 1);
         const range = root_node.data.range;
         const start = range.start;
         const end = range.start + range.len;
 
         // Put a limit to how many scopes can be generated
-        try semantic.scope_count.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
+        try self.scope_count.ensureTotalCapacityPrecise(self.allocator, MAX_NUM_SCOPES);
 
         for (start..end) |idx| {
-            const node_idx = ast.extra_data[idx];
-            try semantic.visitStmt(node_idx);
+            const node_idx = self.ast.extra_data[idx];
+            try self.visitStmt(node_idx);
+        }
+
+        for (self.unresolved_jumps.items) |token_pos| {
+            const name = self.tokenSlice(token_pos);
+            _ = self.label_table.get(name) orelse {
+                try self.report(token_pos, .unknown_jump);
+                continue;
+            };
+
+            if (self.local_table.contains(name))
+                try self.report(token_pos, .ident_mismatch);
         }
     }
 
@@ -175,7 +197,7 @@ pub const Semantic = struct {
 
         const name = self.tokenSlice(pos);
 
-        const entity = try self.table.getOrPut(self.allocator, name);
+        const entity = try self.local_table.getOrPut(self.allocator, name);
         if (entity.found_existing) {
             return switch (ident_node.tag) {
                 .name_ident, .label_ident => self.report(pos, .ident_mismatch),
@@ -203,7 +225,7 @@ pub const Semantic = struct {
         const pos = ident_node.token_pos;
         const ident_name = self.tokenSlice(pos);
 
-        const idx = self.table.get(ident_name) orelse
+        const idx = self.local_table.get(ident_name) orelse
             return self.report(pos, .undeclared_var);
 
         switch (ident_node.tag) {
@@ -274,7 +296,7 @@ pub const Semantic = struct {
             .number => {},
             .var_ident => {
                 const name = self.tokenSlice(token_pos);
-                const idx = self.table.get(name) orelse
+                const idx = self.local_table.get(name) orelse
                     return self.report(token_pos, .undeclared_var);
 
                 const sym = &self.locals.items[idx];
@@ -307,7 +329,7 @@ pub const Semantic = struct {
         const speaker = self.ast.nodes.get(speaker_idx);
         const name = self.tokenSlice(speaker.token_pos);
 
-        const entity = try self.table.getOrPut(self.allocator, name);
+        const entity = try self.local_table.getOrPut(self.allocator, name);
 
         if (entity.found_existing) {
             switch (speaker.tag) {
@@ -335,23 +357,14 @@ pub const Semantic = struct {
             try self.visitText(text_idx);
         }
 
-        // TODO: Jump targets are forward declarations;
-        // A label must exist before OR after the jump target.
-        // Ex: A is a forward reference.
-        //
-        // name: Hello World -> A
-        //
-        // ~ A
-        //    _ : You have entered the forest.
-        // end
         const jump = self.ast.extra_data[end - 1];
         if (jump != invalid_node) {
             const jump_node = self.ast.nodes.get(jump);
             const token_pos = jump_node.token_pos;
             const jump_name = self.tokenSlice(token_pos);
 
-            if (!self.table.contains(jump_name))
-                return self.report(token_pos, .unknown_jump);
+            if (!self.label_table.contains(jump_name))
+                try self.unresolved_jumps.append(self.allocator, token_pos);
         }
     }
 
@@ -376,7 +389,7 @@ pub const Semantic = struct {
         const token_pos = label.token_pos;
         const label_name = self.tokenSlice(token_pos);
 
-        const entity = try self.table.getOrPut(self.allocator, label_name);
+        const entity = try self.label_table.getOrPut(self.allocator, label_name);
         if (entity.found_existing) {
             return switch (label.tag) {
                 .var_ident => self.report(token_pos, .ident_mismatch),
@@ -384,13 +397,6 @@ pub const Semantic = struct {
                 else => self.report(token_pos, .unexpected_token),
             };
         }
-
-        const idx = try self.addLocal(.{
-            .token_pos = token_pos,
-            .kind = .label,
-            .state = .defined,
-        });
-        entity.value_ptr.* = idx;
 
         // We have already scanned the first idx.
         // So skip the first idx and reduce len by 1.

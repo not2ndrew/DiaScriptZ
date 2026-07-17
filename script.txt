@@ -1,3 +1,5 @@
+name: Hello World -> A
+
 ~ A
-    _ : hello -> B
+   _ : World
 end
