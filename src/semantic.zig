@@ -20,6 +20,8 @@ const AstError = diag.Error;
 const ErrorTag = diag.Error.Tag;
 
 pub const SymbolID = u32;
+
+const MAX_NUM_SCOPES = 3;
 const SymbolTable = std.array_hash_map.String(SymbolID);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
@@ -42,9 +44,10 @@ pub const Local = struct {
     };
 };
 
-// Program variables and label variables are handled differently.
+// Program variables and jump variables are handled differently.
 // Program variables must be declared first before using it.
-// Label variables must contain a label block in the same scope.
+// Jump variables are forward declarations and must require a label block to connect.
+// Label blocks are global blocks.
 //
 // Variable identifiers are never allowed to shadow identifiers from an outer scope
 pub const Semantic = struct {
@@ -55,13 +58,13 @@ pub const Semantic = struct {
 
     // https://www.reddit.com/r/Compilers/comments/rzbfs0/what_is_the_purpose_of_symbol_tables_what_are/
     // Read Nuoji's comment under "onlyonequickquest" post
-    table: SymbolTable,
     scope_count: std.ArrayList(u32),
+    table: SymbolTable,
     locals: std.ArrayList(Local),
 
     pub fn deinit(self: *Semantic) void {
-        self.table.deinit(self.allocator);
         self.scope_count.deinit(self.allocator);
+        self.table.deinit(self.allocator);
         self.locals.deinit(self.allocator);
     }
 
@@ -74,10 +77,10 @@ pub const Semantic = struct {
         });
     }
 
-    fn addScope(self: *Semantic) void {
-        // TODO: Return semantic error for scopes.
-        // Solution: Place token_pos into extra union in Error struct.
-        if (self.scope_count.items.len >= 4) {}
+    fn addScope(self: *Semantic, token_pos: TokenIndex) !void {
+        // TODO: error should point at the call site of the breaking scope.
+        if (self.scope_count.items.len >= MAX_NUM_SCOPES)
+            return try self.report(token_pos, .too_many_scopes);
         self.scope_count.appendAssumeCapacity(0);
     }
 
@@ -115,8 +118,8 @@ pub const Semantic = struct {
             .source = source,
             .ast = ast,
             .errors = errors,
-            .table = .empty,
             .scope_count = .empty,
+            .table = .empty,
             .locals = .empty,
         };
         defer semantic.deinit();
@@ -127,7 +130,7 @@ pub const Semantic = struct {
         const end = range.start + range.len;
 
         // Put a limit to how many scopes can be generated
-        try semantic.scope_count.ensureTotalCapacityPrecise(allocator, 4);
+        try semantic.scope_count.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
 
         for (start..end) |idx| {
             const node_idx = ast.extra_data[idx];
@@ -135,10 +138,10 @@ pub const Semantic = struct {
         }
     }
 
-    fn visitBlock(self: *Semantic, start: u32, len: u32) !void {
+    fn visitBlock(self: *Semantic, token_pos: TokenIndex, start: u32, len: u32) !void {
         const end = start + len;
 
-        self.addScope();
+        try self.addScope(token_pos);
         for (start..end) |idx| {
             const node_index = self.ast.extra_data[idx];
             try self.visitStmt(node_index);
@@ -225,14 +228,15 @@ pub const Semantic = struct {
         try self.visitCondition(condition);
 
         const then_idx = self.ast.extra_data[start + 1];
-        const then_range = self.ast.nodes.get(then_idx).data.range;
-        try self.visitBlock(then_range.start, then_range.len);
+        const then_node = self.ast.nodes.get(then_idx);
+        const then_range = then_node.data.range;
+        try self.visitBlock(then_node.token_pos, then_range.start, then_range.len);
 
         const else_idx = self.ast.extra_data[start + 2];
         if (else_idx != invalid_node) {
             const else_block = self.ast.nodes.get(else_idx);
             const else_range = else_block.data.range;
-            try self.visitBlock(else_range.start, else_range.len);
+            try self.visitBlock(else_block.token_pos, else_range.start, else_range.len);
         }
     }
 
@@ -281,6 +285,9 @@ pub const Semantic = struct {
             // TODO: Check for math errors
             // 1) Integer overflow (0 and 256)
             // 2) Division by 0
+            // Debating on whether I should handle this in IR or here.
+            // I must use parseInt(num) to convert slice -> num.
+            // The issue is when I should parse the num.
             .plus, .minus, .mult, .div => try self.visitBinary(node.data, visitExpr),
             else => try self.report(token_pos, .unexpected_token),
         }
@@ -328,6 +335,15 @@ pub const Semantic = struct {
             try self.visitText(text_idx);
         }
 
+        // TODO: Jump targets are forward declarations;
+        // A label must exist before OR after the jump target.
+        // Ex: A is a forward reference.
+        //
+        // name: Hello World -> A
+        //
+        // ~ A
+        //    _ : You have entered the forest.
+        // end
         const jump = self.ast.extra_data[end - 1];
         if (jump != invalid_node) {
             const jump_node = self.ast.nodes.get(jump);
@@ -377,7 +393,7 @@ pub const Semantic = struct {
         entity.value_ptr.* = idx;
 
         // We have already scanned the first idx.
-        // So perform the rest in block.
-        try self.visitBlock(start + 1, len - 1);
+        // So skip the first idx and reduce len by 1.
+        try self.visitBlock(node.token_pos, start + 1, len - 1);
     }
 };

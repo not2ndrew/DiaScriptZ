@@ -111,7 +111,7 @@ pub const Parser = struct {
                 self.next();
             },
             .close_brace, .keyword_end,
-            .EOF => {}, // implicit terminator
+            .EOF => _ = try self.expect(tag),
             else => {
                 try self.errors.append(self.allocator, .{
                     .token_pos = self.token_pos,
@@ -460,7 +460,7 @@ pub const Parser = struct {
         return .{ .start = start, .len = len };
     }
 
-    // label = “~” ident block “end” ;
+    // label = “~” ident stmt_block “end” ;
     fn parseLabel(self: *Parser) Error!NodeIndex {
         var stmts: std.ArrayList(u32) = .empty;
         defer stmts.deinit(self.allocator);
@@ -485,6 +485,11 @@ pub const Parser = struct {
     // ───────────────────────────────
 
     fn collectStmtUntil(self: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !Node.Range {
+        // TODO: This is too unpredictable.
+        // It's used for safety measure, but I think
+        // there is a better way to handle this.
+        if (self.peekTag() == .newline) self.next();
+
         while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
             const stmt_index = self.parseStmt() catch {
                 self.synchronize();

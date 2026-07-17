@@ -32,6 +32,7 @@ pub const Error = struct {
         undeclared_var,
         unknown_jump,
         modified_const,
+        too_many_scopes,
     };
 
     pub const Extra = union {
@@ -159,7 +160,7 @@ pub const DiagRenderer = struct {
                 return w.writeAll("Expected expression, found EOF");
             },
             .unexpected_token => {
-                return w.print("Expected expression, found '{s}'", .{str});
+                return w.print("Expected expression {t}, found '{s}'", .{err.extra.expected_tag, str});
             },
             .expected_ident => {
                 return w.print("Expected identifier, found '{s}'", .{str});
@@ -196,6 +197,9 @@ pub const DiagRenderer = struct {
             .modified_const => {
                 return w.print("Cannot modify constant '{s}'", .{str});
             },
+            .too_many_scopes => {
+                return w.writeAll("Cannot generate more than 3 scopes");
+            }
         }
     }
 };
