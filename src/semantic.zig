@@ -56,14 +56,14 @@ pub const Semantic = struct {
     ast: *Ast,
     errors: *std.ArrayList(AstError),
 
-    scope_count: std.ArrayList(u32),
-    local_table: LocalTable,
-    label_table: LabelTable,
-    locals: std.ArrayList(Local),
-    unresolved_jumps: std.ArrayList(TokenIndex),
+    locals_per_scope: std.ArrayList(u32) = .empty,
+    local_table: LocalTable = .empty,
+    label_table: LabelTable = .empty,
+    locals: std.ArrayList(Local) = .empty,
+    unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
 
     pub fn deinit(self: *Semantic) void {
-        self.scope_count.deinit(self.allocator);
+        self.locals_per_scope.deinit(self.allocator);
         self.local_table.deinit(self.allocator);
         self.label_table.deinit(self.allocator);
         self.locals.deinit(self.allocator);
@@ -80,13 +80,14 @@ pub const Semantic = struct {
 
     fn addScope(self: *Semantic, token_pos: TokenIndex) !void {
         // TODO: error should point at the call site of the breaking scope.
-        if (self.scope_count.items.len >= MAX_NUM_SCOPES)
+        if (self.locals_per_scope.items.len >= MAX_NUM_SCOPES) {
             return try self.report(token_pos, .too_many_scopes);
-        self.scope_count.appendAssumeCapacity(0);
+        }
+        self.locals_per_scope.appendAssumeCapacity(0);
     }
 
     fn endScope(self: *Semantic) void {
-        const count = self.scope_count.pop() orelse return;
+        const count = self.locals_per_scope.pop() orelse return;
 
         for (0..count) |_| {
             const local = self.locals.pop().?;
@@ -119,11 +120,6 @@ pub const Semantic = struct {
             .source = source,
             .ast = ast,
             .errors = errors,
-            .scope_count = .empty,
-            .local_table = .empty,
-            .label_table = .empty,
-            .locals = .empty,
-            .unresolved_jumps = .empty,
         };
         defer semantic.deinit();
 
@@ -137,7 +133,7 @@ pub const Semantic = struct {
         const end = range.start + range.len;
 
         // Put a limit to how many scopes can be generated
-        try self.scope_count.ensureTotalCapacityPrecise(self.allocator, MAX_NUM_SCOPES);
+        try self.locals_per_scope.ensureTotalCapacityPrecise(self.allocator, MAX_NUM_SCOPES);
 
         for (start..end) |idx| {
             const node_idx = self.ast.extra_data[idx];
@@ -171,7 +167,7 @@ pub const Semantic = struct {
         const node = self.ast.nodes.get(node_idx);
         return switch (node.tag) {
             .declar_stmt => self.visitVarDecl(node),
-            .plus_equal, .minus_equal, .mult_equal, .div_equal
+            .assign, .plus_equal, .minus_equal, .mult_equal, .div_equal
                 => self.visitAssign(node),
             .if_stmt => self.visitIfStmt(node),
             .dialogue => self.visitDialogue(node),
@@ -209,10 +205,13 @@ pub const Semantic = struct {
         });
 
         entity.value_ptr.* = idx;
-
         try self.visitExpr(decl.@"1");
-
         self.locals.items[idx].state = .defined;
+
+        const scope_depth = self.locals_per_scope.items.len;
+        if (scope_depth != 0) {
+            self.locals_per_scope.items[scope_depth - 1] += 1;
+        }
     }
 
     fn visitAssign(self: *Semantic, node: Node) !void {
@@ -221,8 +220,9 @@ pub const Semantic = struct {
         const pos = ident_node.token_pos;
         const ident_name = self.tokenSlice(pos);
 
-        const idx = self.local_table.get(ident_name) orelse
+        const idx = self.local_table.get(ident_name) orelse {
             return self.report(pos, .undeclared_var);
+        };
 
         const local = self.locals.items[idx];
 
@@ -290,13 +290,15 @@ pub const Semantic = struct {
             .number => {},
             .var_ident => {
                 const name = self.tokenSlice(token_pos);
-                const idx = self.local_table.get(name) orelse
+                const idx = self.local_table.get(name) orelse {
                     return self.report(token_pos, .undeclared_var);
+                };
 
                 const sym = &self.locals.items[idx];
 
-                if (sym.state == .declaring)
+                if (sym.state == .declaring) {
                     return self.report(token_pos, .undeclared_var);
+                }
             },
             // TODO: Check for math errors
             // 1) Integer overflow (0 and 256)
@@ -355,8 +357,9 @@ pub const Semantic = struct {
             const token_pos = jump_node.token_pos;
             const jump_name = self.tokenSlice(token_pos);
 
-            if (!self.label_table.contains(jump_name))
+            if (!self.label_table.contains(jump_name)) {
                 try self.unresolved_jumps.append(self.allocator, token_pos);
+            }
         }
     }
 

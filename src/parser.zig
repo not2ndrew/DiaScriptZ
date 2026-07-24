@@ -30,19 +30,15 @@ const Error = ParserError || Allocator.Error;
 pub const Parser = struct {
     allocator: Allocator,
     tokens: std.MultiArrayList(Token).Slice,
-    nodes: std.MultiArrayList(Node),
-    extra_data: std.ArrayList(u32),
-    errors: std.ArrayList(AstError),
-    token_pos: u32,
+    nodes: std.MultiArrayList(Node) = .empty,
+    extra_data: std.ArrayList(u32) = .empty,
+    errors: std.ArrayList(AstError) = .empty,
+    token_pos: u32 = 0,
 
     pub fn init(allocator: Allocator, tokens: Tokens.Slice) !Parser {
         return .{
             .allocator = allocator,
             .tokens = tokens,
-            .nodes = .empty,
-            .extra_data = .empty,
-            .errors = .empty,
-            .token_pos = 0,
         };
     }
 
