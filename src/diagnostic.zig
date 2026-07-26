@@ -45,19 +45,19 @@ pub const Error = struct {
 
 pub const SourceFile = struct {
     source: []const u8,
-    line_starts: []usize,
+    offsets: []usize,
 
     pub fn getLineCol(self: *SourceFile, byte_pos: usize) struct { line: usize, col: usize } {
-        const line_starts = self.line_starts;
+        const offsets = self.offsets;
         var low: usize = 0;
-        var high: usize = line_starts.len;
+        var high: usize = offsets.len;
         var line_idx: usize = 0;
 
         // Testing new binary search approach.
         while (low < high) {
             // Avoid overflow
             const mid = low + (high - low) / 2;
-            const value = line_starts[mid];
+            const value = offsets[mid];
 
             if (value <= byte_pos) {
                 low = mid + 1;
@@ -68,7 +68,7 @@ pub const SourceFile = struct {
 
         line_idx = low - 1;
         const line = line_idx + 1;
-        const col = byte_pos - line_starts[line_idx] + 1;
+        const col = byte_pos - offsets[line_idx] + 1;
 
         return .{ .line = line, .col = col };
     }

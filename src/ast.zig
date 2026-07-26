@@ -42,7 +42,7 @@ pub const ParseResult = struct {
     errors: std.ArrayList(Error),
 
     pub fn deinit(self: *ParseResult, allocator: Allocator) void {
-        allocator.free(self.source_file.line_starts);
+        allocator.free(self.source_file.offsets);
         self.ast.deinit();
     }
 };
@@ -51,31 +51,61 @@ pub const ParseResult = struct {
 pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     var tokens: Tokens = .empty;
 
-    var line_starts: std.ArrayList(usize) = .empty;
-    defer line_starts.deinit(allocator);
+    // TODO: store byte position for EVERY newline encountered.
+    // For every newline encountered, store the exact byte location.
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
 
     // line starts at index 0.
-    try line_starts.append(allocator, 0);
+    try offsets.append(allocator, 0);
 
     // lines -> tokens
-    var tokenizer = Tokenizer.init(buf);
+    var tokenizer = Tokenizer.init(allocator, &offsets, buf);
 
     while (true) {
-        const token = tokenizer.next();
+        const token = try tokenizer.next();
         try tokens.append(allocator, token);
 
-        if (token.tag == .newline)
-            try line_starts.append(allocator, tokenizer.index);
+        // if (token.tag == .newline)
+        //     try offsets.append(allocator, tokenizer.index);
 
         if (token.tag == .EOF) break;
     }
 
     const source_file: SourceFile = .{
-        .line_starts = try line_starts.toOwnedSlice(allocator),
+        .offsets = try offsets.toOwnedSlice(allocator),
         .source = buf,
     };
 
     return parseFromTokens(allocator, source_file, tokens.toOwnedSlice());
+}
+
+pub fn testTokenizer(allocator: Allocator, buf: []const u8) !void {
+    var tokens: Tokens = .empty;
+    defer tokens.deinit(allocator);
+
+    // TODO: store byte position for EVERY implicit semi colon.
+    // For every newline encountered, store the exact byte location.
+    // https://www.reddit.com/r/Compilers/comments/1bg5r9m/how_do_you_propagate_line_number_information_for/
+    var offsets: std.ArrayList(usize) = .empty;
+    defer offsets.deinit(allocator);
+
+    // line starts at index 0.
+    try offsets.append(allocator, 0);
+
+    // lines -> tokens
+    var tokenizer = Tokenizer.init(allocator, &offsets, buf);
+
+    while (true) {
+        const token = try tokenizer.next();
+        try tokens.append(allocator, token);
+
+        if (token.tag == .EOF) break;
+    }
+
+    for (tokens.items(.tag)) |tag| {
+        std.debug.print("Tag: {t}\n", .{tag});
+    }
 }
 
 fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {

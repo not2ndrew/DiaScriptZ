@@ -19,9 +19,11 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
 
+    try tree.testTokenizer(allocator, lines);
+
     // Generate AST from lines
-    var parse_tree = try tree.parse(allocator, lines);
-    defer parse_tree.deinit(allocator);
+    // var parse_tree = try tree.parse(allocator, lines);
+    // defer parse_tree.deinit(allocator);
 
     // for (parse_tree.ast.tokens.items(.tag)) |tag| {
     //     std.debug.print("Token Tag: {t}\n", .{tag});
@@ -32,20 +34,20 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     // }
 
     // Analyze AST
-    try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
+    // try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
     // AST -> IR
     // try DiaIR.generate(allocator, &parse_tree.ast, lines);
 
     // Diagnostics
-    var renderer: DiagRenderer = .{
-        .source_file = parse_tree.source_file,
-        .tokens = parse_tree.ast.tokens,
-    };
+    // var renderer: DiagRenderer = .{
+    //     .source_file = parse_tree.source_file,
+    //     .tokens = parse_tree.ast.tokens,
+    // };
 
-    const errors = try parse_tree.errors.toOwnedSlice(allocator);
-    defer allocator.free(errors);
-    try renderer.printErrors(errors, allocator, file_name);
+    // const errors = try parse_tree.errors.toOwnedSlice(allocator);
+    // defer allocator.free(errors);
+    // try renderer.printErrors(errors, allocator, file_name);
 }
 
 /// Make sure to free the []const u8 result!!!
