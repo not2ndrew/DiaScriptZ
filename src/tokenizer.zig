@@ -22,19 +22,15 @@ pub const Tokenizer = @This();
 allocator: Allocator,
 offsets: *std.ArrayList(usize),
 buffer: []const u8,
-index: usize,
-mode: Mode,
-line_start: bool,
+index: usize = 0,
+mode: Mode = .normal,
+line_start: bool = true,
+// implicit semi colons are handled simiarlly to Go's implicit semi colon rules.
+// https://github.com/golang/go/blob/master/src/go/scanner/scanner.go
+insert_semi: bool = false,
 
-pub fn init(allocator: Allocator, offsets: *std.ArrayList(usize), buffer: []const u8) Tokenizer {
-    return .{
-        .allocator = allocator,
-        .offsets = offsets,
-        .buffer = buffer,
-        .index = 0,
-        .mode = .normal,
-        .line_start = true,
-    };
+fn isIdentChar(c: u8) bool {
+    return isAlphabetic(c) or isDigit(c) or c == '_';
 }
 
 fn skipWhiteSpace(self: *Tokenizer) !void {
@@ -42,6 +38,7 @@ fn skipWhiteSpace(self: *Tokenizer) !void {
         switch (self.buffer[self.index]) {
             ' ', '\r', '\t' => self.index += 1,
             '\n' => {
+                if (self.insert_semi) return;
                 try self.offsets.append(self.allocator, self.index);
                 self.index += 1;
                 self.line_start = true;
@@ -80,6 +77,8 @@ fn findStr(self: *Tokenizer) !Token {
         }
     }
 
+    self.insert_semi = true;
+
     return .{
         .tag = .string,
         .start = start,
@@ -98,12 +97,21 @@ fn matchNext(self: *Tokenizer, comptime c: u8) bool {
     return false;
 }
 
+pub fn init(allocator: Allocator, offsets: *std.ArrayList(usize), buffer: []const u8) Tokenizer {
+    return .{
+        .allocator = allocator,
+        .offsets = offsets,
+        .buffer = buffer,
+    };
+}
+
 pub fn next(self: *Tokenizer) !Token {
     const buffer = self.buffer;
     const len = buffer.len;
 
     try self.skipWhiteSpace();
 
+    var insert_semi = false;
     var result: Token = .{
         .tag = .invalid,
         .start = self.index,
@@ -126,7 +134,8 @@ pub fn next(self: *Tokenizer) !Token {
         '\n' => {
             // We only reach here if the condition is fulfilled
             // is true
-            result.tag = .newline;
+            try self.offsets.append(self.allocator, self.index);
+            result.tag = .semi_colon;
         },
         '+' => {
             result.tag = if (self.matchNext('=')) .plus_equal else .plus;
@@ -180,6 +189,7 @@ pub fn next(self: *Tokenizer) !Token {
         },
         ')' => {
             result.tag = .close_paren;
+            insert_semi = true;
         },
         '{' => {
             switch (self.mode) {
@@ -201,6 +211,8 @@ pub fn next(self: *Tokenizer) !Token {
                     result.tag = .close_brace;
                 }
             }
+
+            insert_semi = true;
         },
         ':' => {
             result.tag = .colon;
@@ -220,8 +232,12 @@ pub fn next(self: *Tokenizer) !Token {
             // Check for unique keywords
             if (keywords.get(buffer[result.start..self.index])) |uniqueId| {
                 result.tag = uniqueId;
+
+                // keyword "end" is required to have an implicit semi colon.
+                if (uniqueId == .keyword_end) insert_semi = true;
             } else {
                 result.tag = .identifier;
+                insert_semi = true;
             }
         },
         '0' ... '9' => {
@@ -229,17 +245,16 @@ pub fn next(self: *Tokenizer) !Token {
                 self.index += 1;
             }
             result.tag = .number;
+            insert_semi = true;
         },
         else => {
             result.tag = .invalid;
         }
     }
 
-    if (result.tag != .newline) self.line_start = false;
+    if (result.tag != .semi_colon) self.line_start = false;
+
+    self.insert_semi = insert_semi; // Preserve self.insert_semi info.
     result.end = self.index;
     return result;
-}
-
-fn isIdentChar(c: u8) bool {
-    return isAlphabetic(c) or isDigit(c) or c == '_';
 }
