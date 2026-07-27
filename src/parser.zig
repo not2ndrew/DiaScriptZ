@@ -78,7 +78,7 @@ fn expect(self: *Parser, expected: TokenTag) Error!TokenIndex {
 
     if (found != expected) {
         const token_pos = if (found == .EOF) idx - 2
-            else if (found == .newline) idx - 1
+            else if (found == .semi_colon) idx - 1
                 else idx;
 
         try self.errors.append(self.allocator, .{
@@ -390,7 +390,7 @@ token_pos: TokenIndex, speaker: NodeIndex) Error!NodeIndex {
 // interpolation = "{" ident "}" ;
 // content = any_character_except("{", "}", "\n") ;
 fn parseDialogueParts(self: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
-    while (self.peekTag() != .newline and self.peekTag() != .EOF) {
+    while (self.peekTag() != .semi_colon and self.peekTag() != .EOF) {
         switch (self.peekTag()) {
             .string => {
                 const str_index = try self.addNode(.string, self.token_pos, .{ .none = {} });

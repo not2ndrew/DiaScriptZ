@@ -216,6 +216,9 @@ pub fn next(self: *Tokenizer) !Token {
         '_' => {
             result.tag = .underscore;
         },
+        ';' => {
+            result.tag = .semi_colon;
+        },
         'a' ... 'z', 'A' ... 'Z' => {
             while (self.index < len and isIdentChar(buffer[self.index])) {
                 self.index += 1;

@@ -42,7 +42,6 @@ pub const Tag = enum {
     open_brace, // {
     close_brace, // }
     tilde, // ~
-    newline, // '\n'
     semi_colon, // ';'
 
     // Comparison
