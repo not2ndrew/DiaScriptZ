@@ -19,19 +19,19 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
 
-    try tree.testTokenizer(allocator, lines);
+    // try tree.testTokenizer(allocator, lines);
 
     // Generate AST from lines
-    // var parse_tree = try tree.parse(allocator, lines);
-    // defer parse_tree.deinit(allocator);
+    var parse_tree = try tree.parse(allocator, lines);
+    defer parse_tree.deinit(allocator);
 
-    // for (parse_tree.ast.tokens.items(.tag)) |tag| {
-    //     std.debug.print("Token Tag: {t}\n", .{tag});
-    // }
+    for (parse_tree.ast.tokens.items(.tag)) |tag| {
+        std.debug.print("Token Tag: {t}\n", .{tag});
+    }
 
-    // for (parse_tree.ast.nodes.items(.tag)) |tag| {
-    //     std.debug.print("Node Tag: {t}\n", .{tag});
-    // }
+    for (parse_tree.ast.nodes.items(.tag)) |tag| {
+        std.debug.print("Node Tag: {t}\n", .{tag});
+    }
 
     // Analyze AST
     // try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
@@ -45,8 +45,8 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     //     .tokens = parse_tree.ast.tokens,
     // };
 
-    // const errors = try parse_tree.errors.toOwnedSlice(allocator);
-    // defer allocator.free(errors);
+    const errors = try parse_tree.errors.toOwnedSlice(allocator);
+    defer allocator.free(errors);
     // try renderer.printErrors(errors, allocator, file_name);
 }
 

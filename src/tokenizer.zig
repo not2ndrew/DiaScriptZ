@@ -97,14 +97,6 @@ fn matchNext(self: *Tokenizer, comptime c: u8) bool {
     return false;
 }
 
-pub fn init(allocator: Allocator, offsets: *std.ArrayList(usize), buffer: []const u8) Tokenizer {
-    return .{
-        .allocator = allocator,
-        .offsets = offsets,
-        .buffer = buffer,
-    };
-}
-
 pub fn next(self: *Tokenizer) !Token {
     const buffer = self.buffer;
     const len = buffer.len;

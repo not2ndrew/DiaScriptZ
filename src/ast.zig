@@ -50,9 +50,11 @@ pub const ParseResult = struct {
 /// Make sure to deinit() nodes, stmts, and tokens
 pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     var tokens: Tokens = .empty;
+    defer tokens.deinit(allocator);
 
-    // TODO: store byte position for EVERY newline encountered.
-    // For every newline encountered, store the exact byte location.
+    // For error diagnostics, we store the byte positions
+    // of ALL newline characters.
+    // https://www.reddit.com/r/Compilers/comments/1bg5r9m/how_do_you_propagate_line_number_information_for/
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);
 
@@ -60,14 +62,15 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     try offsets.append(allocator, 0);
 
     // lines -> tokens
-    var tokenizer = Tokenizer.init(allocator, &offsets, buf);
+    var tokenizer: Tokenizer = .{
+        .allocator = allocator,
+        .offsets = &offsets,
+        .buffer = buf,
+    };
 
     while (true) {
         const token = try tokenizer.next();
         try tokens.append(allocator, token);
-
-        // if (token.tag == .newline)
-        //     try offsets.append(allocator, tokenizer.index);
 
         if (token.tag == .EOF) break;
     }
@@ -80,36 +83,11 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     return parseFromTokens(allocator, source_file, tokens.toOwnedSlice());
 }
 
-pub fn testTokenizer(allocator: Allocator, buf: []const u8) !void {
-    var tokens: Tokens = .empty;
-    defer tokens.deinit(allocator);
-
-    // TODO: store byte position for EVERY implicit semi colon.
-    // For every newline encountered, store the exact byte location.
-    // https://www.reddit.com/r/Compilers/comments/1bg5r9m/how_do_you_propagate_line_number_information_for/
-    var offsets: std.ArrayList(usize) = .empty;
-    defer offsets.deinit(allocator);
-
-    // line starts at index 0.
-    try offsets.append(allocator, 0);
-
-    // lines -> tokens
-    var tokenizer = Tokenizer.init(allocator, &offsets, buf);
-
-    while (true) {
-        const token = try tokenizer.next();
-        try tokens.append(allocator, token);
-
-        if (token.tag == .EOF) break;
-    }
-
-    for (tokens.items(.tag)) |tag| {
-        std.debug.print("Tag: {t}\n", .{tag});
-    }
-}
-
 fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
-    var parser = try Parser.init(allocator, tokens);
+    var parser: Parser = .{
+        .allocator = allocator,
+        .tokens = tokens,
+    };
 
     // tokens -> AST
     try parser.parseAll();
