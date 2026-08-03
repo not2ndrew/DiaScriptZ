@@ -51,24 +51,27 @@ pub const SourceFile = struct {
         const offsets = self.offsets;
         var low: usize = 0;
         var high: usize = offsets.len;
-        var line_idx: usize = 0;
 
-        // Testing new binary search approach.
+        // Since the array of offset bytes is sorted, we can do binary search.
         while (low < high) {
             // Avoid overflow
             const mid = low + (high - low) / 2;
             const value = offsets[mid];
 
-            if (value <= byte_pos) {
+            if (value < byte_pos) {
                 low = mid + 1;
             } else {
                 high = mid;
             }
         }
 
-        line_idx = low - 1;
-        const line = line_idx + 1;
-        const col = byte_pos - offsets[line_idx] + 1;
+        // Start the line at 1
+        const line = low + 1;
+        const line_start_offset = if (low == 0)
+            0
+        else
+            offsets[low - 1] + 1;
+        const col = byte_pos - line_start_offset + 1;
 
         return .{ .line = line, .col = col };
     }

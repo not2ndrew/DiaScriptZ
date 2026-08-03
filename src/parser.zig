@@ -77,12 +77,8 @@ fn expect(self: *Parser, expected: TokenTag) Error!TokenIndex {
     const found = self.peekTag();
 
     if (found != expected) {
-        const token_pos = if (found == .EOF) idx - 2
-            else if (found == .semi_colon) idx - 1
-                else idx;
-
         try self.errors.append(self.allocator, .{
-            .token_pos = token_pos,
+            .token_pos = idx,
             .tag = .unexpected_token,
             .extra = .{ .expected_tag = expected }
         });
@@ -568,7 +564,12 @@ fn parseFactor(self: *Parser) Error!NodeIndex {
             return expr;
         },
         else => {
-            return self.expect(.number);
+            try self.errors.append(self.allocator, .{
+                .token_pos = idx,
+                .tag = .unexpected_token,
+                .extra = .{ .expected_tag = .semi_colon }
+            });
+            return Error.ParseError;
         },
     }
 }

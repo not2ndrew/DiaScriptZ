@@ -58,9 +58,6 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     var offsets: std.ArrayList(usize) = .empty;
     defer offsets.deinit(allocator);
 
-    // line starts at index 0.
-    try offsets.append(allocator, 0);
-
     // lines -> tokens
     var tokenizer: Tokenizer = .{
         .allocator = allocator,
