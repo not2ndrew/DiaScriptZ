@@ -13,7 +13,6 @@ const Tokens = std.MultiArrayList(Token);
 pub const Error = struct {
     token_pos: TokenIndex,
     tag: Tag,
-    extra: Extra = .{ .none = {} },
 
     pub const Tag = enum {
         // Parsing Errors
@@ -35,11 +34,6 @@ pub const Error = struct {
         unknown_jump,
         modified_const,
         too_many_scopes,
-    };
-
-    pub const Extra = union {
-        none: void,
-        expected_tag: TokenTag,
     };
 };
 

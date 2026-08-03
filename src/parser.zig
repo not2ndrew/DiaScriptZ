@@ -36,11 +36,10 @@ extra_data: std.ArrayList(u32) = .empty,
 errors: std.ArrayList(AstError) = .empty,
 token_pos: u32 = 0,
 
-fn reportUnexpected(self: *Parser, tag: AstError.Tag, expected: TokenTag) !void {
+fn reportUnexpected(self: *Parser, tag: AstError.Tag) !void {
     try self.errors.append(self.allocator, .{
         .token_pos = self.token_pos,
         .tag = tag,
-        .extra = .{ .expected_tag = expected },
     });
 }
 
@@ -80,7 +79,6 @@ fn expect(self: *Parser, expected: TokenTag) Error!TokenIndex {
         try self.errors.append(self.allocator, .{
             .token_pos = idx,
             .tag = .unexpected_token,
-            .extra = .{ .expected_tag = expected }
         });
 
         return Error.ParseError;
@@ -151,6 +149,10 @@ fn parseStmt(self: *Parser) Error!NodeIndex {
         .underscore => self.parseAnonymousDialogue(),
         else => {
             self.next();
+            try self.errors.append(self.allocator, .{
+                .tag = .unexpected_token,
+                .token_pos = self.token_pos,
+            });
             return Error.ParseError;
         }
     };
@@ -187,7 +189,7 @@ fn parseIdentStmt(self: *Parser) Error!NodeIndex {
         .assign, .plus_equal, .minus_equal,
         .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
         else => {
-            try self.reportUnexpected(.expected_arith_op, .assign);
+            try self.reportUnexpected(.expected_arith_op);
             return Error.ParseError;
         }
     };
@@ -201,7 +203,7 @@ fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Er
     _ = try self.expect(.semi_colon);
 
     const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
-        try self.reportUnexpected(.expected_arith_op, .assign);
+        try self.reportUnexpected(.expected_arith_op);
         return ParserError.ParseError;
     };
 
@@ -294,7 +296,7 @@ fn parseCompareExpr(self: *Parser) Error!NodeIndex {
     const op_tag = self.peekTag();
 
     const compare_tag = nodeTagFromCompare(op_tag) orelse {
-        try self.reportUnexpected(.expected_compar_op, .equal_equal);
+        try self.reportUnexpected(.expected_compar_op);
         return Error.ParseError;
     };
 
@@ -406,7 +408,7 @@ fn parseDialogueParts(self: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
     // The name is already inserted.
     // So, use 1 instead of 0.
     if (dialogue.items.len == 1) {
-        try self.reportUnexpected(.expected_dialogue, .string);
+        try self.reportUnexpected(.expected_dialogue);
         return Error.ParseError;
     }
 }
@@ -502,7 +504,7 @@ fn parseExpr(self: *Parser) Error!NodeIndex {
         if (tag != .plus and tag != .minus) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try self.reportUnexpected(.expected_arith_op, .plus);
+            try self.reportUnexpected(.expected_arith_op);
             return ParserError.ParseError;
         };
         const op_tok = self.token_pos;
@@ -527,7 +529,7 @@ fn parseTerm(self: *Parser) Error!NodeIndex {
         if (tag != .asterisk and tag != .slash) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try self.reportUnexpected(.expected_arith_op, .asterisk);
+            try self.reportUnexpected(.expected_arith_op);
             return ParserError.ParseError;
         };
         const op_tok = self.token_pos;
@@ -567,7 +569,6 @@ fn parseFactor(self: *Parser) Error!NodeIndex {
             try self.errors.append(self.allocator, .{
                 .token_pos = idx,
                 .tag = .unexpected_token,
-                .extra = .{ .expected_tag = .semi_colon }
             });
             return Error.ParseError;
         },

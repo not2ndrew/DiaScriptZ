@@ -75,7 +75,6 @@ fn report(self: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
     try self.errors.append(self.allocator, .{
         .token_pos = token_pos,
         .tag = tag,
-        .extra = .{ .none = {} },
     });
 }
 
