@@ -79,9 +79,8 @@ fn report(self: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
 }
 
 fn addScope(self: *Semantic, token_pos: TokenIndex) !void {
-    // TODO: error should point at the call site of the breaking scope.
     if (self.locals_per_scope.items.len >= MAX_NUM_SCOPES) {
-        return try self.report(token_pos, .too_many_scopes);
+        return self.report(token_pos, .too_many_scopes);
     }
     self.locals_per_scope.appendAssumeCapacity(0);
 }
@@ -110,10 +109,10 @@ fn addLocal(self: *Semantic, local: Local) !u32 {
 // The last node of a post-traversal list
 // is the root node.
 pub fn analyze(
-allocator: Allocator,
-source: []const u8,
-ast: *Ast,
-errors: *std.ArrayList(AstError)
+    allocator: Allocator,
+    source: []const u8,
+    ast: *Ast,
+    errors: *std.ArrayList(AstError)
     ) !void {
     var semantic: Semantic = .{
         .allocator = allocator,
@@ -286,10 +285,17 @@ fn visitBinary(self: *Semantic, data: Node.Data, comptime binOp: binaryOp) !void
 fn visitExpr(self: *Semantic, node_idx: NodeIndex) !void {
     const node = self.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
+    const name = self.tokenSlice(token_pos);
     switch (node.tag) {
-        .number => {},
+        .number => {
+            // Base 10
+            _ = std.fmt.parseInt(u8, name, 10) catch |err| {
+                if (err == std.fmt.ParseIntError.Overflow) {
+                    return self.report(token_pos, .int_overflow);
+                }
+            };
+        },
         .var_ident => {
-            const name = self.tokenSlice(token_pos);
             const idx = self.local_table.get(name) orelse {
                 return self.report(token_pos, .undeclared_var);
             };

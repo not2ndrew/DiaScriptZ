@@ -468,14 +468,16 @@ fn collectStmtUntil(self: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)
     }
 
     _ = try self.expect(end_tag);
-    _ = try self.expect(.semi_colon);
+    // To allow complex statements to occupy a single line,
+    // a semicolon may be omitted before a closing ")" or "}".
+    if (self.peekTag() == .semi_colon) self.token_pos += 1;
 
     const start: u32 = @intCast(self.extra_data.items.len);
     const len: u32 = @intCast(stmts.items.len);
     try self.extra_data.appendSlice(
-    self.allocator,
-    stmts.items
-);
+        self.allocator,
+        stmts.items
+    );
 
     return .{ .start = start, .len = len };
 }

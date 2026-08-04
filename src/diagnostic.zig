@@ -150,6 +150,9 @@ pub const DiagRenderer = struct {
         }
     }
 
+    // TODO: Create a lexeme function for token
+    // Many tokens can be determined entirely by their tag.
+    // Then use that []const u8 value and print it out.
     fn errorMessage(self: *DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
         const str = self.source_file.source[token.start..token.end];
@@ -176,7 +179,7 @@ pub const DiagRenderer = struct {
 
             // Semantic Errors
             .int_overflow => {
-                return w.writeAll("Integer overflow");
+                return w.writeAll("Integer cannot go beyond 256");
             },
             .ident_mismatch => {
                 return w.print("'{s}' is already defined as a INSERT_TYPE", .{str});

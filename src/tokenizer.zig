@@ -25,7 +25,7 @@ buffer: []const u8,
 index: usize = 0,
 mode: Mode = .normal,
 line_start: bool = true,
-// implicit semi colons are handled simiarlly to Go's implicit semi colon rules.
+// implicit semi colons are handled similarly to Go's implicit semi colon rules.
 // https://github.com/golang/go/blob/master/src/go/scanner/scanner.go
 insert_semi: bool = false,
 
