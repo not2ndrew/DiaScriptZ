@@ -40,6 +40,18 @@ fn reportUnexpected(self: *Parser, tag: AstError.Tag) !void {
     });
 }
 
+// TODO: The following prints two errors.
+// It should only point at the '!'
+// if (x < !) {
+// }
+// script.txt:1:9 error: Expected expression, found '!'
+//      |
+//    1 | if (x < !) {
+//      |         ^
+// script.txt:3:1 error: Expected expression, found '''
+//      |
+//    3 | }
+//      | ^
 fn synchronize(self: *Parser) void {
     // Force the parser to advance to next token_pos.
     self.token_pos += 1;
@@ -47,9 +59,8 @@ fn synchronize(self: *Parser) void {
     while (self.token_pos < self.tokens.len) {
         switch (self.peekTag()) {
             .keyword_const, .keyword_var,
-            .keyword_if, .keyword_else,
-            .keyword_end, .choice_marker,
-            .underscore, .close_brace,
+            .keyword_if, .choice_marker,
+            .underscore, .semi_colon,
             .EOF => return,
             else => self.token_pos += 1,
         }

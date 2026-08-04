@@ -10,6 +10,7 @@ const Allocator = std.mem.Allocator;
 const Arena = std.heap.ArenaAllocator;
 const DelimiterError = std.Io.Reader.DelimiterError;
 
+const ParseResult = tree.ParseResult;
 const DiagRenderer = diag.DiagRenderer;
 
 pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
@@ -18,8 +19,6 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     // ===== GENERIC ALLOCATOR =====
     const lines = try readFile(init, allocator, file_name);
     defer allocator.free(lines);
-
-    // try tree.testTokenizer(allocator, lines);
 
     // Generate AST from lines
     var parse_tree = try tree.parse(allocator, lines);
@@ -36,18 +35,14 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     // Analyze AST
     try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
+    // Before converting to IR, we need to check for syntax errors.
+    if (parse_tree.errors.items.len > 0)
+        return printErrors(&parse_tree, allocator, file_name);
+
     // AST -> IR
-    // try DiaIR.generate(allocator, &parse_tree.ast, lines);
+    try DiaIR.generate(allocator, &parse_tree.ast, lines);
 
-    // Diagnostics
-    var renderer: DiagRenderer = .{
-        .source_file = parse_tree.source_file,
-        .tokens = parse_tree.ast.tokens,
-    };
-
-    const errors = try parse_tree.errors.toOwnedSlice(allocator);
-    defer allocator.free(errors);
-    try renderer.printErrors(errors, allocator, file_name);
+    try printErrors(&parse_tree, allocator, file_name);
 }
 
 /// Make sure to free the []const u8 result!!!
@@ -74,4 +69,17 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     }
 
     return lines;
+}
+
+fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {
+    const errors = try parse_tree.errors.toOwnedSlice(allocator);
+    defer allocator.free(errors);
+
+    var renderer: DiagRenderer = .{
+        .source_file = parse_tree.source_file,
+        .tokens = parse_tree.ast.tokens,
+    };
+
+    // Diagnostics
+    try renderer.printErrors(errors, allocator, file_name);
 }
