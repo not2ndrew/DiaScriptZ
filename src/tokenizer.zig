@@ -43,6 +43,7 @@ fn skipWhiteSpace(self: *Tokenizer) !void {
                 self.index += 1;
                 self.line_start = true;
                 self.mode = .normal;
+                break;
             },
             else => return,
         }
@@ -118,7 +119,8 @@ pub fn next(self: *Tokenizer) !Token {
         };
     }
 
-    const ch = self.buffer[self.index];
+    const start = self.index;
+    const ch = self.buffer[start];
     self.index += 1;
 
     if (self.mode == .string) return self.findStr();
@@ -126,7 +128,7 @@ pub fn next(self: *Tokenizer) !Token {
         '\n' => {
             // We only reach here if the condition is fulfilled
             // is true
-            try self.offsets.append(self.allocator, self.index);
+            try self.offsets.append(self.allocator, start);
             result.tag = .semi_colon;
         },
         '+' => {

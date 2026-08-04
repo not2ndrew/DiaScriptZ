@@ -21,10 +21,7 @@ const nodeTagFromScene = zig_node.nodeTagFromScene;
 
 const Tokens = std.MultiArrayList(Token);
 
-const ParserError = error {
-    ParseError,
-};
-
+const ParserError = error { ParseError };
 const Error = ParserError || Allocator.Error;
 
 pub const Parser = @This();
