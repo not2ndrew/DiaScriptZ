@@ -52,6 +52,9 @@ fn reportUnexpected(self: *Parser, tag: AstError.Tag) !void {
 //      |
 //    3 | }
 //      | ^
+//
+// A solution is to consume the semi_colon and move to next beginning expr.
+// This requires more testing.
 fn synchronize(self: *Parser) void {
     // Force the parser to advance to next token_pos.
     self.token_pos += 1;
@@ -60,7 +63,11 @@ fn synchronize(self: *Parser) void {
         switch (self.peekTag()) {
             .keyword_const, .keyword_var,
             .keyword_if, .choice_marker,
-            .underscore, .semi_colon,
+            .underscore => return,
+            .semi_colon => {
+                self.token_pos += 1;
+                return;
+            },
             .EOF => return,
             else => self.token_pos += 1,
         }

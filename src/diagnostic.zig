@@ -96,7 +96,7 @@ pub const DiagRenderer = struct {
     source_file: SourceFile,
     tokens: Tokens.Slice,
 
-    // TODO: The caret is incorrect
+    // TODO: Make the text file include spaces
     //
     // Code:
     // ---------
@@ -106,10 +106,10 @@ pub const DiagRenderer = struct {
     // }
     // ---------
     // Diagnostics:
-    // script.txt:2:20 error: Variable 'x' already exist
+    // script.txt:3:5 error: Variable 'x' already exist
     //      |
-    //    2 |  var x = 2
-    //      |                    ^
+    //    3 | var x = 2
+    //      | ^
     //
     pub fn printErrors(
         self: *DiagRenderer,
