@@ -35,7 +35,10 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     // Analyze AST
     try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
 
-    // Before converting to IR, we need to check for syntax errors.
+    // The AST -> IR lowering process assumes an AST
+    // does not have any parse or syntax errors.
+    // If there is exist an error,
+    // we halt the entire program and return all errors found.
     if (parse_tree.errors.items.len > 0)
         return printErrors(&parse_tree, allocator, file_name);
 

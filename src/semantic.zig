@@ -30,17 +30,11 @@ const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 pub const Local = struct {
     token_pos: TokenIndex,
     kind: Kind,
-    state: State,
 
     pub const Kind = enum {
         keyword_const,
         keyword_var,
         name,
-    };
-
-    pub const State = enum {
-        declaring,
-        defined,
     };
 };
 
@@ -57,14 +51,15 @@ source: []const u8,
 ast: *Ast,
 errors: *std.ArrayList(AstError),
 
-locals_per_scope: std.ArrayList(u32) = .empty,
+scope_stack: std.ArrayList(u32) = .empty,
 local_table: LocalTable = .empty,
 label_table: LabelTable = .empty,
 locals: std.ArrayList(Local) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
+is_initializing: bool = false,
 
 pub fn deinit(self: *Semantic) void {
-    self.locals_per_scope.deinit(self.allocator);
+    self.scope_stack.deinit(self.allocator);
     self.local_table.deinit(self.allocator);
     self.label_table.deinit(self.allocator);
     self.locals.deinit(self.allocator);
@@ -79,17 +74,17 @@ fn report(self: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
 }
 
 fn addScope(self: *Semantic, token_pos: TokenIndex) !void {
-    if (self.locals_per_scope.items.len >= MAX_NUM_SCOPES) {
+    if (self.scope_stack.items.len >= MAX_NUM_SCOPES) {
         return self.report(token_pos, .too_many_scopes);
     }
-    self.locals_per_scope.appendAssumeCapacity(0);
+    self.scope_stack.appendAssumeCapacity(0);
 }
 
 fn endScope(self: *Semantic) void {
-    const count = self.locals_per_scope.pop() orelse return;
+    const count = self.scope_stack.pop() orelse return;
 
-    for (0..count) |_| {
-        const local = self.locals.pop().?;
+    for (0..count) |i| {
+        const local = self.locals.items[self.locals.items.len - i - 1];
         const name = self.tokenSlice(local.token_pos);
 
         _ = self.local_table.swapRemove(name);
@@ -132,7 +127,7 @@ fn visitRoot(self: *Semantic) !void {
     const end = range.start + range.len;
 
     // Put a limit to how many scopes can be generated
-    try self.locals_per_scope.ensureTotalCapacityPrecise(self.allocator, MAX_NUM_SCOPES);
+    try self.scope_stack.ensureTotalCapacityPrecise(self.allocator, MAX_NUM_SCOPES);
 
     for (start..end) |idx| {
         const node_idx = self.ast.extra_data[idx];
@@ -147,7 +142,7 @@ fn visitRoot(self: *Semantic) !void {
         };
 
         if (self.local_table.contains(name))
-        try self.report(token_pos, .ident_mismatch);
+            try self.report(token_pos, .ident_mismatch);
     }
 }
 
@@ -184,7 +179,7 @@ fn visitVarDecl(self: *Semantic, node: Node) !void {
     var mutability: Local.Kind = .keyword_var;
 
     if (mut_type == .keyword_const)
-    mutability = .keyword_const;
+        mutability = .keyword_const;
 
     const name = self.tokenSlice(pos);
 
@@ -200,16 +195,17 @@ fn visitVarDecl(self: *Semantic, node: Node) !void {
     const idx = try self.addLocal(.{
         .token_pos = pos,
         .kind = mutability,
-        .state = .declaring,
     });
+
+    self.is_initializing = true;
 
     entity.value_ptr.* = idx;
     try self.visitExpr(decl.@"1");
-    self.locals.items[idx].state = .defined;
+    self.is_initializing = false;
 
-    const scope_depth = self.locals_per_scope.items.len;
+    const scope_depth = self.scope_stack.items.len;
     if (scope_depth != 0) {
-        self.locals_per_scope.items[scope_depth - 1] += 1;
+        self.scope_stack.items[scope_depth - 1] += 1;
     }
 }
 
@@ -219,10 +215,10 @@ fn visitAssign(self: *Semantic, node: Node) !void {
     const pos = ident_node.token_pos;
     const ident_name = self.tokenSlice(pos);
 
-    const idx = self.local_table.get(ident_name) orelse {
+    const idx = self.local_table.get(ident_name) orelse
         return self.report(pos, .undeclared_var);
-    };
 
+    self.is_initializing = true;
     const local = self.locals.items[idx];
 
     switch (local.kind) {
@@ -232,6 +228,7 @@ fn visitAssign(self: *Semantic, node: Node) !void {
     }
 
     try self.visitExpr(assign.@"1");
+    self.is_initializing = false;
 }
 
 // if_stmt extra_data layout:
@@ -290,21 +287,16 @@ fn visitExpr(self: *Semantic, node_idx: NodeIndex) !void {
         .number => {
             // Base 10
             _ = std.fmt.parseInt(u8, name, 10) catch |err| {
-                if (err == std.fmt.ParseIntError.Overflow) {
+                if (err == std.fmt.ParseIntError.Overflow)
                     return self.report(token_pos, .int_overflow);
-                }
             };
         },
         .var_ident => {
-            const idx = self.local_table.get(name) orelse {
+            _ = self.local_table.get(name) orelse
                 return self.report(token_pos, .undeclared_var);
-            };
 
-            const sym = &self.locals.items[idx];
-
-            if (sym.state == .declaring) {
+            if (self.is_initializing)
                 return self.report(token_pos, .undeclared_var);
-            }
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -342,7 +334,6 @@ fn visitDialogue(self: *Semantic, node: Node) !void {
         const idx = try self.addLocal(.{
             .token_pos = speaker.token_pos,
             .kind = .name,
-            .state = .defined,
         });
         entity.value_ptr.* = idx;
     }
@@ -363,9 +354,8 @@ fn visitDialogueParts(self: *Semantic, start: u32, len: u32) !void {
         const token_pos = jump_node.token_pos;
         const jump_name = self.tokenSlice(token_pos);
 
-        if (!self.label_table.contains(jump_name)) {
+        if (!self.label_table.contains(jump_name))
             try self.unresolved_jumps.append(self.allocator, token_pos);
-        }
     }
 }
 
@@ -391,9 +381,8 @@ fn visitLabel(self: *Semantic, node: Node) !void {
     const label_name = self.tokenSlice(token_pos);
 
     const entity = try self.label_table.getOrPut(self.allocator, label_name);
-    if (entity.found_existing) {
+    if (entity.found_existing)
         return self.report(token_pos, .duplicate_label);
-    }
 
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.

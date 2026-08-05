@@ -21,12 +21,6 @@ pub const Tag = enum {
     keyword_end,
     keyword_and,
     keyword_or,
-    label,
-    scene,
-
-    // If Statement
-    then_block,
-    else_block,
 
     // Single Character
     colon, // :

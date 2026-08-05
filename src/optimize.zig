@@ -1,5 +1,6 @@
 const std = @import("std");
 const ir = @import("dia_ir.zig");
+const Local = @import("semantic.zig").Local;
 
 const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
@@ -24,6 +25,9 @@ const Optimize = @This();
 
 instructions: *Instructions,
 extra: *std.ArrayList(u32),
+// TODO: I may need Semantic Locals here
+// By getting locals, I can determine variable states without going through token slices.
+// The issue is how to map from Semantic -> Optimize.
 
 pub fn optimizeRoot(diaIR: *DiaIR) void {
     var opt: Optimize = .{
@@ -49,9 +53,18 @@ fn block(opt: *Optimize, start: u32, len: u32) void {
 
 fn stmt(opt: *Optimize, inst: Inst) void {
     switch (inst.tag) {
-        .plus, .minus, .mult, .div => opt.arithmetic(inst),
+        .store => opt.store(inst),
+        // .plus, .minus, .mult, .div => opt.arithmetic(inst),
         else => {},
     }
+}
+
+// TODO: Not quite sure on if I need this.
+// All I'm doing is code optimization.
+fn store(opt: *Optimize, inst: Inst) void {
+    const binary = inst.data.binary;
+    const decl = opt.instructions.items[binary.lhs];
+    _ = decl;
 }
 
 fn arithmetic(opt: *Optimize, inst: Inst) void {
@@ -63,11 +76,17 @@ fn arithmetic(opt: *Optimize, inst: Inst) void {
     const rhs_inst = opt.instructions.items[rhs];
 
     if (lhs_inst.tag == .constant and rhs_inst.tag == .constant) {
-        // opt.fold();
+        fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
     }
 }
 
 // TODO: Figure out how to perform constant folding on flattened instructions.
-// fn fold(opt: *Optimize) void {
-//
-// }
+fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !void {
+    return switch (tag) {
+        .plus => std.math.add(u8, lhs, rhs),
+        .minus => std.math.sub(u8, lhs, rhs),
+        .mult => std.math.mul(u8, lhs, rhs),
+        .div => std.math.divTrunc(u8, lhs, rhs),
+        else => {},
+    };
+}

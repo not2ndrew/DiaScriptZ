@@ -121,14 +121,6 @@ pub fn generate(allocator: Allocator, ast: *Ast, source: []const u8) Error!void 
     const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
     _ = try diaIR.reduceBlock(range.start, range.len);
-
-    // for (ast.nodes.items(.tag)) |tag| {
-    //     std.debug.print("Node tag: {t}\n", .{tag});
-    // }
-    //
-    // for (diaIR.instructions.items) |inst| {
-    //     std.debug.print("Instruction Tag: {t}\n", .{inst.tag});
-    // }
 }
 
 fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {

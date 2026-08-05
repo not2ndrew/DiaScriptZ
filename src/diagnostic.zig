@@ -10,6 +10,19 @@ const TokenTag = tok.Tag;
 const TokenIndex = tok.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
 
+// TODO:
+// 1) Move diagnostics into AST errors
+// Rather than a single diagnostic covers all types of errors.
+// We split the errors into two different types:
+//     1. Comptime (syntax, parsing) errors
+//     2. Runtime errors.
+// 2) Add extra union field to AstError (formerly Error)
+// Since we are moving diagnostics to AST, might as well call it AstError.
+// And, create a separate diagnostics for runtime.
+//
+// The concern I had was the union field was
+// 1) Wasted space when continuing to use void as union for Semantic errors.
+// 2) More clarity.
 pub const Error = struct {
     token_pos: TokenIndex,
     tag: Tag,
@@ -96,7 +109,8 @@ pub const DiagRenderer = struct {
     source_file: SourceFile,
     tokens: Tokens.Slice,
 
-    // TODO: Make the text file include spaces
+    // TODO: Sometimes, the spaces are not included.
+    // Maybe this is due to the zig build?
     //
     // Code:
     // ---------
