@@ -40,21 +40,6 @@ fn reportUnexpected(self: *Parser, tag: AstError.Tag) !void {
     });
 }
 
-// TODO: The following prints two errors.
-// It should only point at the '!'
-// if (x < !) {
-// }
-// script.txt:1:9 error: Expected expression, found '!'
-//      |
-//    1 | if (x < !) {
-//      |         ^
-// script.txt:3:1 error: Expected expression, found '''
-//      |
-//    3 | }
-//      | ^
-//
-// A solution is to consume the semi_colon and move to next beginning expr.
-// This requires more testing.
 fn synchronize(self: *Parser) void {
     // Force the parser to advance to next token_pos.
     self.token_pos += 1;

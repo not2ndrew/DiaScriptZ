@@ -34,9 +34,9 @@ pub const Inst = struct {
         block,
 
         // Arithmetic
-        plus,
-        minus,
-        mult,
+        add,
+        sub,
+        mul,
         div,
 
         // comparison
@@ -59,26 +59,16 @@ pub const Inst = struct {
     };
 
     // TODO: Maybe don't store token_pos
-    // every execution has to perform
+    // IR and Sem both have token_pos. When we enter code optimization,
+    // it is redundant to store both of them.
+    // Every execution has to perform
     // token_pos -> token -> source slice -> symbol lookup -> symbol
-    //
-    // Instead, store an index to where the symbol is stored.
-    // This requires symbol hashset from Semantic.
-    //
-    // That way, it is easier to extract
-    // symbolID -> symbol lookup -> symbol
-    //
-    // If we ever need the name of the symbol, then store token_pos.
-    //
-    // TODO: Don't do parseInt() and name look up in evalExpr().
-    // Both operations are done in Semantic.
-    //
-    // So, Symbol should store uint in its extra union data.
+    // or
+    // symbol -> token_pos -> token -> source slice -> symbol lookup
     pub const Data = union {
+        none: void,
         uint: u8,
         token_pos: u32,
-        // symbolID: u32,
-        // labelID: u32,
         binary: struct {
             lhs: u32,
             rhs: u32,
@@ -100,9 +90,9 @@ source: []const u8,
 instructions: Insts = .empty,
 extra: std.ArrayList(u32) = .empty,
 
-pub fn deinit(self: *DiaIR) void {
-    self.instructions.deinit(self.allocator);
-    self.extra.deinit(self.allocator);
+pub fn deinit(ir: *DiaIR) void {
+    ir.instructions.deinit(ir.allocator);
+    ir.extra.deinit(ir.allocator);
 }
 
 pub fn generate(allocator: Allocator, ast: *Ast, source: []const u8) Error!void {
@@ -123,39 +113,39 @@ pub fn generate(allocator: Allocator, ast: *Ast, source: []const u8) Error!void 
     _ = try diaIR.reduceBlock(range.start, range.len);
 }
 
-fn identName(self: *DiaIR, token_pos: TokenIndex) []const u8 {
-    const token = self.ast.tokens.get(token_pos);
-    return self.source[token.start..token.end];
+fn identName(ir: *DiaIR, token_pos: TokenIndex) []const u8 {
+    const token = ir.ast.tokens.get(token_pos);
+    return ir.source[token.start..token.end];
 }
 
-fn appendInst(self: *DiaIR, comptime tag: Inst.Tag, data: Inst.Data) u32 {
-    self.instructions.appendAssumeCapacity(.{
+fn appendInst(ir: *DiaIR, comptime tag: Inst.Tag, data: Inst.Data) u32 {
+    ir.instructions.appendAssumeCapacity(.{
         .tag = tag,
         .data = data,
     });
 
-    const len: u32 = @intCast(self.instructions.items.len);
+    const len: u32 = @intCast(ir.instructions.items.len);
     return len - 1;
 }
 
-fn reduceBlock(self: *DiaIR, start: u32, len: u32) Error!u32 {
+fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!u32 {
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(ir.allocator);
 
-    try stmts.ensureTotalCapacityPrecise(self.allocator, len);
+    try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
     const end = start + len;
 
     for (start..end) |idx| {
         const idx_cast: u32 = @intCast(idx);
-        const stmt_idx = self.ast.extra_data[idx_cast];
-        const inst_idx = try self.reduceStmt(stmt_idx);
+        const stmt_idx = ir.ast.extra_data[idx_cast];
+        const inst_idx = try ir.reduceStmt(stmt_idx);
         stmts.appendAssumeCapacity(inst_idx);
     }
 
-    self.extra.appendSliceAssumeCapacity(stmts.items);
+    const range_start: u32 = @intCast(ir.extra.items.len);
+    ir.extra.appendSliceAssumeCapacity(stmts.items);
 
-    const range_start: u32 = @intCast(self.extra.items.len);
-    return self.appendInst(.block, .{
+    return ir.appendInst(.block, .{
         .range = .{
             .start = range_start,
             .len = len,
@@ -163,26 +153,26 @@ fn reduceBlock(self: *DiaIR, start: u32, len: u32) Error!u32 {
     });
 }
 
-fn reduceStmt(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
-    const node = self.ast.nodes.get(node_idx);
+fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
+    const node = ir.ast.nodes.get(node_idx);
     return switch (node.tag) {
         // Arithmetic IR
-        .declar_stmt, .assign => self.reduceDecl(node),
-        .plus_equal => self.reduceArith(node, .plus),
-        .minus_equal => self.reduceArith(node, .minus),
-        .mult_equal => self.reduceArith(node, .mult),
-        .div_equal => self.reduceArith(node, .div),
+        .declar_stmt, .assign => ir.reduceDecl(node),
+        .plus_equal => ir.reduceArith(node, .add),
+        .minus_equal => ir.reduceArith(node, .sub),
+        .mult_equal => ir.reduceArith(node, .mul),
+        .div_equal => ir.reduceArith(node, .div),
 
         // Comparison IR
-        .if_stmt => try self.reduceIfStmt(node),
+        .if_stmt => try ir.reduceIfStmt(node),
 
         .block, => {
             const range = node.data.range;
-            return try self.reduceBlock(range.start, range.len);
+            return try ir.reduceBlock(range.start, range.len);
         },
         // Dialogue IR
-        .dialogue => self.reduceDialogue(node),
-        .choice => self.reduceChoice(node),
+        .dialogue => ir.reduceDialogue(node),
+        .choice => ir.reduceChoice(node),
 
         // TODO: label also has a label_ident.
         // Append Inst for label.
@@ -191,136 +181,136 @@ fn reduceStmt(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
     };
 }
 
-fn reduceDecl(self: *DiaIR, node: Node) Error!u32 {
+fn reduceDecl(ir: *DiaIR, node: Node) Error!u32 {
     const assign = node.data.node_and_node;
     const ident_idx = assign.@"0";
     const value_idx = assign.@"1";
 
-    const ident = self.ast.nodes.get(ident_idx);
-    const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
-    const value = try self.evalExpr(value_idx);
+    const ident = ir.ast.nodes.get(ident_idx);
+    const ident_pos = ir.appendInst(.load, .{ .token_pos = ident.token_pos });
+    const value = try ir.evalExpr(value_idx);
 
-    return self.appendInst(.store, .{
+    return ir.appendInst(.store, .{
         .binary = .{ .lhs = ident_pos, .rhs = value }
     });
 }
 
 // Convert combinational arithmetic to singular arithmetic
-fn reduceArith(self: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!u32 {
+fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!u32 {
     const operand = node.data.node_and_node;
     const ident_idx = operand.@"0";
     const value_idx = operand.@"1";
 
-    const ident = self.ast.nodes.get(ident_idx);
-    const ident_pos = self.appendInst(.load, .{ .token_pos = ident.token_pos });
+    const ident = ir.ast.nodes.get(ident_idx);
+    const ident_pos = ir.appendInst(.load, .{ .token_pos = ident.token_pos });
 
-    const ident_pos_2 = self.appendInst(.load, .{ .token_pos = ident.token_pos });
-    const expr = try self.evalExpr(value_idx);
-    const combine = self.appendInst(tag, .{
+    const ident_pos_2 = ir.appendInst(.load, .{ .token_pos = ident.token_pos });
+    const expr = try ir.evalExpr(value_idx);
+    const combine = ir.appendInst(tag, .{
         .binary = .{ .lhs = ident_pos_2, .rhs = expr }
     });
 
-    return self.appendInst(.store, .{
+    return ir.appendInst(.store, .{
         .binary = .{ .lhs = ident_pos, .rhs = combine }
     });
 }
 
-fn reduceIfStmt(self: *DiaIR, node: Node) Error!u32 {
+fn reduceIfStmt(ir: *DiaIR, node: Node) Error!u32 {
     const range = node.data.range;
     const start = range.start;
     const len = range.len;
 
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(ir.allocator);
 
-    try stmts.ensureTotalCapacity(self.allocator, len);
+    try stmts.ensureTotalCapacity(ir.allocator, len);
 
-    const condition_idx = self.ast.extra_data[start];
-    const condition = try self.reduceCondition(condition_idx);
+    const condition_idx = ir.ast.extra_data[start];
+    const condition = try ir.reduceCondition(condition_idx);
 
-    const then_idx = self.ast.extra_data[start + 1];
-    const then_block = try self.reduceStmt(then_idx);
+    const then_idx = ir.ast.extra_data[start + 1];
+    const then_block = try ir.reduceStmt(then_idx);
 
-    const else_idx = self.ast.extra_data[start + 2];
+    const else_idx = ir.ast.extra_data[start + 2];
     var else_block: u32 = invalid_node;
     if (else_idx != invalid_node) {
-        else_block = try self.reduceStmt(else_idx);
+        else_block = try ir.reduceStmt(else_idx);
     }
 
     stmts.appendAssumeCapacity(condition);
     stmts.appendAssumeCapacity(then_block);
     stmts.appendAssumeCapacity(else_block);
 
-    const extra_start: u32 = @intCast(self.extra.items.len);
-    self.extra.appendSliceAssumeCapacity(stmts.items);
+    const extra_start: u32 = @intCast(ir.extra.items.len);
+    ir.extra.appendSliceAssumeCapacity(stmts.items);
 
-    return self.appendInst(.branch, .{
+    return ir.appendInst(.branch, .{
         .range = .{ .start = extra_start, .len = len }
     });
 }
 
-fn reduceDialogue(self: *DiaIR, node: Node) Error!u32 {
+fn reduceDialogue(ir: *DiaIR, node: Node) Error!u32 {
     const range = node.data.range;
     const start = range.start;
     const len = range.len;
 
     var parts: std.ArrayList(u32) = .empty;
-    defer parts.deinit(self.allocator);
+    defer parts.deinit(ir.allocator);
 
-    try parts.ensureTotalCapacityPrecise(self.allocator, len);
+    try parts.ensureTotalCapacityPrecise(ir.allocator, len);
 
-    const speaker = self.appendInst(.speaker, .{
+    const speaker = ir.appendInst(.speaker, .{
         .token_pos = node.token_pos,
     });
     parts.appendAssumeCapacity(speaker);
 
-    try self.reduceDialogueParts(&parts, start, len);
+    try ir.reduceDialogueParts(&parts, start, len);
 
-    const extra_start: u32 = @intCast(self.extra.items.len);
-    self.extra.appendSliceAssumeCapacity(parts.items);
+    const extra_start: u32 = @intCast(ir.extra.items.len);
+    ir.extra.appendSliceAssumeCapacity(parts.items);
 
-    return self.appendInst(.block, .{
+    return ir.appendInst(.block, .{
         .range = .{ .start = extra_start, .len = len }
     });
 }
 
-fn reduceChoice(self: *DiaIR, node: Node) Error!u32 {
+fn reduceChoice(ir: *DiaIR, node: Node) Error!u32 {
     const range = node.data.range;
     const len = range.len;
 
     var parts: std.ArrayList(u32) = .empty;
-    defer parts.deinit(self.allocator);
+    defer parts.deinit(ir.allocator);
 
-    try parts.ensureTotalCapacityPrecise(self.allocator, len);
+    try parts.ensureTotalCapacityPrecise(ir.allocator, len);
 
     // Choice is the same as dialogue except
     // speaker is an invalid node.
     parts.appendAssumeCapacity(invalid_node);
 
-    try self.reduceDialogueParts(&parts, range.start, len);
+    try ir.reduceDialogueParts(&parts, range.start, len);
 
-    const extra_start: u32 = @intCast(self.extra.items.len);
-    self.extra.appendSliceAssumeCapacity(parts.items);
+    const extra_start: u32 = @intCast(ir.extra.items.len);
+    ir.extra.appendSliceAssumeCapacity(parts.items);
 
-    return self.appendInst(.block, .{
+    return ir.appendInst(.block, .{
         .range = .{ .start = extra_start, .len = len }
     });
 }
 
 // Dialogue parts scans the line and jump. NOT the speaker.
-fn reduceDialogueParts(self: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: u32) Error!void {
+fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: u32) Error!void {
     const end = start + len;
     for (start + 1..end - 1) |idx| {
-        const text_idx = self.ast.extra_data[idx];
-        const text = try self.evalText(text_idx);
+        const text_idx = ir.ast.extra_data[idx];
+        const text = try ir.evalText(text_idx);
         parts.appendAssumeCapacity(text);
     }
 
-    const jump_idx = self.ast.extra_data[end - 1];
+    const jump_idx = ir.ast.extra_data[end - 1];
     var jump: u32 = invalid_node;
     if (jump_idx != invalid_node) {
-        const jump_node = self.ast.nodes.get(jump_idx);
-        jump = self.appendInst(.jump, .{
+        const jump_node = ir.ast.nodes.get(jump_idx);
+        jump = ir.appendInst(.jump, .{
             .token_pos = jump_node.token_pos,
         });
     }
@@ -330,20 +320,20 @@ fn reduceDialogueParts(self: *DiaIR, parts: *std.ArrayList(u32), start: u32, len
 
 // label extra_data layout:
 // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
-fn reduceLabel(self: *DiaIR, node: Node) Error!void {
+fn reduceLabel(ir: *DiaIR, node: Node) Error!void {
     const range = node.data.range;
     const start = range.start;
     const len = range.len;
 
-    const label_idx = self.ast.extra_data.get(start);
-    const label_node = self.ast.nodes.get(label_idx);
+    const label_idx = ir.ast.extra_data.get(start);
+    const label_node = ir.ast.nodes.get(label_idx);
 
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(ir.allocator);
 
-    try stmts.ensureTotalCapacityPrecise(self.allocator, len);
+    try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
 
-    const label_inst = self.appendInst(.load, .{
+    const label_inst = ir.appendInst(.load, .{
         .token_pos = label_node.token_pos,
     });
 
@@ -351,77 +341,78 @@ fn reduceLabel(self: *DiaIR, node: Node) Error!void {
 
     const end = start + len - 1;
     for (start + 1..end) |idx| {
-        const stmt_idx = self.reduceStmt(idx);
+        const ast_stmt = ir.ast.extra_data[idx];
+        const stmt_idx = ir.reduceStmt(ast_stmt);
         stmts.appendAssumeCapacity(stmt_idx);
     }
 }
 
-fn reduceCondition(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
-    const node = self.ast.nodes.get(node_idx);
+fn reduceCondition(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
+    const node = ir.ast.nodes.get(node_idx);
 
     return try switch (node.tag) {
-        .bool_and => self.evalConjunction(.bool_and, node),
-        .bool_or => self.evalConjunction(.bool_or, node),
-        else => self.evalCompare(node_idx),
+        .bool_and => ir.evalConjunction(.bool_and, node),
+        .bool_or => ir.evalConjunction(.bool_or, node),
+        else => ir.evalCompare(node_idx),
     };
 }
 
-fn evalExpr(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
-    const node = self.ast.nodes.get(node_idx);
+fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
+    const node = ir.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
     return switch (node.tag) {
         .number => {
-            const text = self.identName(token_pos);
+            const text = ir.identName(token_pos);
             const num = std.fmt.parseInt(u8, text, 10) catch unreachable;
 
-            return self.appendInst(.constant, .{ .uint = num });
+            return ir.appendInst(.constant, .{ .uint = num });
         },
-        .var_ident => self.appendInst(.load, .{ .token_pos = token_pos }),
-        .plus => self.evalBinary(.plus, node),
-        .minus => self.evalBinary(.minus, node),
-        .mult => self.evalBinary(.mult, node),
-        .div => self.evalBinary(.div, node),
+        .var_ident => ir.appendInst(.load, .{ .token_pos = token_pos }),
+        .plus => ir.evalBinary(.add, node),
+        .minus => ir.evalBinary(.sub, node),
+        .mult => ir.evalBinary(.mul, node),
+        .div => ir.evalBinary(.div, node),
         else => invalid_node,
     };
 }
 
-fn evalBinary(self: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!u32 {
+fn evalBinary(ir: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!u32 {
     const children = node.data.node_and_node;
-    const lhs = try self.evalExpr(children.@"0");
-    const rhs = try self.evalExpr(children.@"1");
+    const lhs = try ir.evalExpr(children.@"0");
+    const rhs = try ir.evalExpr(children.@"1");
 
-    return self.appendInst(tag, .{
+    return ir.appendInst(tag, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
     });
 }
 
-fn evalConjunction(self: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!u32 {
+fn evalConjunction(ir: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!u32 {
     const children = node.data.node_and_node;
-    const lhs = try self.reduceCondition(children.@"0");
-    const rhs = try self.reduceCondition(children.@"1");
+    const lhs = try ir.reduceCondition(children.@"0");
+    const rhs = try ir.reduceCondition(children.@"1");
 
-    return self.appendInst(tag, .{
+    return ir.appendInst(tag, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
     });
 }
 
-fn evalCompare(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
-    const node = self.ast.nodes.get(node_idx);
+fn evalCompare(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
+    const node = ir.ast.nodes.get(node_idx);
     return try switch (node.tag) {
-        .equal_equal => self.evalBinary(.eql, node),
-        .not_equal => self.evalBinary(.not_eql, node),
-        .less => self.evalBinary(.less, node),
-        .less_or_equal => self.evalBinary(.less_or_eql, node),
-        .greater => self.evalBinary(.greater, node),
-        .greater_or_equal => self.evalBinary(.greater_or_eql, node),
+        .equal_equal => ir.evalBinary(.eql, node),
+        .not_equal => ir.evalBinary(.not_eql, node),
+        .less => ir.evalBinary(.less, node),
+        .less_or_equal => ir.evalBinary(.less_or_eql, node),
+        .greater => ir.evalBinary(.greater, node),
+        .greater_or_equal => ir.evalBinary(.greater_or_eql, node),
         else => invalid_node,
     };
 }
 
-fn evalText(self: *DiaIR, node_idx: NodeIndex) Error!u32 {
-    const node = self.ast.nodes.get(node_idx);
+fn evalText(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
+    const node = ir.ast.nodes.get(node_idx);
     return try switch (node.tag) {
-        .string => self.appendInst(.text, .{ .token_pos = node.token_pos }),
-        else => self.evalExpr(node_idx),
+        .string => ir.appendInst(.text, .{ .token_pos = node.token_pos }),
+        else => ir.evalExpr(node_idx),
     };
 }

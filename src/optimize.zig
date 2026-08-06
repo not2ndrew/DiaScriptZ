@@ -2,10 +2,13 @@ const std = @import("std");
 const ir = @import("dia_ir.zig");
 const Local = @import("semantic.zig").Local;
 
+const Allocator = std.mem.Allocator;
+
 const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 
 const Instructions = std.ArrayList(Inst);
+const Locals = std.MultiArrayList(Local);
 
 // Optimization includes:
 // 1) Constant folding
@@ -28,12 +31,19 @@ extra: *std.ArrayList(u32),
 // TODO: I may need Semantic Locals here
 // By getting locals, I can determine variable states without going through token slices.
 // The issue is how to map from Semantic -> Optimize.
+//
+// An idea: Since Locals is stored by the amount of stacks.
+// Slight Issue: A load instruction will have the same token_pos as a Local token_pos.
+// This is redundant field.
+locals: Locals.Slice(),
 
-pub fn optimizeRoot(diaIR: *DiaIR) void {
+pub fn optimizeRoot(diaIR: *DiaIR, allocator: Allocator, locals: Locals) void {
     var opt: Optimize = .{
         .instructions = diaIR.instructions,
         .extra = diaIR.extra,
+        .locals = locals.toOwnedSlice(),
     };
+    defer locals.deinit(allocator);
 
     const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
     const range = root_inst.data.range;
@@ -54,13 +64,10 @@ fn block(opt: *Optimize, start: u32, len: u32) void {
 fn stmt(opt: *Optimize, inst: Inst) void {
     switch (inst.tag) {
         .store => opt.store(inst),
-        // .plus, .minus, .mult, .div => opt.arithmetic(inst),
         else => {},
     }
 }
 
-// TODO: Not quite sure on if I need this.
-// All I'm doing is code optimization.
 fn store(opt: *Optimize, inst: Inst) void {
     const binary = inst.data.binary;
     const decl = opt.instructions.items[binary.lhs];
@@ -76,17 +83,19 @@ fn arithmetic(opt: *Optimize, inst: Inst) void {
     const rhs_inst = opt.instructions.items[rhs];
 
     if (lhs_inst.tag == .constant and rhs_inst.tag == .constant) {
-        fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
+        const num = fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
+        lhs_inst.data.uint = num;
+        rhs_inst.data = .{ .none = {} };
     }
 }
 
 // TODO: Figure out how to perform constant folding on flattened instructions.
-fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !void {
+fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
     return switch (tag) {
         .plus => std.math.add(u8, lhs, rhs),
         .minus => std.math.sub(u8, lhs, rhs),
         .mult => std.math.mul(u8, lhs, rhs),
         .div => std.math.divTrunc(u8, lhs, rhs),
-        else => {},
+        else => unreachable,
     };
 }
