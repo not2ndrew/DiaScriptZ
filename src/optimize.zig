@@ -35,6 +35,8 @@ extra: *std.ArrayList(u32),
 // An idea: Since Locals is stored by the amount of stacks.
 // Slight Issue: A load instruction will have the same token_pos as a Local token_pos.
 // This is redundant field.
+// Issue 2: To get the name, I would have to go from
+// IR -> symbol id -> symbol -> token_pos -> name
 locals: Locals.Slice(),
 
 pub fn optimizeRoot(diaIR: *DiaIR, allocator: Allocator, locals: Locals) void {

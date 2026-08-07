@@ -65,6 +65,9 @@ pub const Inst = struct {
     // token_pos -> token -> source slice -> symbol lookup -> symbol
     // or
     // symbol -> token_pos -> token -> source slice -> symbol lookup
+    //
+    // After IR is generated, the AST and the source can be freed.
+    // https://mitchellh.com/zig/astgen
     pub const Data = union {
         none: void,
         uint: u8,

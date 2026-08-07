@@ -41,9 +41,9 @@ pub const ParseResult = struct {
     source_file: SourceFile,
     errors: std.ArrayList(Error),
 
-    pub fn deinit(self: *ParseResult, allocator: Allocator) void {
-        allocator.free(self.source_file.offsets);
-        self.ast.deinit();
+    pub fn deinit(p: *ParseResult, allocator: Allocator) void {
+        allocator.free(p.source_file.offsets);
+        p.ast.deinit();
     }
 };
 

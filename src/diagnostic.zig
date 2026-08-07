@@ -47,6 +47,7 @@ pub const Error = struct {
         unknown_jump,
         modified_const,
         too_many_scopes,
+        invalid_label_scope,
     };
 };
 
@@ -215,6 +216,9 @@ pub const DiagRenderer = struct {
             },
             .too_many_scopes => {
                 return w.writeAll("Cannot generate more than 3 scopes");
+            },
+            .invalid_label_scope => {
+                return w.print("Label '{s}' must be placed in GLOBAL scope", .{str});
             }
         }
     }

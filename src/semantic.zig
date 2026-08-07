@@ -25,10 +25,50 @@ const LabelTable = std.array_hash_map.String(void);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
+pub const InternedStringId = u32;
+
+pub const StringInterner = struct {
+    // bytes stores all unique identifiers names in a contiguous array.
+    bytes: std.ArrayList(u8) = .empty,
+    entries: std.ArrayList(Entry) = .empty,
+    lookup: std.array_hash_map.String(InternedStringId) = .empty,
+
+    pub const Entry = struct {
+        start: u32,
+        len: u32
+    };
+
+    pub fn deinit(str: *StringInterner, allocator: Allocator) void {
+        str.bytes.deinit(allocator);
+        str.entries.deinit(allocator);
+        str.lookup.deinit(allocator);
+    }
+
+    pub fn intern(str: *StringInterner, allocator: Allocator, name: []const u8) !InternedStringId {
+        const entity = try str.lookup.getOrPut(allocator, name);
+        if (entity.found_existing) return entity.value_ptr.*;
+
+        const value: u32 = @intCast(str.entries.items.len);
+
+        entity.value_ptr.* = value;
+        try str.entries.append(allocator, .{
+            .start = @intCast(str.bytes.items.len),
+            .len = @intCast(name.len),
+        });
+        try str.bytes.appendSlice(allocator, name);
+
+        return value;
+    }
+};
+
+// TODO: Change this to Symbol
 pub const Local = struct {
     token_pos: TokenIndex,
+    name: InternedStringId,
     kind: Kind,
 
+    // TODO: Few things I need
+    // 1) Reword these into their full names
     pub const Kind = enum {
         keyword_const,
         keyword_var,
@@ -56,12 +96,15 @@ locals: std.ArrayList(Local) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
 is_initializing: bool = false,
 
+ident_table: StringInterner = .{},
+
 pub fn deinit(sem: *Semantic) void {
     sem.scope_stack.deinit(sem.allocator);
     sem.local_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
     sem.locals.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
+    sem.ident_table.deinit(sem.allocator);
 }
 
 fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
@@ -97,6 +140,12 @@ fn tokenSlice(sem: *Semantic, token_pos: TokenIndex) []const u8 {
 fn addLocal(sem: *Semantic, local: Local) !u32 {
     try sem.locals.append(sem.allocator, local);
     return @intCast(sem.locals.items.len - 1);
+}
+
+fn isLabelMatched(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex) !void {
+    // Use contain instead of getOrPut to avoid inserting null entity.
+    const is_matched = sem.local_table.contains(label_name);
+    if (is_matched) return sem.report(token_pos, .ident_mismatch);
 }
 
 // The last node of a post-traversal list
@@ -181,6 +230,10 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
 
     const name = sem.tokenSlice(pos);
 
+    const id = try sem.ident_table.intern(sem.allocator, name);
+
+    try sem.isLabelMatched(name, pos);
+
     const entity = try sem.local_table.getOrPut(sem.allocator, name);
     if (entity.found_existing) {
         const found = sem.locals.items[entity.value_ptr.*];
@@ -192,6 +245,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
 
     const idx = try sem.addLocal(.{
         .token_pos = pos,
+        .name = id, 
         .kind = mutability,
     });
 
@@ -294,6 +348,8 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
 
             if (sem.is_initializing)
                 return sem.report(token_pos, .undeclared_var);
+
+            _ = try sem.ident_table.intern(sem.allocator, name);
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -316,20 +372,26 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const start = range.start;
     const speaker_idx = sem.ast.extra_data[start];
     const speaker = sem.ast.nodes.get(speaker_idx);
-    const name = sem.tokenSlice(speaker.token_pos);
+    const token_pos = speaker.token_pos;
+    const name = sem.tokenSlice(token_pos);
+
+    try sem.isLabelMatched(name, token_pos);
 
     const entity = try sem.local_table.getOrPut(sem.allocator, name);
+
+    const id = try sem.ident_table.intern(sem.allocator, name);
 
     if (entity.found_existing) {
         const found = sem.locals.items[entity.value_ptr.*];
         switch (found.kind) {
             .name => {},
             .keyword_var, .keyword_const
-            => return sem.report(speaker.token_pos, .ident_mismatch),
+            => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
         const idx = try sem.addLocal(.{
-            .token_pos = speaker.token_pos,
+            .token_pos = token_pos,
+            .name = id,
             .kind = .name,
         });
         entity.value_ptr.* = idx;
@@ -381,6 +443,11 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
 
+    _ = try sem.ident_table.intern(sem.allocator, label_name);
+    try sem.isLabelMatched(label_name, token_pos);
+
+    if (sem.scope_stack.items.len != 0)
+        return sem.report(token_pos, .invalid_label_scope);
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.
     try sem.visitBlock(node.token_pos, start + 1, len - 1);

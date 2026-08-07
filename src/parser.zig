@@ -33,50 +33,50 @@ extra_data: std.ArrayList(u32) = .empty,
 errors: std.ArrayList(AstError) = .empty,
 token_pos: u32 = 0,
 
-fn reportUnexpected(self: *Parser, tag: AstError.Tag) !void {
-    try self.errors.append(self.allocator, .{
-        .token_pos = self.token_pos,
+fn reportUnexpected(p: *Parser, tag: AstError.Tag) !void {
+    try p.errors.append(p.allocator, .{
+        .token_pos = p.token_pos,
         .tag = tag,
     });
 }
 
-fn synchronize(self: *Parser) void {
+fn synchronize(p: *Parser) void {
     // Force the parser to advance to next token_pos.
-    self.token_pos += 1;
+    p.token_pos += 1;
 
-    while (self.token_pos < self.tokens.len) {
-        switch (self.peekTag()) {
+    while (p.token_pos < p.tokens.len) {
+        switch (p.peekTag()) {
             .keyword_const, .keyword_var,
             .keyword_if, .choice_marker,
             .underscore => return,
             .semi_colon => {
-                self.token_pos += 1;
+                p.token_pos += 1;
                 return;
             },
             .EOF => return,
-            else => self.token_pos += 1,
+            else => p.token_pos += 1,
         }
     }
 }
 
-fn peekToken(self: *Parser) Token {
-    return self.tokens.get(self.token_pos);
+fn peekToken(p: *Parser) Token {
+    return p.tokens.get(p.token_pos);
 }
 
-fn peekTag(self: *Parser) TokenTag {
-    return self.tokens.get(self.token_pos).tag;
+fn peekTag(p: *Parser) TokenTag {
+    return p.tokens.get(p.token_pos).tag;
 }
 
-fn next(self: *Parser) void {
-    self.token_pos += 1;
+fn next(p: *Parser) void {
+    p.token_pos += 1;
 }
 
-fn expect(self: *Parser, expected: TokenTag) Error!TokenIndex {
-    const idx = self.token_pos;
-    const found = self.peekTag();
+fn expect(p: *Parser, expected: TokenTag) Error!TokenIndex {
+    const idx = p.token_pos;
+    const found = p.peekTag();
 
     if (found != expected) {
-        try self.errors.append(self.allocator, .{
+        try p.errors.append(p.allocator, .{
             .token_pos = idx,
             .tag = .unexpected_token,
         });
@@ -84,45 +84,45 @@ fn expect(self: *Parser, expected: TokenTag) Error!TokenIndex {
         return Error.ParseError;
     }
 
-    self.next();
+    p.next();
     return idx;
 }
 
-fn addNode(self: *Parser, tag: Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
-    try self.nodes.append(self.allocator, .{
+fn addNode(p: *Parser, tag: Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
+    try p.nodes.append(p.allocator, .{
         .tag = tag,
         .token_pos = token_pos,
         .data = data,
     });
 
-    const idx: u32 = @intCast(self.nodes.len - 1);
+    const idx: u32 = @intCast(p.nodes.len - 1);
     return idx;
 }
 
 // program = { stmt } ;
-pub fn parseAll(self: *Parser) Error!void {
+pub fn parseAll(p: *Parser) Error!void {
     const root_token_pos: u32 = 0;
 
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(p.allocator);
 
-    while (self.token_pos < self.tokens.len and self.peekTag() != .EOF) {
-        const stmt_index = self.parseStmt() catch {
-            self.synchronize();
+    while (p.token_pos < p.tokens.len and p.peekTag() != .EOF) {
+        const stmt_index = p.parseStmt() catch {
+            p.synchronize();
             continue;
         };
 
-        try stmts.append(self.allocator, stmt_index);
+        try stmts.append(p.allocator, stmt_index);
     }
 
-    const start: u32 = @intCast(self.extra_data.items.len);
+    const start: u32 = @intCast(p.extra_data.items.len);
     const len: u32 = @intCast(stmts.items.len);
-    try self.extra_data.appendSlice(
-    self.allocator,
+    try p.extra_data.appendSlice(
+    p.allocator,
     stmts.items
 );
 
-    _ = try self.addNode(.block, root_token_pos, .{
+    _ = try p.addNode(.block, root_token_pos, .{
         .range = .{ .start = start, .len = len }
     });
 }
@@ -139,19 +139,19 @@ pub fn parseAll(self: *Parser) Error!void {
 // | label
 // | dialogue
 // | choices 
-fn parseStmt(self: *Parser) Error!NodeIndex {
-    return try switch (self.peekTag()) {
-        .keyword_const, .keyword_var => self.parseDeclar(),
-        .identifier => self.parseIdentStmt(),
-        .keyword_if => self.parseIfStmt(),
-        .choice_marker => self.parseChoice(),
-        .tilde => self.parseLabel(),
-        .underscore => self.parseAnonymousDialogue(),
+fn parseStmt(p: *Parser) Error!NodeIndex {
+    return try switch (p.peekTag()) {
+        .keyword_const, .keyword_var => p.parseDeclar(),
+        .identifier => p.parseIdentStmt(),
+        .keyword_if => p.parseIfStmt(),
+        .choice_marker => p.parseChoice(),
+        .tilde => p.parseLabel(),
+        .underscore => p.parseAnonymousDialogue(),
         else => {
-            self.next();
-            try self.errors.append(self.allocator, .{
+            p.next();
+            try p.errors.append(p.allocator, .{
                 .tag = .unexpected_token,
-                .token_pos = self.token_pos,
+                .token_pos = p.token_pos,
             });
             return Error.ParseError;
         }
@@ -159,98 +159,98 @@ fn parseStmt(self: *Parser) Error!NodeIndex {
 }
 
 // declar_stmt = ( "const" | "var" ) ident "=" expr ;
-fn parseDeclar(self: *Parser) Error!NodeIndex {
-    const decl_pos = self.token_pos;
-    self.next();
+fn parseDeclar(p: *Parser) Error!NodeIndex {
+    const decl_pos = p.token_pos;
+    p.next();
 
-    const ident = try self.parseGenericIdent(.var_ident);
-    _ = try self.expect(.assign);
-    const value = try self.parseExpr();
+    const ident = try p.parseGenericIdent(.var_ident);
+    _ = try p.expect(.assign);
+    const value = try p.parseExpr();
 
-    _ = try self.expect(.semi_colon);
+    _ = try p.expect(.semi_colon);
 
-    return try self.addNode(.declar_stmt, decl_pos, .{
+    return try p.addNode(.declar_stmt, decl_pos, .{
         .node_and_node = .{ ident, value }
     });
 }
 
 // Determine which type of stmt it is by searching the next
 // token after the identifier.
-fn parseIdentStmt(self: *Parser) Error!NodeIndex {
-    const is_within = self.token_pos + 1 < self.tokens.len;
-    if (is_within and self.tokens.get(self.token_pos + 1).tag == .colon) {
-        return try self.parseDialogue();
+fn parseIdentStmt(p: *Parser) Error!NodeIndex {
+    const is_within = p.token_pos + 1 < p.tokens.len;
+    if (is_within and p.tokens.get(p.token_pos + 1).tag == .colon) {
+        return try p.parseDialogue();
     }
 
-    const ident_pos = try self.parseGenericIdent(.var_ident);
-    const next_tag = self.peekTag();
+    const ident_pos = try p.parseGenericIdent(.var_ident);
+    const next_tag = p.peekTag();
 
     return switch (next_tag) {
         .assign, .plus_equal, .minus_equal,
-        .asterisk_equal, .slash_equal => self.parseAssignStmt(next_tag, ident_pos),
+        .asterisk_equal, .slash_equal => p.parseAssignStmt(next_tag, ident_pos),
         else => {
-            try self.reportUnexpected(.expected_arith_op);
+            try p.reportUnexpected(.expected_arith_op);
             return Error.ParseError;
         }
     };
 }
 
 // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
-fn parseAssignStmt(self: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
-    const assign_pos = try self.expect(assign_tag);
-    const expr = try self.parseExpr();
+fn parseAssignStmt(p: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
+    const assign_pos = try p.expect(assign_tag);
+    const expr = try p.parseExpr();
 
-    _ = try self.expect(.semi_colon);
+    _ = try p.expect(.semi_colon);
 
     const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
-        try self.reportUnexpected(.expected_arith_op);
+        try p.reportUnexpected(.expected_arith_op);
         return ParserError.ParseError;
     };
 
-    return try self.addNode(node_tag, assign_pos, .{
+    return try p.addNode(node_tag, assign_pos, .{
         .node_and_node = .{ ident_pos, expr }
     });
 }
 
 // if_stmt = "if" "(" condition ")" stmt_block [ else_block ] ;
 // else_block = "else" stmt_block ;
-fn parseIfStmt(self: *Parser) Error!NodeIndex {
-    const if_pos = try self.expect(.keyword_if);
+fn parseIfStmt(p: *Parser) Error!NodeIndex {
+    const if_pos = try p.expect(.keyword_if);
 
-    _ = try self.expect(.open_paren);
-    const condition = try self.parseCondition();
-    _ = try self.expect(.close_paren);
+    _ = try p.expect(.open_paren);
+    const condition = try p.parseCondition();
+    _ = try p.expect(.close_paren);
 
-    const then_block = try self.parseStmtBlock(.open_brace, .close_brace);
+    const then_block = try p.parseStmtBlock(.open_brace, .close_brace);
 
     var else_block: u32 = invalid_node;
-    if (self.peekTag() == .keyword_else) {
-        _ = try self.expect(.keyword_else);
-        else_block = try self.parseStmtBlock(.open_brace, .close_brace);
+    if (p.peekTag() == .keyword_else) {
+        _ = try p.expect(.keyword_else);
+        else_block = try p.parseStmtBlock(.open_brace, .close_brace);
     }
 
-    const start: u32 = @intCast(self.extra_data.items.len);
-    try self.extra_data.appendSlice(self.allocator, &[_]u32{
+    const start: u32 = @intCast(p.extra_data.items.len);
+    try p.extra_data.appendSlice(p.allocator, &[_]u32{
         condition, then_block, else_block,
     });
 
     // if_stmt extra_data layout:
     // [ condition, then_block, else_block ]
-    return self.addNode(.if_stmt, if_pos, .{
+    return p.addNode(.if_stmt, if_pos, .{
         .range = .{ .start = start, .len = 3 }
     });
 }
 
 // condition  = conjunction { "or" conjunction } ;
-fn parseCondition(self: *Parser) Error!NodeIndex {
-    var node = try self.parseConjunction();
+fn parseCondition(p: *Parser) Error!NodeIndex {
+    var node = try p.parseConjunction();
 
-    while (self.peekTag() == .keyword_or) {
-        const op_tok = self.token_pos;
-        self.next();
+    while (p.peekTag() == .keyword_or) {
+        const op_tok = p.token_pos;
+        p.next();
 
-        const rhs = try self.parseConjunction();
-        node = try self.addNode(.bool_or, op_tok, .{
+        const rhs = try p.parseConjunction();
+        node = try p.addNode(.bool_or, op_tok, .{
             .node_and_node = .{ node, rhs }
         });
     }
@@ -259,15 +259,15 @@ fn parseCondition(self: *Parser) Error!NodeIndex {
 }
 
 // conjunction = boolean_factor { "and" boolean_factor } ;
-fn parseConjunction(self: *Parser) Error!NodeIndex {
-    var node = try self.parseBoolFactor();
+fn parseConjunction(p: *Parser) Error!NodeIndex {
+    var node = try p.parseBoolFactor();
 
-    while (self.peekTag() == .keyword_and) {
-        const op_tok = self.token_pos;
-        self.next();
+    while (p.peekTag() == .keyword_and) {
+        const op_tok = p.token_pos;
+        p.next();
 
-        const rhs = try self.parseBoolFactor();
-        node = try self.addNode(.bool_and, op_tok, .{
+        const rhs = try p.parseBoolFactor();
+        node = try p.addNode(.bool_and, op_tok, .{
             .node_and_node = .{ node, rhs }
         });
     }
@@ -276,49 +276,49 @@ fn parseConjunction(self: *Parser) Error!NodeIndex {
 }
 
 // boolean_factor = "(" condition ")" | compar_expr ;
-fn parseBoolFactor(self: *Parser) Error!NodeIndex {
-    if (self.peekTag() == .open_paren) {
-        self.next();
-        const node = try self.parseCondition();
-        _ = try self.expect(.close_paren);
+fn parseBoolFactor(p: *Parser) Error!NodeIndex {
+    if (p.peekTag() == .open_paren) {
+        p.next();
+        const node = try p.parseCondition();
+        _ = try p.expect(.close_paren);
 
         return node;
     }
 
-    return try self.parseCompareExpr();
+    return try p.parseCompareExpr();
 }
 
 // compar_expr = expr compar_op expr ;
 // compar_op = "==" | "!=" | "<" | ">" | "<=" | ">=" ;
-fn parseCompareExpr(self: *Parser) Error!NodeIndex {
-    const left_expr = try self.parseExpr();
+fn parseCompareExpr(p: *Parser) Error!NodeIndex {
+    const left_expr = try p.parseExpr();
 
-    const op_tag = self.peekTag();
+    const op_tag = p.peekTag();
 
     const compare_tag = nodeTagFromCompare(op_tag) orelse {
-        try self.reportUnexpected(.expected_compar_op);
+        try p.reportUnexpected(.expected_compar_op);
         return Error.ParseError;
     };
 
-    const compare_token = self.token_pos;
-    self.next();
+    const compare_token = p.token_pos;
+    p.next();
 
-    const right_expr = try self.parseExpr();
+    const right_expr = try p.parseExpr();
 
-    return self.addNode(compare_tag, compare_token, .{
+    return p.addNode(compare_tag, compare_token, .{
         .node_and_node = .{ left_expr, right_expr }
     });
 }
 
 // stmt_block = "{" { stmt } "}" ;
-fn parseStmtBlock(self: *Parser, comptime start_tag: TokenTag, comptime end_tag: TokenTag) Error!NodeIndex {
+fn parseStmtBlock(p: *Parser, comptime start_tag: TokenTag, comptime end_tag: TokenTag) Error!NodeIndex {
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(p.allocator);
 
-    const block_pos = try self.expect(start_tag);
-    const range = try self.collectStmtUntil(end_tag, &stmts);
+    const block_pos = try p.expect(start_tag);
+    const range = try p.collectStmtUntil(end_tag, &stmts);
 
-    return try self.addNode(.block, block_pos, .{
+    return try p.addNode(.block, block_pos, .{
         .range = .{ .start = range.start, .len = range.len }
     });
 }
@@ -338,47 +338,47 @@ fn parseStmtBlock(self: *Parser, comptime start_tag: TokenTag, comptime end_tag:
 // dialogue and choices.
 
 // dialogue = ( "_" | identifier ) ":" string ;
-fn parseDialogue(self: *Parser) Error!NodeIndex {
-    const token_pos = self.token_pos;
-    const speaker = try self.parseGenericIdent(.name_ident);
-    _ = try self.expect(.colon);
+fn parseDialogue(p: *Parser) Error!NodeIndex {
+    const token_pos = p.token_pos;
+    const speaker = try p.parseGenericIdent(.name_ident);
+    _ = try p.expect(.colon);
 
-    return self.parseDialogueBody(.dialogue, token_pos, speaker);
+    return p.parseDialogueBody(.dialogue, token_pos, speaker);
 }
 
-fn parseAnonymousDialogue(self: *Parser) Error!NodeIndex {
-    const token_pos = self.token_pos;
-    const speaker = try self.parseAnonymousIdent();
-    _ = try self.expect(.colon);
+fn parseAnonymousDialogue(p: *Parser) Error!NodeIndex {
+    const token_pos = p.token_pos;
+    const speaker = try p.parseAnonymousIdent();
+    _ = try p.expect(.colon);
 
-    return self.parseDialogueBody(.dialogue, token_pos, speaker);
+    return p.parseDialogueBody(.dialogue, token_pos, speaker);
 }
 
 // choice = { "*" string }
-fn parseChoice(self: *Parser) Error!NodeIndex {
-    const token_pos = self.token_pos;
-    self.next();
+fn parseChoice(p: *Parser) Error!NodeIndex {
+    const token_pos = p.token_pos;
+    p.next();
 
-    return self.parseDialogueBody(.choice, token_pos, invalid_node);
+    return p.parseDialogueBody(.choice, token_pos, invalid_node);
 }
 
 // string = string_part { string_part } [ goto ] ;
-fn parseDialogueBody(self: *Parser, comptime tag: Tag,
+fn parseDialogueBody(p: *Parser, comptime tag: Tag,
 token_pos: TokenIndex, speaker: NodeIndex) Error!NodeIndex {
     var dia_parts: std.ArrayList(u32) = .empty;
-    defer dia_parts.deinit(self.allocator);
+    defer dia_parts.deinit(p.allocator);
 
-    try dia_parts.append(self.allocator, speaker);
+    try dia_parts.append(p.allocator, speaker);
 
-    try self.parseDialogueParts(&dia_parts);
+    try p.parseDialogueParts(&dia_parts);
 
-    const goto = try self.parseDialogueGoto();
-    try dia_parts.append(self.allocator, goto);
+    const goto = try p.parseDialogueGoto();
+    try dia_parts.append(p.allocator, goto);
 
-    _ = try self.expect(.semi_colon);
+    _ = try p.expect(.semi_colon);
 
-    const range = try self.commitDialogueData(dia_parts.items);
-    return try self.addNode(tag, token_pos, .{
+    const range = try p.commitDialogueData(dia_parts.items);
+    return try p.addNode(tag, token_pos, .{
         .range = .{ .start = range.start, .len = range.len }
     });
 }
@@ -387,19 +387,19 @@ token_pos: TokenIndex, speaker: NodeIndex) Error!NodeIndex {
 // content_part = content { content } ;
 // interpolation = "{" ident "}" ;
 // content = any_character_except("{", "}", "\n") ;
-fn parseDialogueParts(self: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
-    while (self.peekTag() != .semi_colon and self.peekTag() != .EOF) {
-        switch (self.peekTag()) {
+fn parseDialogueParts(p: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
+    while (p.peekTag() != .semi_colon and p.peekTag() != .EOF) {
+        switch (p.peekTag()) {
             .string => {
-                const str_index = try self.addNode(.string, self.token_pos, .{ .none = {} });
-                try dialogue.append(self.allocator, str_index);
-                self.next();
+                const str_index = try p.addNode(.string, p.token_pos, .{ .none = {} });
+                try dialogue.append(p.allocator, str_index);
+                p.next();
             },
             .inter_open => {
-                self.next();
-                const expr = try self.parseExpr();
-                _ = try self.expect(.inter_close);
-                try dialogue.append(self.allocator, expr);
+                p.next();
+                const expr = try p.parseExpr();
+                _ = try p.expect(.inter_close);
+                try dialogue.append(p.allocator, expr);
             },
             else => break,
         }
@@ -408,47 +408,47 @@ fn parseDialogueParts(self: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
     // The name is already inserted.
     // So, use 1 instead of 0.
     if (dialogue.items.len == 1) {
-        try self.reportUnexpected(.expected_dialogue);
+        try p.reportUnexpected(.expected_dialogue);
         return Error.ParseError;
     }
 }
 
 // goto = "->" ident
-fn parseDialogueGoto(self: *Parser) Error!NodeIndex {
-    if (self.peekTag() == .goto) {
-        self.next();
-        return try self.parseGenericIdent(.label_ident);
+fn parseDialogueGoto(p: *Parser) Error!NodeIndex {
+    if (p.peekTag() == .goto) {
+        p.next();
+        return try p.parseGenericIdent(.label_ident);
     }
 
     return invalid_node;
 }
 
-fn commitDialogueData(self: *Parser, dia_parts: []u32) Error!Node.Range {
-    const start: u32 = @intCast(self.extra_data.items.len);
+fn commitDialogueData(p: *Parser, dia_parts: []u32) Error!Node.Range {
+    const start: u32 = @intCast(p.extra_data.items.len);
     const len: u32 = @intCast(dia_parts.len);
-    try self.extra_data.appendSlice(self.allocator, dia_parts);
+    try p.extra_data.appendSlice(p.allocator, dia_parts);
 
     return .{ .start = start, .len = len };
 }
 
 // label = “~” ident stmt_block “end” ;
-fn parseLabel(self: *Parser) Error!NodeIndex {
+fn parseLabel(p: *Parser) Error!NodeIndex {
     var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(self.allocator);
+    defer stmts.deinit(p.allocator);
 
-    _ = try self.expect(.tilde);
+    _ = try p.expect(.tilde);
 
-    const ident_pos = self.token_pos;
-    const label = try self.parseGenericIdent(.label_ident);
-    try stmts.append(self.allocator, label);
+    const ident_pos = p.token_pos;
+    const label = try p.parseGenericIdent(.label_ident);
+    try stmts.append(p.allocator, label);
 
-    _ = try self.expect(.semi_colon);
+    _ = try p.expect(.semi_colon);
 
-    const range = try self.collectStmtUntil(.keyword_end, &stmts);
+    const range = try p.collectStmtUntil(.keyword_end, &stmts);
 
     // label extra_data layout:
     // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
-    return self.addNode(.label, ident_pos, .{
+    return p.addNode(.label, ident_pos, .{
         .range = .{ .start = range.start, .len = range.len }
     });
 }
@@ -457,64 +457,64 @@ fn parseLabel(self: *Parser) Error!NodeIndex {
 //           EXPRESSIONS
 // ───────────────────────────────
 
-fn collectStmtUntil(self: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !Node.Range {
-    while (self.peekTag() != end_tag and self.peekTag() != .EOF) {
-        const stmt_index = self.parseStmt() catch {
-            self.synchronize();
+fn collectStmtUntil(p: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !Node.Range {
+    while (p.peekTag() != end_tag and p.peekTag() != .EOF) {
+        const stmt_index = p.parseStmt() catch {
+            p.synchronize();
             continue;
         };
 
-        try stmts.append(self.allocator, stmt_index);
+        try stmts.append(p.allocator, stmt_index);
     }
 
-    _ = try self.expect(end_tag);
+    _ = try p.expect(end_tag);
     // To allow complex statements to occupy a single line,
     // a semicolon may be omitted before a closing ")" or "}".
-    if (self.peekTag() == .semi_colon) self.token_pos += 1;
+    if (p.peekTag() == .semi_colon) p.token_pos += 1;
 
-    const start: u32 = @intCast(self.extra_data.items.len);
+    const start: u32 = @intCast(p.extra_data.items.len);
     const len: u32 = @intCast(stmts.items.len);
-    try self.extra_data.appendSlice(
-        self.allocator,
+    try p.extra_data.appendSlice(
+        p.allocator,
         stmts.items
     );
 
     return .{ .start = start, .len = len };
 }
 
-fn parseGenericIdent(self: *Parser, comptime tag: Tag) Error!NodeIndex {
-    const ident_pos = try self.expect(.identifier);
+fn parseGenericIdent(p: *Parser, comptime tag: Tag) Error!NodeIndex {
+    const ident_pos = try p.expect(.identifier);
 
     return switch (tag) {
         .var_ident, .label_ident,
-        .name_ident => try self.addNode(tag, ident_pos, .{ .none = {} }),
+        .name_ident => try p.addNode(tag, ident_pos, .{ .none = {} }),
         else => unreachable,
     };
 }
 
-fn parseAnonymousIdent(self: *Parser) Error!NodeIndex {
-    const ident_pos = try self.expect(.underscore);
-    return try self.addNode(.anonymous, ident_pos, .{ .none = {} });
+fn parseAnonymousIdent(p: *Parser) Error!NodeIndex {
+    const ident_pos = try p.expect(.underscore);
+    return try p.addNode(.anonymous, ident_pos, .{ .none = {} });
 }
 
 // expr = term { ( "+" | "-" ) term } ;
-fn parseExpr(self: *Parser) Error!NodeIndex {
-    var node = try self.parseTerm();
+fn parseExpr(p: *Parser) Error!NodeIndex {
+    var node = try p.parseTerm();
 
     while (true) {
-        const tag = self.peekTag();
+        const tag = p.peekTag();
         if (tag != .plus and tag != .minus) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try self.reportUnexpected(.expected_arith_op);
+            try p.reportUnexpected(.expected_arith_op);
             return ParserError.ParseError;
         };
-        const op_tok = self.token_pos;
-        self.next();
+        const op_tok = p.token_pos;
+        p.next();
 
-        const rhs = try self.parseTerm();
+        const rhs = try p.parseTerm();
 
-        node = try self.addNode(binary_tag, op_tok, .{
+        node = try p.addNode(binary_tag, op_tok, .{
             .node_and_node = .{ node, rhs }
         });
     }
@@ -523,23 +523,23 @@ fn parseExpr(self: *Parser) Error!NodeIndex {
 }
 
 // term = factor { ( "*" | "/" ) factor } ;
-fn parseTerm(self: *Parser) Error!NodeIndex {
-    var node = try self.parseFactor();
+fn parseTerm(p: *Parser) Error!NodeIndex {
+    var node = try p.parseFactor();
 
     while (true) {
-        const tag = self.peekTag();
+        const tag = p.peekTag();
         if (tag != .asterisk and tag != .slash) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try self.reportUnexpected(.expected_arith_op);
+            try p.reportUnexpected(.expected_arith_op);
             return ParserError.ParseError;
         };
-        const op_tok = self.token_pos;
-        self.next();
+        const op_tok = p.token_pos;
+        p.next();
 
-        const rhs = try self.parseFactor();
+        const rhs = try p.parseFactor();
 
-        node = try self.addNode(binary_tag, op_tok, .{
+        node = try p.addNode(binary_tag, op_tok, .{
             .node_and_node = .{ node, rhs }
         });
     }
@@ -548,27 +548,27 @@ fn parseTerm(self: *Parser) Error!NodeIndex {
 }
 
 // factor = number | ident | "(" expr ")" ;
-fn parseFactor(self: *Parser) Error!NodeIndex {
-    const idx = self.token_pos;
+fn parseFactor(p: *Parser) Error!NodeIndex {
+    const idx = p.token_pos;
 
-    switch (self.peekTag()) {
+    switch (p.peekTag()) {
         .number => {
-            self.next();
-            return self.addNode(.number, idx, .{ .none = {} });
+            p.next();
+            return p.addNode(.number, idx, .{ .none = {} });
         },
         .identifier => {
-            return self.parseGenericIdent(.var_ident);
+            return p.parseGenericIdent(.var_ident);
         },
         .open_paren => {
-            self.next();
-            const expr = try self.parseExpr();
+            p.next();
+            const expr = try p.parseExpr();
 
-            _ = try self.expect(.close_paren);
+            _ = try p.expect(.close_paren);
 
             return expr;
         },
         else => {
-            try self.errors.append(self.allocator, .{
+            try p.errors.append(p.allocator, .{
                 .token_pos = idx,
                 .tag = .unexpected_token,
             });
