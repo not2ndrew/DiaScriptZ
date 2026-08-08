@@ -20,60 +20,28 @@ const AstError = diag.Error;
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
-const LocalTable = std.array_hash_map.String(u32);
+const SymbolTable = std.array_hash_map.String(u32);
 const LabelTable = std.array_hash_map.String(void);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
 pub const InternedStringId = u32;
 
-pub const StringInterner = struct {
-    // bytes stores all unique identifiers names in a contiguous array.
-    bytes: std.ArrayList(u8) = .empty,
-    entries: std.ArrayList(Entry) = .empty,
-    lookup: std.array_hash_map.String(InternedStringId) = .empty,
-
-    pub const Entry = struct {
-        start: u32,
-        len: u32
-    };
-
-    pub fn deinit(str: *StringInterner, allocator: Allocator) void {
-        str.bytes.deinit(allocator);
-        str.entries.deinit(allocator);
-        str.lookup.deinit(allocator);
-    }
-
-    pub fn intern(str: *StringInterner, allocator: Allocator, name: []const u8) !InternedStringId {
-        const entity = try str.lookup.getOrPut(allocator, name);
-        if (entity.found_existing) return entity.value_ptr.*;
-
-        const value: u32 = @intCast(str.entries.items.len);
-
-        entity.value_ptr.* = value;
-        try str.entries.append(allocator, .{
-            .start = @intCast(str.bytes.items.len),
-            .len = @intCast(name.len),
-        });
-        try str.bytes.appendSlice(allocator, name);
-
-        return value;
-    }
-};
-
-// TODO: Change this to Symbol
-pub const Local = struct {
+pub const Symbol = struct {
     token_pos: TokenIndex,
-    name: InternedStringId,
+    // name: InternedStringId,
     kind: Kind,
 
-    // TODO: Few things I need
-    // 1) Reword these into their full names
     pub const Kind = enum {
-        keyword_const,
-        keyword_var,
-        name,
+        constant,
+        variable,
+        speaker,
     };
+};
+
+pub const Span = struct {
+    start: u32,
+    len: u32,
 };
 
 // Program variables and jump variables are handled differently.
@@ -90,21 +58,18 @@ ast: *Ast,
 errors: *std.ArrayList(AstError),
 
 scope_stack: std.ArrayList(u32) = .empty,
-local_table: LocalTable = .empty,
+symbol_table: SymbolTable = .empty,
 label_table: LabelTable = .empty,
-locals: std.ArrayList(Local) = .empty,
+symbols: std.ArrayList(Symbol) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
 is_initializing: bool = false,
 
-ident_table: StringInterner = .{},
-
 pub fn deinit(sem: *Semantic) void {
     sem.scope_stack.deinit(sem.allocator);
-    sem.local_table.deinit(sem.allocator);
+    sem.symbol_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
-    sem.locals.deinit(sem.allocator);
+    sem.symbols.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
-    sem.ident_table.deinit(sem.allocator);
 }
 
 fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
@@ -125,10 +90,10 @@ fn endScope(sem: *Semantic) void {
     const count = sem.scope_stack.pop() orelse return;
 
     for (0..count) |i| {
-        const local = sem.locals.items[sem.locals.items.len - i - 1];
-        const name = sem.tokenSlice(local.token_pos);
+        const symbol = sem.symbols.items[sem.symbols.items.len - i - 1];
+        const name = sem.tokenSlice(symbol.token_pos);
 
-        _ = sem.local_table.swapRemove(name);
+        _ = sem.symbol_table.swapRemove(name);
     }
 }
 
@@ -137,15 +102,14 @@ fn tokenSlice(sem: *Semantic, token_pos: TokenIndex) []const u8 {
     return sem.source[token.start..token.end];
 }
 
-fn addLocal(sem: *Semantic, local: Local) !u32 {
-    try sem.locals.append(sem.allocator, local);
-    return @intCast(sem.locals.items.len - 1);
+fn addSymbol(sem: *Semantic, symbol: Symbol) !u32 {
+    try sem.symbols.append(sem.allocator, symbol);
+    return @intCast(sem.symbols.items.len - 1);
 }
 
 fn isLabelMatched(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex) !void {
-    // Use contain instead of getOrPut to avoid inserting null entity.
-    const is_matched = sem.local_table.contains(label_name);
-    if (is_matched) return sem.report(token_pos, .ident_mismatch);
+    if (sem.symbol_table.contains(label_name))
+        return sem.report(token_pos, .ident_mismatch);
 }
 
 // The last node of a post-traversal list
@@ -188,7 +152,7 @@ fn visitRoot(sem: *Semantic) !void {
             continue;
         };
 
-        if (sem.local_table.contains(name))
+        if (sem.symbol_table.contains(name))
             try sem.report(token_pos, .ident_mismatch);
     }
 }
@@ -223,29 +187,26 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const pos = ident_node.token_pos;
 
     const mut_type = sem.ast.tokens.get(node.token_pos).tag;
-    var mutability: Local.Kind = .keyword_var;
+    var mutability: Symbol.Kind = .variable;
 
     if (mut_type == .keyword_const)
-        mutability = .keyword_const;
+        mutability = .constant;
 
     const name = sem.tokenSlice(pos);
 
-    const id = try sem.ident_table.intern(sem.allocator, name);
-
     try sem.isLabelMatched(name, pos);
 
-    const entity = try sem.local_table.getOrPut(sem.allocator, name);
+    const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
     if (entity.found_existing) {
-        const found = sem.locals.items[entity.value_ptr.*];
+        const found = sem.symbols.items[entity.value_ptr.*];
         return switch (found.kind) {
-            .name => sem.report(pos, .ident_mismatch),
-            .keyword_var, .keyword_const => sem.report(pos, .duplicate_var),
+            .speaker => sem.report(pos, .ident_mismatch),
+            .variable, .constant => sem.report(pos, .duplicate_var),
         };
     }
 
-    const idx = try sem.addLocal(.{
+    const idx = try sem.addSymbol(.{
         .token_pos = pos,
-        .name = id, 
         .kind = mutability,
     });
 
@@ -266,15 +227,15 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const pos = ident_node.token_pos;
     const ident_name = sem.tokenSlice(pos);
 
-    const idx = sem.local_table.get(ident_name) orelse
+    const idx = sem.symbol_table.get(ident_name) orelse
         return sem.report(pos, .undeclared_var);
 
     sem.is_initializing = true;
-    const local = sem.locals.items[idx];
+    const symbol = sem.symbols.items[idx];
 
-    switch (local.kind) {
-        .name => return sem.report(pos, .ident_mismatch),
-        .keyword_const => return sem.report(pos, .modified_const),
+    switch (symbol.kind) {
+        .speaker => return sem.report(pos, .ident_mismatch),
+        .constant => return sem.report(pos, .modified_const),
         else => {},
     }
 
@@ -343,13 +304,11 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
             };
         },
         .var_ident => {
-            _ = sem.local_table.get(name) orelse
+            _ = sem.symbol_table.get(name) orelse
                 return sem.report(token_pos, .undeclared_var);
 
             if (sem.is_initializing)
                 return sem.report(token_pos, .undeclared_var);
-
-            _ = try sem.ident_table.intern(sem.allocator, name);
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -377,22 +336,19 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
 
     try sem.isLabelMatched(name, token_pos);
 
-    const entity = try sem.local_table.getOrPut(sem.allocator, name);
-
-    const id = try sem.ident_table.intern(sem.allocator, name);
+    const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
 
     if (entity.found_existing) {
-        const found = sem.locals.items[entity.value_ptr.*];
+        const found = sem.symbols.items[entity.value_ptr.*];
         switch (found.kind) {
-            .name => {},
-            .keyword_var, .keyword_const
+            .speaker => {},
+            .variable, .constant
             => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
-        const idx = try sem.addLocal(.{
+        const idx = try sem.addSymbol(.{
             .token_pos = token_pos,
-            .name = id,
-            .kind = .name,
+            .kind = .speaker,
         });
         entity.value_ptr.* = idx;
     }
@@ -443,7 +399,6 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
 
-    _ = try sem.ident_table.intern(sem.allocator, label_name);
     try sem.isLabelMatched(label_name, token_pos);
 
     if (sem.scope_stack.items.len != 0)

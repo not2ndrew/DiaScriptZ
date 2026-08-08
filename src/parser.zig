@@ -17,7 +17,6 @@ const TokenIndex = tok.TokenIndex;
 const nodeTagFromArithmetic = zig_node.nodeTagFromArithmetic;
 const nodeTagFromCompare = zig_node.nodeTagFromCompare;
 const nodeTagFromBinary = zig_node.nodeTagFromBinary;
-const nodeTagFromScene = zig_node.nodeTagFromScene;
 
 const Tokens = std.MultiArrayList(Token);
 

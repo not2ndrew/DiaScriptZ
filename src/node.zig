@@ -90,13 +90,6 @@ pub fn nodeTagFromBinary(token_tag: Tag) ?NodeTag {
     };
 }
 
-pub fn nodeTagFromScene(token_tag: Tag) ?NodeTag {
-    return switch (token_tag) {
-        .tilde => .label,
-        else => null,
-    };
-}
-
 pub const Node = struct {
     tag: NodeTag,
     token_pos: TokenIndex,
