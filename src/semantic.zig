@@ -17,6 +17,7 @@ const Tag = zig_node.NodeTag;
 const invalid_node = zig_node.invalid_node;
 
 const AstError = diag.Error;
+const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
@@ -29,7 +30,6 @@ pub const InternedStringId = u32;
 
 pub const Symbol = struct {
     token_pos: TokenIndex,
-    // name: InternedStringId,
     kind: Kind,
 
     pub const Kind = enum {
@@ -37,11 +37,6 @@ pub const Symbol = struct {
         variable,
         speaker,
     };
-};
-
-pub const Span = struct {
-    start: u32,
-    len: u32,
 };
 
 // Program variables and jump variables are handled differently.
@@ -54,12 +49,13 @@ pub const Semantic = @This();
 
 allocator: Allocator,
 source: []const u8,
-ast: *Ast,
+ast: *const Ast,
 errors: *std.ArrayList(AstError),
 
 scope_stack: std.ArrayList(u32) = .empty,
 symbol_table: SymbolTable = .empty,
 label_table: LabelTable = .empty,
+// TODO: Determine whether I need to use Symbol for other phases (code optimization.)
 symbols: std.ArrayList(Symbol) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
 is_initializing: bool = false,
@@ -114,12 +110,7 @@ fn isLabelMatched(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex)
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(
-    allocator: Allocator,
-    source: []const u8,
-    ast: *Ast,
-    errors: *std.ArrayList(AstError)
-    ) !void {
+pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors: *Errors) !void {
     var semantic: Semantic = .{
         .allocator = allocator,
         .source = source,
@@ -128,32 +119,28 @@ pub fn analyze(
     };
     defer semantic.deinit();
 
-    try semantic.visitRoot();
-}
-
-fn visitRoot(sem: *Semantic) !void {
-    const root_node = sem.ast.nodes.get(sem.ast.nodes.len - 1);
+    const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
     const start = range.start;
     const end = range.start + range.len;
 
     // Put a limit to how many scopes can be generated
-    try sem.scope_stack.ensureTotalCapacityPrecise(sem.allocator, MAX_NUM_SCOPES);
+    try semantic.scope_stack.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
 
     for (start..end) |idx| {
-        const node_idx = sem.ast.extra_data[idx];
-        try sem.visitStmt(node_idx);
+        const node_idx = ast.extra_data[idx];
+        try semantic.visitStmt(node_idx);
     }
 
-    for (sem.unresolved_jumps.items) |token_pos| {
-        const name = sem.tokenSlice(token_pos);
-        sem.label_table.get(name) orelse {
-            try sem.report(token_pos, .unknown_jump);
+    for (semantic.unresolved_jumps.items) |token_pos| {
+        const name = semantic.tokenSlice(token_pos);
+        semantic.label_table.get(name) orelse {
+            try semantic.report(token_pos, .unknown_jump);
             continue;
         };
 
-        if (sem.symbol_table.contains(name))
-            try sem.report(token_pos, .ident_mismatch);
+        if (semantic.symbol_table.contains(name))
+            try semantic.report(token_pos, .ident_mismatch);
     }
 }
 

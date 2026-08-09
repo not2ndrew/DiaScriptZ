@@ -1,7 +1,6 @@
 const std = @import("std");
 const tree = @import("ast.zig");
-const Semantic = @import("semantic.zig").Semantic;
-const DiaIR = @import("dia_ir.zig").DiaIR;
+const lower_ir = @import("lower.zig");
 const diag = @import("diagnostic.zig");
 
 const Io = std.Io;
@@ -14,15 +13,16 @@ const ParseResult = tree.ParseResult;
 const DiagRenderer = diag.DiagRenderer;
 
 pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
-    // ===== ARENA ALLOCATOR =====
+    const source = try readFile(init, allocator, file_name);
+    defer allocator.free(source);
 
-    // ===== GENERIC ALLOCATOR =====
-    const lines = try readFile(init, allocator, file_name);
-    defer allocator.free(lines);
-
-    // Generate AST from lines
-    var parse_tree = try tree.parse(allocator, lines);
+    // Generate AST from source
+    // TODO: Make sure to free parse_tree AFTER code optimization is complete.
+    var parse_tree = try tree.parse(allocator, source);
     defer parse_tree.deinit(allocator);
+
+    if (parse_tree.errors.items.len > 0)
+        return printErrors(&parse_tree, allocator, file_name);
 
     // for (parse_tree.ast.tokens.items(.tag)) |tag| {
     //     std.debug.print("Token Tag: {t}\n", .{tag});
@@ -32,18 +32,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     //     std.debug.print("Node Tag: {t}\n", .{tag});
     // }
 
-    // Analyze AST
-    try Semantic.analyze(allocator, lines, &parse_tree.ast, &parse_tree.errors);
-
-    // The AST -> IR lowering process assumes an AST
-    // does not have any parse or syntax errors.
-    // If there is exist an error,
-    // we halt the entire program and return all errors found.
-    if (parse_tree.errors.items.len > 0)
-        return printErrors(&parse_tree, allocator, file_name);
-
-    // AST -> IR
-    try DiaIR.generate(allocator, &parse_tree.ast, lines);
+    try lower_ir.lower(allocator, source, &parse_tree, &parse_tree.ast, &parse_tree.errors, file_name);
 
     try printErrors(&parse_tree, allocator, file_name);
 }
@@ -51,7 +40,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
 /// Make sure to free the []const u8 result!!!
 fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8 {
     const io = init.io;
-    var lines: []u8 = undefined;
+    var source: []u8 = undefined;
 
     const file = try Io.Dir.cwd().openFile(io, file_name, .{});
     defer file.close(io);
@@ -59,9 +48,9 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     const length = try file.length(io);
     if (length == 0) return DelimiterError.ReadFailed;
 
-    lines = try allocator.alloc(u8, length);
+    source = try allocator.alloc(u8, length);
 
-    var reader = Io.File.Reader.init(file, io, lines);
+    var reader = Io.File.Reader.init(file, io, source);
     const reader_inter: *Io.Reader = &reader.interface;
     const EndOfStream = DelimiterError.EndOfStream;
 
@@ -71,7 +60,7 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
         }
     }
 
-    return lines;
+    return source;
 }
 
 fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {

@@ -2,6 +2,7 @@ const std = @import("std");
 const zig_node = @import("node.zig");
 const Ast = @import("ast.zig").Ast;
 const TokenIndex = @import("token.zig").TokenIndex;
+const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
@@ -62,12 +63,7 @@ pub const Inst = struct {
         none: void,
         uint: u8,
         id: InternedStringId,
-        // TODO: Dialogue text should not require a token index.
-        // Dialogue texts should NOT be stored in the string intern pool.
-        // Idea: For dialogue lines, use an arraylist of dialogue texts. 
-        // Then store the span of the dialogue lines in the IR.
-        token_pos: TokenIndex,
-        span: Span,
+        span: StringSpan,
         binary: struct {
             lhs: u32,
             rhs: u32,
@@ -78,7 +74,7 @@ pub const Inst = struct {
         },
     };
 
-    pub const Span = struct {
+    pub const StringSpan = struct {
         start: u32,
         len: u32,
     };
@@ -88,38 +84,33 @@ pub const Inst = struct {
 pub const DiaIR = @This();
 
 allocator: Allocator,
-ast: *Ast,
+ast: *const Ast,
 source: []const u8,
 
 instructions: Insts = .empty,
 extra: std.ArrayList(u32) = .empty,
+text_bytes: std.ArrayList(u8) = .empty,
 string_bytes: std.ArrayList(u8) = .empty,
-intern: std.array_hash_map.String(Inst.Span) = .empty,
+intern: std.array_hash_map.String(Inst.StringSpan) = .empty,
 
 pub fn deinit(ir: *DiaIR) void {
     const allocator = ir.allocator;
     ir.instructions.deinit(allocator);
     ir.extra.deinit(allocator);
+    ir.text_bytes.deinit(allocator);
     ir.string_bytes.deinit(allocator);
     ir.intern.deinit(allocator);
 }
 
-pub fn generate(allocator: Allocator, ast: *Ast, source: []const u8) Error!void {
-    var diaIR: DiaIR = .{
-        .allocator = allocator,
-        .ast = ast,
-        .source = source,
-    };
-    defer diaIR.deinit();
-
+pub fn generate(ir: *DiaIR) Error!void {
     // We expect as many diaIR instructions and extra as nodes and extra_data.
-    try diaIR.instructions.ensureTotalCapacity(allocator, ast.nodes.len);
-    try diaIR.extra.ensureTotalCapacity(allocator, ast.extra_data.len);
+    try ir.instructions.ensureTotalCapacity(ir.allocator, ir.ast.nodes.len);
+    try ir.extra.ensureTotalCapacity(ir.allocator, ir.ast.extra_data.len);
 
     // Root node in a post-traversal order is the last node.
-    const root_node = ast.nodes.get(ast.nodes.len - 1);
+    const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
-    _ = try diaIR.reduceBlock(range.start, range.len);
+    _ = try ir.reduceBlock(range.start, range.len);
 }
 
 fn identName(ir: *DiaIR, token_pos: TokenIndex) []const u8 {
@@ -127,7 +118,7 @@ fn identName(ir: *DiaIR, token_pos: TokenIndex) []const u8 {
     return ir.source[token.start..token.end];
 }
 
-fn getSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.Span {
+fn getStringSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.StringSpan {
     const name = ir.identName(token_pos);
     const entity = try ir.intern.getOrPut(ir.allocator, name);
     if (entity.found_existing)
@@ -138,6 +129,16 @@ fn getSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.Span {
 
     try ir.string_bytes.appendSlice(ir.allocator, name);
     return .{ .start = start , .len = len };
+}
+
+fn getTextSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.StringSpan {
+    const line = ir.identName(token_pos);
+
+    const start: u32 = @intCast(ir.text_bytes.items.len);
+    const len: u32 = @intCast(line.len);
+
+    try ir.text_bytes.appendSlice(ir.allocator, line);
+    return .{ .start = start, .len = len };
 }
 
 fn appendInst(ir: *DiaIR, comptime tag: Inst.Tag, data: Inst.Data) u32 {
@@ -209,7 +210,7 @@ fn reduceDecl(ir: *DiaIR, node: Node) Error!u32 {
     const value_idx = assign.@"1";
 
     const ident = ir.ast.nodes.get(ident_idx);
-    const span = try ir.getSpan(ident.token_pos);
+    const span = try ir.getStringSpan(ident.token_pos);
 
     const ident_pos = ir.appendInst(.load, .{ .span = span });
     const value = try ir.evalExpr(value_idx);
@@ -226,7 +227,7 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!u32 {
     const value_idx = operand.@"1";
 
     const ident = ir.ast.nodes.get(ident_idx);
-    const span = try ir.getSpan(ident.token_pos);
+    const span = try ir.getStringSpan(ident.token_pos);
     const ident_pos = ir.appendInst(.load, .{ .span = span });
 
     const ident_pos_2 = ir.appendInst(.load, .{ .span = span });
@@ -284,7 +285,7 @@ fn reduceDialogue(ir: *DiaIR, node: Node) Error!u32 {
 
     try parts.ensureTotalCapacityPrecise(ir.allocator, len);
 
-    const span = try ir.getSpan(node.token_pos);
+    const span = try ir.getStringSpan(node.token_pos);
     const speaker = ir.appendInst(.speaker, .{ .span = span });
 
     parts.appendAssumeCapacity(speaker);
@@ -335,7 +336,7 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     var jump: u32 = invalid_node;
     if (jump_idx != invalid_node) {
         const jump_node = ir.ast.nodes.get(jump_idx);
-        const span = try ir.getSpan(jump_node.token_pos);
+        const span = try ir.getStringSpan(jump_node.token_pos);
         jump = ir.appendInst(.jump, .{ .span = span });}
 
     parts.appendAssumeCapacity(jump);
@@ -356,7 +357,7 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!void {
 
     try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
 
-    const span = try ir.getSpan(label_node.token_pos);
+    const span = try ir.getStringSpan(label_node.token_pos);
     const label_inst = ir.appendInst(.load, .{ .span = span });
 
     stmts.appendAssumeCapacity(label_inst);
@@ -390,7 +391,7 @@ fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
             return ir.appendInst(.constant, .{ .uint = num });
         },
         .var_ident => {
-            const span = try ir.getSpan(token_pos);
+            const span = try ir.getStringSpan(token_pos);
             return ir.appendInst(.load, .{ .span = span });
         },
         .plus => ir.evalBinary(.add, node),
@@ -437,8 +438,10 @@ fn evalCompare(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
 fn evalText(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
     const node = ir.ast.nodes.get(node_idx);
     return try switch (node.tag) {
-        // TODO: Read TODO from Data union.
-        .string => ir.appendInst(.text, .{ .token_pos = node.token_pos }),
+        .string => {
+            const span = try ir.getTextSpan(node.token_pos);
+            return ir.appendInst(.text, .{ .span = span });
+        },
         else => ir.evalExpr(node_idx),
     };
 }

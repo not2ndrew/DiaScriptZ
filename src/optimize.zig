@@ -24,20 +24,19 @@ const Locals = std.MultiArrayList(Local);
 // Since we know they are constant, we can compute arithmetic with constant
 // variables at comptime.
 
-const Optimize = @This();
+pub const Optimize = @This();
 
 instructions: *Instructions,
 extra: *std.ArrayList(u32),
-locals: Locals.Slice(),
+string_bytes: []const u8,
+text_bytes: []const u8,
 
-pub fn optimizeRoot(diaIR: *DiaIR, allocator: Allocator, locals: Locals) void {
-    var opt: Optimize = .{
-        .instructions = diaIR.instructions,
-        .extra = diaIR.extra,
-        .locals = locals.toOwnedSlice(),
-    };
-    defer locals.deinit(allocator);
+pub fn deinit(opt: *Optimize, allocator: Allocator) void {
+    allocator.free(opt.string_bytes);
+    allocator.free(opt.text_bytes);
+}
 
+pub fn optimizeRoot(opt: *Optimize) void {
     const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
     const range = root_inst.data.range;
 
