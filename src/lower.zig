@@ -24,6 +24,14 @@ const Inst = ir.Inst;
 
 const Optimize = op.Optimize;
 
+pub const Lower = @This();
+
+symbols: []Symbol,
+
+pub fn deinit(low: *Lower, allocator: Allocator) void {
+    allocator.free(low.symbols);
+}
+
 // TODO: Reduce the amount of parameters this takes.
 // Also, make sure that after parsing, AST can no longer be modified.
 // The reason why I use *const AST is using a local AST copies ALOT of values.
@@ -32,7 +40,8 @@ pub fn lower(allocator: Allocator, source: []const u8,
     // Analyze AST
     // TODO: If we need something from semantic, return a struct.
     // Otherwise, delete this comment.
-    try sem.analyze(allocator, source, ast, errors);
+    var low = try sem.analyze(allocator, source, ast, errors);
+    defer low.deinit(allocator);
 
     // The AST -> IR lowering process assumes an AST
     // does not have any parse or syntax errors.
@@ -45,6 +54,7 @@ pub fn lower(allocator: Allocator, source: []const u8,
         .allocator = allocator,
         .ast = ast,
         .source = source,
+        // .symbols = low.symbols
     };
     defer diaIR.deinit();
 
@@ -53,15 +63,15 @@ pub fn lower(allocator: Allocator, source: []const u8,
 
     // Optimization IR here
     // TODO: Decide whether I should use toOwnSlice() on extra.
-    var opt: Optimize = .{
-        .instructions = &diaIR.instructions,
-        .extra = &diaIR.extra,
-        .string_bytes = try diaIR.string_bytes.toOwnedSlice(allocator),
-        .text_bytes = try diaIR.text_bytes.toOwnedSlice(allocator),
-    };
-    defer opt.deinit(allocator);
-
-    opt.optimizeRoot();
+    // var opt: Optimize = .{
+    //     .instructions = &diaIR.instructions,
+    //     .extra = &diaIR.extra,
+    //     .string_bytes = try diaIR.string_bytes.toOwnedSlice(allocator),
+    //     .text_bytes = try diaIR.text_bytes.toOwnedSlice(allocator),
+    // };
+    // defer opt.deinit(allocator);
+    //
+    // opt.optimizeRoot();
 }
 
 fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {

@@ -1,6 +1,6 @@
 const std = @import("std");
 const ir = @import("dia_ir.zig");
-const Local = @import("semantic.zig").Local;
+const Symbol = @import("semantic.zig").Symbol;
 
 const Allocator = std.mem.Allocator;
 
@@ -8,7 +8,12 @@ const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 
 const Instructions = std.ArrayList(Inst);
-const Locals = std.MultiArrayList(Local);
+
+const Value = union(enum) {
+    constant: u8,
+    unknown,
+    non_constant,
+};
 
 // Optimization includes:
 // 1) Constant folding
@@ -16,13 +21,9 @@ const Locals = std.MultiArrayList(Local);
 // 3) Dead code elimination (unreachable if stmts, unreachable dialogue, unused variables)
 // 4) Opcode compliation
 //
-// For all of these optimization, unneeded Inst are converted to nop tag.
-// Later on, we can remove dead code.
-// We first build a new mapping of the Inst indexes. Then remove them the nop.
-//
-// For constant folding, we need an array of Constant variables.
-// Since we know they are constant, we can compute arithmetic with constant
-// variables at comptime.
+// A declaration is immutable if it is const.
+// Its initializer is compile-time evaluable if
+// its expression can be evaluated to a known value.
 
 pub const Optimize = @This();
 
@@ -60,25 +61,31 @@ fn stmt(opt: *Optimize, inst: Inst) void {
     }
 }
 
+// To perform comptime declaration,
+// 1) Variable must be "const"
+// 2) Variable must be assigned a number.
+// Anything else is a runtime variable.
 fn store(opt: *Optimize, inst: Inst) void {
     const binary = inst.data.binary;
     const decl = opt.instructions.items[binary.lhs];
     _ = decl;
 }
 
+// lhs is the declaration variable
+// rhs is the value
 fn arithmetic(opt: *Optimize, inst: Inst) void {
     const binary = inst.data.binary;
-    const lhs = binary.lhs;
     const rhs = binary.rhs;
 
-    const lhs_inst = opt.instructions.items[lhs];
     const rhs_inst = opt.instructions.items[rhs];
 
-    if (lhs_inst.tag == .constant and rhs_inst.tag == .constant) {
-        const num = fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
-        lhs_inst.data.uint = num;
-        rhs_inst.data = .{ .none = {} };
-    }
+    opt.expr(rhs_inst);
+
+    // if (lhs_inst.tag == .constant and rhs_inst.tag == .constant) {
+    //     const num = fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
+    //     lhs_inst.data.uint = num;
+    //     rhs_inst.data = .{ .none = {} };
+    // }
 }
 
 // TODO: Figure out how to perform constant folding on flattened instructions.
@@ -90,4 +97,22 @@ fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
         .div => std.math.divTrunc(u8, lhs, rhs),
         else => unreachable,
     };
+}
+
+fn expr(opt: *Optimize, inst: Inst) void {
+    switch (inst.tag) {
+        .plus => opt.evalBinary(inst),
+        .sub => opt.evalBinary(inst),
+        .mul => opt.evalBinary(inst),
+        .div => opt.evalBinary(inst),
+        .constant => {},
+        .load => {},
+        else => {},
+    }
+}
+
+fn evalBinary(opt: *Optimize, inst: Inst) void {
+    const binary = inst.data.binary;
+    opt.expr(binary.lhs);
+    opt.expr(binary.rhs);
 }

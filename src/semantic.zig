@@ -3,6 +3,7 @@ const tok = @import("token.zig");
 const zig_node = @import("node.zig");
 const Ast = @import("ast.zig").Ast;
 const diag = @import("diagnostic.zig");
+const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
@@ -26,8 +27,7 @@ const LabelTable = std.array_hash_map.String(void);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
-pub const InternedStringId = u32;
-
+pub const SymbolId = u32;
 pub const Symbol = struct {
     token_pos: TokenIndex,
     kind: Kind,
@@ -44,7 +44,7 @@ pub const Symbol = struct {
 // Jump variables are forward declarations and must require a label block to connect.
 //
 // Variable identifiers are never allowed to shadow identifiers from an outer scope
-// Label blocks are global blocks.
+// Label blocks can only be placed in global scope.
 pub const Semantic = @This();
 
 allocator: Allocator,
@@ -55,10 +55,9 @@ errors: *std.ArrayList(AstError),
 scope_stack: std.ArrayList(u32) = .empty,
 symbol_table: SymbolTable = .empty,
 label_table: LabelTable = .empty,
-// TODO: Determine whether I need to use Symbol for other phases (code optimization.)
 symbols: std.ArrayList(Symbol) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
-is_initializing: bool = false,
+initializing_symbol: ?SymbolId = null,
 
 pub fn deinit(sem: *Semantic) void {
     sem.scope_stack.deinit(sem.allocator);
@@ -99,18 +98,21 @@ fn tokenSlice(sem: *Semantic, token_pos: TokenIndex) []const u8 {
 }
 
 fn addSymbol(sem: *Semantic, symbol: Symbol) !u32 {
+    const idx: u32 = @intCast(sem.symbols.items.len);
     try sem.symbols.append(sem.allocator, symbol);
-    return @intCast(sem.symbols.items.len - 1);
+
+    // try sem.token_symbols.putNoClobber(sem.allocator, symbol.token_pos, idx);
+    return idx;
 }
 
-fn isLabelMatched(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex) !void {
+fn checkSymbolLabelConflict(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex) !void {
     if (sem.symbol_table.contains(label_name))
         return sem.report(token_pos, .ident_mismatch);
 }
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors: *Errors) !void {
+pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors: *Errors) !Lower {
     var semantic: Semantic = .{
         .allocator = allocator,
         .source = source,
@@ -142,6 +144,10 @@ pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors
         if (semantic.symbol_table.contains(name))
             try semantic.report(token_pos, .ident_mismatch);
     }
+
+    return .{
+        .symbols = try semantic.symbols.toOwnedSlice(allocator),
+    };
 }
 
 fn visitBlock(sem: *Semantic, token_pos: TokenIndex, start: u32, len: u32) !void {
@@ -181,7 +187,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
 
     const name = sem.tokenSlice(pos);
 
-    try sem.isLabelMatched(name, pos);
+    try sem.checkSymbolLabelConflict(name, pos);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
     if (entity.found_existing) {
@@ -197,11 +203,11 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         .kind = mutability,
     });
 
-    sem.is_initializing = true;
-
     entity.value_ptr.* = idx;
+    sem.initializing_symbol = idx;
+    defer sem.initializing_symbol = null;
+
     try sem.visitExpr(decl.@"1");
-    sem.is_initializing = false;
 
     const scope_depth = sem.scope_stack.items.len;
     if (scope_depth != 0)
@@ -217,7 +223,6 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const idx = sem.symbol_table.get(ident_name) orelse
         return sem.report(pos, .undeclared_var);
 
-    sem.is_initializing = true;
     const symbol = sem.symbols.items[idx];
 
     switch (symbol.kind) {
@@ -226,8 +231,9 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         else => {},
     }
 
+    sem.initializing_symbol = idx;
+    defer sem.initializing_symbol = null;
     try sem.visitExpr(assign.@"1");
-    sem.is_initializing = false;
 }
 
 // if_stmt extra_data layout:
@@ -291,10 +297,10 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
             };
         },
         .var_ident => {
-            _ = sem.symbol_table.get(name) orelse
+            const idx = sem.symbol_table.get(name) orelse
                 return sem.report(token_pos, .undeclared_var);
 
-            if (sem.is_initializing)
+            if (idx == sem.initializing_symbol)
                 return sem.report(token_pos, .undeclared_var);
         },
         // TODO: Check for math errors
@@ -321,7 +327,7 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const token_pos = speaker.token_pos;
     const name = sem.tokenSlice(token_pos);
 
-    try sem.isLabelMatched(name, token_pos);
+    try sem.checkSymbolLabelConflict(name, token_pos);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
 
@@ -382,14 +388,15 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const token_pos = label.token_pos;
     const label_name = sem.tokenSlice(token_pos);
 
+    if (sem.scope_stack.items.len != 0)
+        return sem.report(token_pos, .invalid_label_scope);
+
+    try sem.checkSymbolLabelConflict(label_name, token_pos);
+
     const entity = try sem.label_table.getOrPut(sem.allocator, label_name);
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
 
-    try sem.isLabelMatched(label_name, token_pos);
-
-    if (sem.scope_stack.items.len != 0)
-        return sem.report(token_pos, .invalid_label_scope);
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.
     try sem.visitBlock(node.token_pos, start + 1, len - 1);
