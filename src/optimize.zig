@@ -9,12 +9,6 @@ const Inst = ir.Inst;
 
 const Instructions = std.ArrayList(Inst);
 
-const Value = union(enum) {
-    constant: u8,
-    unknown,
-    non_constant,
-};
-
 // Optimization includes:
 // 1) Constant folding
 // 2) Constant propagation

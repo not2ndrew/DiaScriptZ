@@ -48,22 +48,28 @@ pub const Symbol = struct {
 pub const Semantic = @This();
 
 allocator: Allocator,
-source: []const u8,
 ast: *const Ast,
 errors: *std.ArrayList(AstError),
 
-scope_stack: std.ArrayList(u32) = .empty,
 symbol_table: SymbolTable = .empty,
 label_table: LabelTable = .empty,
+
+// Stores variable and speaker declarations.
+// Labels are stored separately in label_table.
+// TODO: Determine whether I need to store label and jump blocks in symbol as well.
 symbols: std.ArrayList(Symbol) = .empty,
+symbol_refs: std.ArrayList(SymbolId) = .empty,
+
+scope_stack: std.ArrayList(u32) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
 initializing_symbol: ?SymbolId = null,
 
 pub fn deinit(sem: *Semantic) void {
-    sem.scope_stack.deinit(sem.allocator);
     sem.symbol_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
+    sem.symbol_refs.deinit(sem.allocator);
+    sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
 }
 
@@ -86,22 +92,16 @@ fn endScope(sem: *Semantic) void {
 
     for (0..count) |i| {
         const symbol = sem.symbols.items[sem.symbols.items.len - i - 1];
-        const name = sem.tokenSlice(symbol.token_pos);
+        const name = sem.ast.tokenSlice(symbol.token_pos);
 
         _ = sem.symbol_table.swapRemove(name);
     }
-}
-
-fn tokenSlice(sem: *Semantic, token_pos: TokenIndex) []const u8 {
-    const token = sem.ast.tokens.get(token_pos);
-    return sem.source[token.start..token.end];
 }
 
 fn addSymbol(sem: *Semantic, symbol: Symbol) !u32 {
     const idx: u32 = @intCast(sem.symbols.items.len);
     try sem.symbols.append(sem.allocator, symbol);
 
-    // try sem.token_symbols.putNoClobber(sem.allocator, symbol.token_pos, idx);
     return idx;
 }
 
@@ -112,10 +112,9 @@ fn checkSymbolLabelConflict(sem: *Semantic, label_name: []const u8, token_pos: T
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors: *Errors) !Lower {
+pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
     var semantic: Semantic = .{
         .allocator = allocator,
-        .source = source,
         .ast = ast,
         .errors = errors,
     };
@@ -135,7 +134,7 @@ pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors
     }
 
     for (semantic.unresolved_jumps.items) |token_pos| {
-        const name = semantic.tokenSlice(token_pos);
+        const name = semantic.ast.tokenSlice(token_pos);
         semantic.label_table.get(name) orelse {
             try semantic.report(token_pos, .unknown_jump);
             continue;
@@ -147,6 +146,7 @@ pub fn analyze(allocator: Allocator, source: []const u8, ast: *const Ast, errors
 
     return .{
         .symbols = try semantic.symbols.toOwnedSlice(allocator),
+        .symbol_refs = try semantic.symbol_refs.toOwnedSlice(allocator),
     };
 }
 
@@ -185,7 +185,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     if (mut_type == .keyword_const)
         mutability = .constant;
 
-    const name = sem.tokenSlice(pos);
+    const name = sem.ast.tokenSlice(pos);
 
     try sem.checkSymbolLabelConflict(name, pos);
 
@@ -203,6 +203,8 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         .kind = mutability,
     });
 
+    try sem.symbol_refs.append(sem.allocator, idx);
+
     entity.value_ptr.* = idx;
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
@@ -218,7 +220,7 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const assign = node.data.node_and_node;
     const ident_node = sem.ast.nodes.get(assign.@"0");
     const pos = ident_node.token_pos;
-    const ident_name = sem.tokenSlice(pos);
+    const ident_name = sem.ast.tokenSlice(pos);
 
     const idx = sem.symbol_table.get(ident_name) orelse
         return sem.report(pos, .undeclared_var);
@@ -230,6 +232,8 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         .constant => return sem.report(pos, .modified_const),
         else => {},
     }
+
+    try sem.symbol_refs.append(sem.allocator, idx);
 
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
@@ -287,7 +291,7 @@ fn visitBinary(sem: *Semantic, data: Node.Data, comptime binOp: binaryOp) !void 
 fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
-    const name = sem.tokenSlice(token_pos);
+    const name = sem.ast.tokenSlice(token_pos);
     switch (node.tag) {
         .number => {
             // Base 10
@@ -302,6 +306,8 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
 
             if (idx == sem.initializing_symbol)
                 return sem.report(token_pos, .undeclared_var);
+
+            try sem.symbol_refs.append(sem.allocator, idx);
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -325,26 +331,29 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const speaker_idx = sem.ast.extra_data[start];
     const speaker = sem.ast.nodes.get(speaker_idx);
     const token_pos = speaker.token_pos;
-    const name = sem.tokenSlice(token_pos);
+    const name = sem.ast.tokenSlice(token_pos);
 
     try sem.checkSymbolLabelConflict(name, token_pos);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
+    var idx: SymbolId = undefined;
 
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         switch (found.kind) {
-            .speaker => {},
+            .speaker => idx = entity.value_ptr.*,
             .variable, .constant
             => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
-        const idx = try sem.addSymbol(.{
+        idx = try sem.addSymbol(.{
             .token_pos = token_pos,
             .kind = .speaker,
         });
         entity.value_ptr.* = idx;
     }
+
+    try sem.symbol_refs.append(sem.allocator, idx);
 
     try sem.visitDialogueParts(start, range.len);
 }
@@ -360,7 +369,7 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
     if (jump != invalid_node) {
         const jump_node = sem.ast.nodes.get(jump);
         const token_pos = jump_node.token_pos;
-        const jump_name = sem.tokenSlice(token_pos);
+        const jump_name = sem.ast.tokenSlice(token_pos);
 
         if (!sem.label_table.contains(jump_name))
             try sem.unresolved_jumps.append(sem.allocator, token_pos);
@@ -386,7 +395,7 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const label_idx = sem.ast.extra_data[start];
     const label = sem.ast.nodes.get(label_idx);
     const token_pos = label.token_pos;
-    const label_name = sem.tokenSlice(token_pos);
+    const label_name = sem.ast.tokenSlice(token_pos);
 
     if (sem.scope_stack.items.len != 0)
         return sem.report(token_pos, .invalid_label_scope);

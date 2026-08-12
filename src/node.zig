@@ -96,7 +96,6 @@ pub const Node = struct {
     data: Data,
 
     pub const Data = union {
-        none: void,
         node_and_node: struct { NodeIndex, NodeIndex },
         range: Range,
     };

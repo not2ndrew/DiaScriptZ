@@ -32,7 +32,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     //     std.debug.print("Node Tag: {t}\n", .{tag});
     // }
 
-    try lower_ir.lower(allocator, source, &parse_tree, &parse_tree.ast, &parse_tree.errors, file_name);
+    try lower_ir.lower(allocator, &parse_tree, &parse_tree.ast, &parse_tree.errors, file_name);
 
     try printErrors(&parse_tree, allocator, file_name);
 }

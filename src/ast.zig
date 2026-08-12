@@ -21,6 +21,7 @@ const SourceFile = diag.SourceFile;
 const Error = diag.Error;
 
 pub const Ast = struct {
+    source: []const u8,
     allocator: Allocator,
     tokens: std.MultiArrayList(Token).Slice,
     nodes: std.MultiArrayList(Node).Slice,
@@ -29,10 +30,15 @@ pub const Ast = struct {
     // 2) Stores continuous ranges of NodeIndex values referenced by nodes.
     extra_data: []u32,
 
-    pub fn deinit(self: *Ast) void {
-        self.nodes.deinit(self.allocator);
-        self.tokens.deinit(self.allocator);
-        self.allocator.free(self.extra_data);
+    pub fn deinit(ast: *Ast) void {
+        ast.nodes.deinit(ast.allocator);
+        ast.tokens.deinit(ast.allocator);
+        ast.allocator.free(ast.extra_data);
+    }
+
+    pub fn tokenSlice(ast: *const Ast, token_pos: TokenIndex) []const u8 {
+        const token = ast.tokens.get(token_pos);
+        return ast.source[token.start..token.end];
     }
 };
 
@@ -92,6 +98,7 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
     // Converting to slice removes all excess memory in nodes and stmts.
     // This also means you own the memory. So call deinit on ast when finished.
     const ast: Ast = .{
+        .source = source_file.source,
         .allocator = allocator,
         .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),

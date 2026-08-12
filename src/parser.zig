@@ -116,10 +116,7 @@ pub fn parseAll(p: *Parser) Error!void {
 
     const start: u32 = @intCast(p.extra_data.items.len);
     const len: u32 = @intCast(stmts.items.len);
-    try p.extra_data.appendSlice(
-    p.allocator,
-    stmts.items
-);
+    try p.extra_data.appendSlice(p.allocator, stmts.items);
 
     _ = try p.addNode(.block, root_token_pos, .{
         .range = .{ .start = start, .len = len }
@@ -390,7 +387,7 @@ fn parseDialogueParts(p: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
     while (p.peekTag() != .semi_colon and p.peekTag() != .EOF) {
         switch (p.peekTag()) {
             .string => {
-                const str_index = try p.addNode(.string, p.token_pos, .{ .none = {} });
+                const str_index = try p.addNode(.string, p.token_pos, undefined);
                 try dialogue.append(p.allocator, str_index);
                 p.next();
             },
@@ -486,14 +483,14 @@ fn parseGenericIdent(p: *Parser, comptime tag: Tag) Error!NodeIndex {
 
     return switch (tag) {
         .var_ident, .label_ident,
-        .name_ident => try p.addNode(tag, ident_pos, .{ .none = {} }),
+        .name_ident => try p.addNode(tag, ident_pos, undefined),
         else => unreachable,
     };
 }
 
 fn parseAnonymousIdent(p: *Parser) Error!NodeIndex {
     const ident_pos = try p.expect(.underscore);
-    return try p.addNode(.anonymous, ident_pos, .{ .none = {} });
+    return try p.addNode(.anonymous, ident_pos, undefined);
 }
 
 // expr = term { ( "+" | "-" ) term } ;
@@ -553,7 +550,7 @@ fn parseFactor(p: *Parser) Error!NodeIndex {
     switch (p.peekTag()) {
         .number => {
             p.next();
-            return p.addNode(.number, idx, .{ .none = {} });
+            return p.addNode(.number, idx, undefined);
         },
         .identifier => {
             return p.parseGenericIdent(.var_ident);

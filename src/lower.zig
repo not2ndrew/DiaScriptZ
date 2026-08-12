@@ -14,6 +14,7 @@ const Semantic = sem.Semantic;
 
 const Symbol = sem.Symbol;
 const Symbols = std.MultiArrayList(Symbol);
+const SymbolId = sem.SymbolId;
 
 const AstError = diag.Error;
 const Errors = std.ArrayList(AstError);
@@ -27,6 +28,7 @@ const Optimize = op.Optimize;
 pub const Lower = @This();
 
 symbols: []Symbol,
+symbol_refs: []SymbolId,
 
 pub fn deinit(low: *Lower, allocator: Allocator) void {
     allocator.free(low.symbols);
@@ -35,12 +37,11 @@ pub fn deinit(low: *Lower, allocator: Allocator) void {
 // TODO: Reduce the amount of parameters this takes.
 // Also, make sure that after parsing, AST can no longer be modified.
 // The reason why I use *const AST is using a local AST copies ALOT of values.
-pub fn lower(allocator: Allocator, source: []const u8,
-            parse_tree: *ParseResult, ast: *const Ast, errors: *Errors, file_name: []const u8) !void {
+pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, errors: *Errors, file_name: []const u8) !void {
     // Analyze AST
     // TODO: If we need something from semantic, return a struct.
     // Otherwise, delete this comment.
-    var low = try sem.analyze(allocator, source, ast, errors);
+    var low = try sem.analyze(allocator, ast, errors);
     defer low.deinit(allocator);
 
     // The AST -> IR lowering process assumes an AST
@@ -53,8 +54,7 @@ pub fn lower(allocator: Allocator, source: []const u8,
     var diaIR: DiaIR = .{
         .allocator = allocator,
         .ast = ast,
-        .source = source,
-        // .symbols = low.symbols
+        .symbol_ref = low.symbol_refs,
     };
     defer diaIR.deinit();
 
