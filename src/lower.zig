@@ -4,6 +4,7 @@ const sem = @import("semantic.zig");
 const diag = @import("diagnostic.zig");
 const ir = @import("dia_ir.zig");
 const op = @import("optimize.zig");
+const InternPool = @import("interner.zig").InternPool;
 
 const Allocator = std.mem.Allocator;
 
@@ -28,19 +29,17 @@ const Optimize = op.Optimize;
 pub const Lower = @This();
 
 symbols: []Symbol,
-symbol_refs: []SymbolId,
+pool: InternPool,
 
 pub fn deinit(low: *Lower, allocator: Allocator) void {
     allocator.free(low.symbols);
+    low.pool.deinit(allocator);
 }
 
 // TODO: Reduce the amount of parameters this takes.
 // Also, make sure that after parsing, AST can no longer be modified.
 // The reason why I use *const AST is using a local AST copies ALOT of values.
 pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, errors: *Errors, file_name: []const u8) !void {
-    // Analyze AST
-    // TODO: If we need something from semantic, return a struct.
-    // Otherwise, delete this comment.
     var low = try sem.analyze(allocator, ast, errors);
     defer low.deinit(allocator);
 
@@ -54,7 +53,7 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
     // var diaIR: DiaIR = .{
     //     .allocator = allocator,
     //     .ast = ast,
-    //     .symbol_refs = low.symbol_refs,
+    //     .lower = low,
     // };
     // defer diaIR.deinit();
     //

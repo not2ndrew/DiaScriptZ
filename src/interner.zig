@@ -23,6 +23,16 @@ pub const InternPool = struct {
         allocator.free(self.texts);
         allocator.free(self.text_spans);
     }
+
+    pub fn getIdent(self: *InternPool, id: IdentId) []const u8 {
+        const span = self.ident_spans[id];
+        return self.bytes[span.start .. span.start + span.len];
+    }
+
+    pub fn getText(self: *InternPool, id: IdentId) []const u8 {
+        const span = self.text_spans[id];
+        return self.texts[span.start .. span.start + span.len];
+    }
 };
 
 pub const Interner = @This();
@@ -77,11 +87,6 @@ pub fn intern(self: *Interner, allocator: Allocator, name: []const u8) !IdentId 
     return id;
 }
 
-pub fn get(self: *const Interner, id: IdentId) []const u8 {
-    const span = self.ident_spans.items[id];
-    return self.bytes.items[span.start .. span.start + span.len];
-}
-
 // TODO: Change IdentId to textId.
 pub fn appendText(self: *Interner, allocator: Allocator, text: []const u8) !void {
     const start: IdentId = @intCast(self.texts.items.len);
@@ -90,4 +95,14 @@ pub fn appendText(self: *Interner, allocator: Allocator, text: []const u8) !void
 
     try self.text_spans.append(allocator, span);
     try self.texts.appendSlice(allocator, text);
+}
+
+pub fn getIdent(self: *Interner, id: IdentId) []const u8 {
+    const span = self.ident_spans.items[id];
+    return self.bytes.items[span.start .. span.start + span.len];
+}
+
+pub fn getText(self: *Interner, id: IdentId) []const u8 {
+    const span = self.text_spans.items[id];
+    return self.texts.items[span.start .. span.start + span.len];
 }

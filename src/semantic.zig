@@ -43,11 +43,6 @@ pub const Symbol = struct {
     };
 };
 
-pub const Span = struct {
-    start: u32,
-    len: u32,
-};
-
 // Program variables and jump variables are handled differently.
 // Program variables must be declared first before using it.
 // Jump variables are forward declarations and must require a label block to connect.
@@ -102,7 +97,7 @@ fn endScope(sem: *Semantic) void {
 
     for (0..count) |i| {
         const symbol = sem.symbols.items[sem.symbols.items.len - i - 1];
-        const name = sem.ast.tokenSlice(symbol.token_pos);
+        const name = sem.interner.getIdent(symbol.ident_id);
 
         _ = sem.symbol_table.swapRemove(name);
     }
@@ -156,6 +151,7 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
 
     return .{
         .symbols = try semantic.symbols.toOwnedSlice(allocator),
+        .pool = try semantic.interner.finalize(allocator),
     };
 }
 

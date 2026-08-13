@@ -3,6 +3,7 @@ const zig_node = @import("node.zig");
 const Ast = @import("ast.zig").Ast;
 const Symbol = @import("semantic.zig").Symbol;
 const TokenIndex = @import("token.zig").TokenIndex;
+const InternPool = @import("interner.zig").InternPool;
 const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
@@ -82,31 +83,15 @@ pub const DiaIR = @This();
 
 allocator: Allocator,
 ast: *const Ast,
-
-symbol_refs: []const SymbolId,
-symbol_ref_idx: usize = 0,
+lower: *const Lower,
 
 instructions: Insts = .empty,
 extra: std.ArrayList(u32) = .empty,
 
-text_bytes: std.ArrayList(u8) = .empty,
-
-// TODO: Determine whether I need a identifier_bytes intern pool
-// identifier_bytes holds all variable declarations, and label blocks.
-//
-// TODO: Inst needs to hold semantic info for declaration types (const, var, speaker)
-// Maybe a symbol ID?
-//
-// Problem: If an error has occurred in optimization or runtime, how do we print out the error?
-// A solution may require token span. Should every Inst store token span?
-// Token span is span from source string.
-
 pub fn deinit(ir: *DiaIR) void {
     const allocator = ir.allocator;
-    allocator.free(ir.symbol_refs);
     ir.instructions.deinit(allocator);
     ir.extra.deinit(allocator);
-    ir.text_bytes.deinit(allocator);
 }
 
 pub fn generate(ir: *DiaIR) Error!void {
