@@ -2,6 +2,7 @@ const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
 const Ast = @import("ast.zig").Ast;
+const inter = @import("interner.zig");
 const diag = @import("diagnostic.zig");
 const Lower = @import("lower.zig").Lower;
 
@@ -17,6 +18,9 @@ const NodeIndex = zig_node.NodeIndex;
 const Tag = zig_node.NodeTag;
 const invalid_node = zig_node.invalid_node;
 
+const Interner = inter.Interner;
+const IdentId = inter.IdentId;
+
 const AstError = diag.Error;
 const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
@@ -29,7 +33,7 @@ const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
 pub const SymbolId = u32;
 pub const Symbol = struct {
-    token_pos: TokenIndex,
+    ident_id: IdentId,
     kind: Kind,
 
     pub const Kind = enum {
@@ -37,6 +41,11 @@ pub const Symbol = struct {
         variable,
         speaker,
     };
+};
+
+pub const Span = struct {
+    start: u32,
+    len: u32,
 };
 
 // Program variables and jump variables are handled differently.
@@ -51,14 +60,15 @@ allocator: Allocator,
 ast: *const Ast,
 errors: *std.ArrayList(AstError),
 
+// symbol_table is local hashmap for declaration variables and dialogue speakers.
 symbol_table: SymbolTable = .empty,
 label_table: LabelTable = .empty,
 
+interner: Interner = .{},
+
 // Stores variable and speaker declarations.
 // Labels are stored separately in label_table.
-// TODO: Determine whether I need to store label and jump blocks in symbol as well.
 symbols: std.ArrayList(Symbol) = .empty,
-symbol_refs: std.ArrayList(SymbolId) = .empty,
 
 scope_stack: std.ArrayList(u32) = .empty,
 unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
@@ -67,8 +77,8 @@ initializing_symbol: ?SymbolId = null,
 pub fn deinit(sem: *Semantic) void {
     sem.symbol_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
+    sem.interner.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
-    sem.symbol_refs.deinit(sem.allocator);
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
 }
@@ -146,7 +156,6 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
 
     return .{
         .symbols = try semantic.symbols.toOwnedSlice(allocator),
-        .symbol_refs = try semantic.symbol_refs.toOwnedSlice(allocator),
     };
 }
 
@@ -198,12 +207,11 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         };
     }
 
+    const id = try sem.interner.intern(sem.allocator, name);
     const idx = try sem.addSymbol(.{
-        .token_pos = pos,
+        .ident_id = id,
         .kind = mutability,
     });
-
-    try sem.symbol_refs.append(sem.allocator, idx);
 
     entity.value_ptr.* = idx;
     sem.initializing_symbol = idx;
@@ -232,8 +240,6 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         .constant => return sem.report(pos, .modified_const),
         else => {},
     }
-
-    try sem.symbol_refs.append(sem.allocator, idx);
 
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
@@ -306,8 +312,6 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
 
             if (idx == sem.initializing_symbol)
                 return sem.report(token_pos, .undeclared_var);
-
-            try sem.symbol_refs.append(sem.allocator, idx);
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -336,24 +340,20 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     try sem.checkSymbolLabelConflict(name, token_pos);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
-    var idx: SymbolId = undefined;
-
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         switch (found.kind) {
-            .speaker => idx = entity.value_ptr.*,
-            .variable, .constant
-            => return sem.report(token_pos, .ident_mismatch),
+            .speaker => {},
+            else => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
-        idx = try sem.addSymbol(.{
-            .token_pos = token_pos,
+        const id = try sem.interner.intern(sem.allocator, name);
+        const idx = try sem.addSymbol(.{
+            .ident_id = id,
             .kind = .speaker,
         });
         entity.value_ptr.* = idx;
     }
-
-    try sem.symbol_refs.append(sem.allocator, idx);
 
     try sem.visitDialogueParts(start, range.len);
 }
@@ -379,7 +379,10 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
 fn visitText(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     return switch (node.tag) {
-        .string => {},
+        .string => {
+            const text = sem.ast.tokenSlice(node.token_pos);
+            try sem.interner.appendText(sem.allocator, text);
+        },
         else => sem.visitExpr(node_idx),
     };
 }
@@ -405,6 +408,8 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const entity = try sem.label_table.getOrPut(sem.allocator, label_name);
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
+
+    _ = try sem.interner.intern(sem.allocator, label_name);
 
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.

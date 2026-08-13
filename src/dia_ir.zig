@@ -68,10 +68,12 @@ pub const Inst = struct {
             lhs: u32,
             rhs: u32,
         },
-        range: struct {
-            start: u32,
-            len: u32
-        },
+        range: Span,
+    };
+
+    pub const Span = struct {
+        start: u32,
+        len: u32,
     };
 };
 
@@ -81,13 +83,12 @@ pub const DiaIR = @This();
 allocator: Allocator,
 ast: *const Ast,
 
-// TODO: Remove symbols.
-// It should be used at Optimize.
 symbol_refs: []const SymbolId,
 symbol_ref_idx: usize = 0,
 
 instructions: Insts = .empty,
 extra: std.ArrayList(u32) = .empty,
+
 text_bytes: std.ArrayList(u8) = .empty,
 
 // TODO: Determine whether I need a identifier_bytes intern pool
@@ -124,25 +125,36 @@ pub fn generate(ir: *DiaIR) Error!void {
     try ir.text_bytes.shrinkToLen(allocator);
 }
 
-fn getTextSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.Data {
+fn getTextSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.Span {
     const line = ir.ast.tokenSlice(token_pos);
 
     const start: u32 = @intCast(ir.text_bytes.items.len);
     const len: u32 = @intCast(line.len);
 
     try ir.text_bytes.appendSlice(ir.allocator, line);
-    return .{ .range = .{ .start = start, .len = len }};
+    return .{ .start = start, .len = len };
+}
+
+fn getLabelSpan(ir: *DiaIR, token_pos: TokenIndex) !Inst.Span {
+    const label = ir.ast.tokenSlice(token_pos);
+
+    const start: u32 = @intCast(ir.label_bytes.items.len);
+    const len: u32 = @intCast(label.len);
+
+    try ir.label_bytes.append(ir.allocator, label);
+    return .{ .start = start, .len = len };
+
 }
 
 fn appendInst(ir: *DiaIR, comptime tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) u32 {
+    const len: u32 = @intCast(ir.instructions.items.len);
     ir.instructions.appendAssumeCapacity(.{
         .tag = tag,
         .token_pos = token_pos,
         .data = data,
     });
 
-    const len: u32 = @intCast(ir.instructions.items.len);
-    return len - 1;
+    return len;
 }
 
 fn nextSymbol(ir: *DiaIR) SymbolId {
@@ -230,16 +242,13 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!u32 {
         .id = symbol_id,
     });
 
-    const ident_pos_2 = ir.appendInst(.load, ident.token_pos, .{
-        .id = symbol_id
-    });
     const expr = try ir.evalExpr(value_idx);
     const combine = ir.appendInst(tag, node.token_pos, .{
-        .binary = .{ .lhs = ident_pos_2, .rhs = expr }
+        .binary = .{ .lhs = ident_pos, .rhs = expr }
     });
 
     return ir.appendInst(.store, node.token_pos, .{
-        .binary = .{ .lhs = ident_pos, .rhs = combine }
+        .binary = .{ .lhs = symbol_id, .rhs = combine }
     });
 }
 
@@ -439,7 +448,7 @@ fn evalText(ir: *DiaIR, node_idx: NodeIndex) Error!u32 {
     return try switch (node.tag) {
         .string => {
             const span = try ir.getTextSpan(node.token_pos);
-            return ir.appendInst(.text, node.token_pos, span);
+            return ir.appendInst(.text, node.token_pos, .{ .range = span });
         },
         else => ir.evalExpr(node_idx),
     };

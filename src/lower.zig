@@ -51,15 +51,15 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
     if (errors.items.len > 0)
         return printErrors(parse_tree, allocator, file_name);
 
-    var diaIR: DiaIR = .{
-        .allocator = allocator,
-        .ast = ast,
-        .symbol_ref = low.symbol_refs,
-    };
-    defer diaIR.deinit();
-
-    // AST -> IR
-    try diaIR.generate();
+    // var diaIR: DiaIR = .{
+    //     .allocator = allocator,
+    //     .ast = ast,
+    //     .symbol_refs = low.symbol_refs,
+    // };
+    // defer diaIR.deinit();
+    //
+    // // AST -> IR
+    // try diaIR.generate();
 
     // Optimization IR here
     // TODO: Decide whether I should use toOwnSlice() on extra.
