@@ -4,7 +4,7 @@ const sem = @import("semantic.zig");
 const diag = @import("diagnostic.zig");
 const ir = @import("dia_ir.zig");
 const op = @import("optimize.zig");
-const InternPool = @import("interner.zig").InternPool;
+const in = @import("interner.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -26,13 +26,20 @@ const Inst = ir.Inst;
 
 const Optimize = op.Optimize;
 
+const IdentId = in.IdentId;
+const InternPool = in.InternPool;
+
 pub const Lower = @This();
 
 symbols: []Symbol,
+symbol_refs: []SymbolId,
+jumps: []IdentId,
 pool: InternPool,
 
 pub fn deinit(low: *Lower, allocator: Allocator) void {
     allocator.free(low.symbols);
+    allocator.free(low.symbol_refs);
+    allocator.free(low.jumps);
     low.pool.deinit(allocator);
 }
 
@@ -50,17 +57,15 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
     if (errors.items.len > 0)
         return printErrors(parse_tree, allocator, file_name);
 
-    // TODO: CLOSE DOWN IR GENERATION FOR NOW
-    // REVAMP MOST OF THE METHODS.
-    // var diaIR: DiaIR = .{
-    //     .allocator = allocator,
-    //     .ast = ast,
-    //     .lower = low,
-    // };
-    // defer diaIR.deinit();
-    //
-    // // AST -> IR
-    // try diaIR.generate();
+    var diaIR: DiaIR = .{
+        .allocator = allocator,
+        .ast = ast,
+        .lower = &low,
+    };
+    defer diaIR.deinit();
+
+    // AST -> IR
+    try diaIR.generate();
 
     // Optimization IR here
     // TODO: Decide whether I should use toOwnSlice() on extra.

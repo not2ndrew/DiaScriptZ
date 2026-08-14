@@ -26,9 +26,6 @@ const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
-// Swapped them out since we have an interner to handle string.
-// const SymbolTable = std.array_hash_map.String(u32);
-// const LabelTable = std.array_hash_map.String(void);
 const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
 const LabelTable = std.array_hash_map.Auto(IdentId, void);
 
@@ -65,16 +62,22 @@ errors: *std.ArrayList(AstError),
 
 // symbol_table is local hashmap for declaration variables and dialogue speakers.
 symbol_table: SymbolTable = .empty,
+// label_table is global hashmap for label names.
 label_table: LabelTable = .empty,
 
 interner: Interner = .{},
 
-// Stores variable and speaker declarations.
-// Labels are stored separately in label_table.
+// TODO: Determine whether I want to store a ref to the declaration identifier itself.
+// Ex: "const x = 1"
+// Since x was declared, it will store a ref. Determine if I should store it or not.
 symbols: std.ArrayList(Symbol) = .empty,
+
+// For any symbol declared, insert a symbolId associated with the symbol.
+symbol_refs: std.ArrayList(SymbolId) = .empty,
 
 scope_stack: std.ArrayList(u32) = .empty,
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
+resolved_jumps: std.ArrayList(IdentId) = .empty,
 initializing_symbol: ?SymbolId = null,
 
 pub fn deinit(sem: *Semantic) void {
@@ -82,8 +85,10 @@ pub fn deinit(sem: *Semantic) void {
     sem.label_table.deinit(sem.allocator);
     sem.interner.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
+    sem.symbol_refs.deinit(sem.allocator);
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
+    sem.resolved_jumps.deinit(sem.allocator);
 }
 
 fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
@@ -123,12 +128,12 @@ fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId, token_pos: TokenI
 // The last node of a post-traversal list
 // is the root node.
 pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
-    var semantic: Semantic = .{
+    var sem: Semantic = .{
         .allocator = allocator,
         .ast = ast,
         .errors = errors,
     };
-    defer semantic.deinit();
+    defer sem.deinit();
 
     const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
@@ -136,28 +141,34 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
     const end = range.start + range.len;
 
     // Put a limit to how many scopes can be generated
-    try semantic.scope_stack.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
+    try sem.scope_stack.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
 
     for (start..end) |idx| {
         const node_idx = ast.extra_data[idx];
-        try semantic.visitStmt(node_idx);
+        try sem.visitStmt(node_idx);
     }
 
-    for (semantic.unresolved_jumps.items) |jump| {
+    try sem.resolved_jumps.ensureTotalCapacityPrecise(sem.allocator, sem.unresolved_jumps.items.len);
+
+    for (sem.unresolved_jumps.items) |jump| {
         const ident_id = jump.ident_id;
         const token_pos = jump.token_pos;
-        semantic.label_table.get(jump.ident_id) orelse {
-            try semantic.report(token_pos, .unknown_jump);
+        sem.label_table.get(jump.ident_id) orelse {
+            try sem.report(token_pos, .unknown_jump);
             continue;
         };
 
-        if (semantic.symbol_table.contains(ident_id))
-            try semantic.report(token_pos, .ident_mismatch);
+        if (sem.symbol_table.contains(ident_id))
+            try sem.report(token_pos, .ident_mismatch);
+
+        sem.resolved_jumps.appendAssumeCapacity(ident_id);
     }
 
     return .{
-        .symbols = try semantic.symbols.toOwnedSlice(allocator),
-        .pool = try semantic.interner.finalize(allocator),
+        .symbols = try sem.symbols.toOwnedSlice(allocator),
+        .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
+        .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
+        .pool = try sem.interner.finalize(allocator),
     };
 }
 
@@ -216,6 +227,8 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     });
     entity.value_ptr.* = idx;
 
+    try sem.symbol_refs.append(sem.allocator, idx);
+
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
 
@@ -236,6 +249,7 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const symbol_id = sem.symbol_table.get(ident_id) orelse
         return sem.report(pos, .undeclared_var);
 
+    try sem.symbol_refs.append(sem.allocator, symbol_id);
     const symbol = sem.symbols.items[symbol_id];
 
     switch (symbol.kind) {
@@ -314,6 +328,8 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
 
             if (symbol_id == sem.initializing_symbol)
                 return sem.report(token_pos, .undeclared_var);
+
+            try sem.symbol_refs.append(sem.allocator, symbol_id);
         },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
@@ -342,20 +358,25 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const ident_id = try sem.interner.intern(sem.allocator, name);
     try sem.checkSymbolLabelConflict(ident_id, token_pos);
 
+    var symbol_id: SymbolId = undefined;
+
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
-        const found = sem.symbols.items[entity.value_ptr.*];
+        symbol_id = entity.value_ptr.*;
+        const found = sem.symbols.items[symbol_id];
         switch (found.kind) {
             .speaker => {},
             else => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
-        const idx = try sem.addSymbol(.{
+        symbol_id = try sem.addSymbol(.{
             .ident_id = ident_id,
             .kind = .speaker,
         });
-        entity.value_ptr.* = idx;
+        entity.value_ptr.* = symbol_id;
     }
+
+    try sem.symbol_refs.append(sem.allocator, symbol_id);
 
     try sem.visitDialogueParts(start, range.len);
 }
