@@ -10,7 +10,7 @@ pub const Span = struct {
 };
 
 // Inst in DiaIR will be responsible for ownership of IdentIds.
-// So we do not need to insert interner.table.
+// To get the id, we need the Interner table.
 pub const InternPool = struct {
     bytes: []const u8,
     ident_spans: []Span,

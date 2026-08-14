@@ -50,6 +50,8 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
     if (errors.items.len > 0)
         return printErrors(parse_tree, allocator, file_name);
 
+    // TODO: CLOSE DOWN IR GENERATION FOR NOW
+    // REVAMP MOST OF THE METHODS.
     // var diaIR: DiaIR = .{
     //     .allocator = allocator,
     //     .ast = ast,

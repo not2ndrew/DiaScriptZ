@@ -26,8 +26,11 @@ const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
-const SymbolTable = std.array_hash_map.String(u32);
-const LabelTable = std.array_hash_map.String(void);
+// Swapped them out since we have an interner to handle string.
+// const SymbolTable = std.array_hash_map.String(u32);
+// const LabelTable = std.array_hash_map.String(void);
+const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
+const LabelTable = std.array_hash_map.Auto(IdentId, void);
 
 const binaryOp = *const fn (*Semantic, NodeIndex) anyerror!void;
 
@@ -41,6 +44,11 @@ pub const Symbol = struct {
         variable,
         speaker,
     };
+};
+
+pub const UnresolvedJump = struct {
+    ident_id: IdentId,
+    token_pos: TokenIndex,
 };
 
 // Program variables and jump variables are handled differently.
@@ -66,7 +74,7 @@ interner: Interner = .{},
 symbols: std.ArrayList(Symbol) = .empty,
 
 scope_stack: std.ArrayList(u32) = .empty,
-unresolved_jumps: std.ArrayList(TokenIndex) = .empty,
+unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
 initializing_symbol: ?SymbolId = null,
 
 pub fn deinit(sem: *Semantic) void {
@@ -97,21 +105,18 @@ fn endScope(sem: *Semantic) void {
 
     for (0..count) |i| {
         const symbol = sem.symbols.items[sem.symbols.items.len - i - 1];
-        const name = sem.interner.getIdent(symbol.ident_id);
-
-        _ = sem.symbol_table.swapRemove(name);
+        _ = sem.symbol_table.swapRemove(symbol.ident_id);
     }
 }
 
-fn addSymbol(sem: *Semantic, symbol: Symbol) !u32 {
+fn addSymbol(sem: *Semantic, symbol: Symbol) !SymbolId {
     const idx: u32 = @intCast(sem.symbols.items.len);
     try sem.symbols.append(sem.allocator, symbol);
-
     return idx;
 }
 
-fn checkSymbolLabelConflict(sem: *Semantic, label_name: []const u8, token_pos: TokenIndex) !void {
-    if (sem.symbol_table.contains(label_name))
+fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId, token_pos: TokenIndex) !void {
+    if (sem.symbol_table.contains(ident_id))
         return sem.report(token_pos, .ident_mismatch);
 }
 
@@ -138,14 +143,15 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
         try semantic.visitStmt(node_idx);
     }
 
-    for (semantic.unresolved_jumps.items) |token_pos| {
-        const name = semantic.ast.tokenSlice(token_pos);
-        semantic.label_table.get(name) orelse {
+    for (semantic.unresolved_jumps.items) |jump| {
+        const ident_id = jump.ident_id;
+        const token_pos = jump.token_pos;
+        semantic.label_table.get(jump.ident_id) orelse {
             try semantic.report(token_pos, .unknown_jump);
             continue;
         };
 
-        if (semantic.symbol_table.contains(name))
+        if (semantic.symbol_table.contains(ident_id))
             try semantic.report(token_pos, .ident_mismatch);
     }
 
@@ -191,10 +197,11 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         mutability = .constant;
 
     const name = sem.ast.tokenSlice(pos);
+    const ident_id = try sem.interner.intern(sem.allocator, name);
 
-    try sem.checkSymbolLabelConflict(name, pos);
+    try sem.checkSymbolLabelConflict(ident_id, pos);
 
-    const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
+    const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         return switch (found.kind) {
@@ -203,13 +210,12 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         };
     }
 
-    const id = try sem.interner.intern(sem.allocator, name);
     const idx = try sem.addSymbol(.{
-        .ident_id = id,
+        .ident_id = ident_id,
         .kind = mutability,
     });
-
     entity.value_ptr.* = idx;
+
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
 
@@ -226,10 +232,11 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const pos = ident_node.token_pos;
     const ident_name = sem.ast.tokenSlice(pos);
 
-    const idx = sem.symbol_table.get(ident_name) orelse
+    const ident_id = try sem.interner.intern(sem.allocator, ident_name);
+    const symbol_id = sem.symbol_table.get(ident_id) orelse
         return sem.report(pos, .undeclared_var);
 
-    const symbol = sem.symbols.items[idx];
+    const symbol = sem.symbols.items[symbol_id];
 
     switch (symbol.kind) {
         .speaker => return sem.report(pos, .ident_mismatch),
@@ -237,8 +244,6 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         else => {},
     }
 
-    sem.initializing_symbol = idx;
-    defer sem.initializing_symbol = null;
     try sem.visitExpr(assign.@"1");
 }
 
@@ -294,6 +299,7 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
     const name = sem.ast.tokenSlice(token_pos);
+    const ident_id = try sem.interner.intern(sem.allocator, name);
     switch (node.tag) {
         .number => {
             // Base 10
@@ -303,10 +309,10 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
             };
         },
         .var_ident => {
-            const idx = sem.symbol_table.get(name) orelse
+            const symbol_id = sem.symbol_table.get(ident_id) orelse
                 return sem.report(token_pos, .undeclared_var);
 
-            if (idx == sem.initializing_symbol)
+            if (symbol_id == sem.initializing_symbol)
                 return sem.report(token_pos, .undeclared_var);
         },
         // TODO: Check for math errors
@@ -333,9 +339,10 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const token_pos = speaker.token_pos;
     const name = sem.ast.tokenSlice(token_pos);
 
-    try sem.checkSymbolLabelConflict(name, token_pos);
+    const ident_id = try sem.interner.intern(sem.allocator, name);
+    try sem.checkSymbolLabelConflict(ident_id, token_pos);
 
-    const entity = try sem.symbol_table.getOrPut(sem.allocator, name);
+    const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         switch (found.kind) {
@@ -343,9 +350,8 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
             else => return sem.report(token_pos, .ident_mismatch),
         }
     } else {
-        const id = try sem.interner.intern(sem.allocator, name);
         const idx = try sem.addSymbol(.{
-            .ident_id = id,
+            .ident_id = ident_id,
             .kind = .speaker,
         });
         entity.value_ptr.* = idx;
@@ -366,9 +372,14 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
         const jump_node = sem.ast.nodes.get(jump);
         const token_pos = jump_node.token_pos;
         const jump_name = sem.ast.tokenSlice(token_pos);
+        const ident_id = try sem.interner.intern(sem.allocator, jump_name);
 
-        if (!sem.label_table.contains(jump_name))
-            try sem.unresolved_jumps.append(sem.allocator, token_pos);
+        if (!sem.label_table.contains(ident_id)) {
+            try sem.unresolved_jumps.append(sem.allocator, .{
+                .ident_id = ident_id,
+                .token_pos = token_pos,
+            });
+        }
     }
 }
 
@@ -394,18 +405,18 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const label_idx = sem.ast.extra_data[start];
     const label = sem.ast.nodes.get(label_idx);
     const token_pos = label.token_pos;
+
     const label_name = sem.ast.tokenSlice(token_pos);
+    const ident_id = try sem.interner.intern(sem.allocator, label_name);
 
     if (sem.scope_stack.items.len != 0)
         return sem.report(token_pos, .invalid_label_scope);
 
-    try sem.checkSymbolLabelConflict(label_name, token_pos);
+    try sem.checkSymbolLabelConflict(ident_id, token_pos);
 
-    const entity = try sem.label_table.getOrPut(sem.allocator, label_name);
+    const entity = try sem.label_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
-
-    _ = try sem.interner.intern(sem.allocator, label_name);
 
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.
