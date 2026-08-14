@@ -32,12 +32,14 @@ const InternPool = in.InternPool;
 pub const Lower = @This();
 
 symbols: []Symbol,
+labels: []IdentId,
 symbol_refs: []SymbolId,
 jumps: []IdentId,
 pool: InternPool,
 
 pub fn deinit(low: *Lower, allocator: Allocator) void {
     allocator.free(low.symbols);
+    allocator.free(low.labels);
     allocator.free(low.symbol_refs);
     allocator.free(low.jumps);
     low.pool.deinit(allocator);

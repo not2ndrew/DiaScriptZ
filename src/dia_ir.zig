@@ -62,6 +62,7 @@ pub const Inst = struct {
 
         // Dialogue
         speaker,
+        label,
         text,
 
         // Control flow
@@ -72,6 +73,7 @@ pub const Inst = struct {
     pub const Data = union {
         uint: u8,
         load: SymbolId,
+        label: IdentId,
         jump: IdentId,
         store: struct {
             symbol: SymbolId,
@@ -95,6 +97,7 @@ lower: *const Lower,
 instructions: Insts = .empty,
 extra: std.ArrayList(InstId) = .empty,
 symbol_ref: SymbolId = 0,
+label_ref: IdentId = 0,
 jump_ref: IdentId = 0,
 text_id_ref: u32 = 0,
 
@@ -130,18 +133,15 @@ fn appendInst(ir: *DiaIR, comptime tag: Inst.Tag, token_pos: TokenIndex, data: I
     return len;
 }
 
-// TODO: The following would fail symbolId.
-//
-// var x = 0
-// var y = 0
-// x += 1
-//
-// Using nextSymbol(), symbol_ref would be selected to y instead of x.
-// Instead, create an NodeIndex -> SymbolId hashmap.
-// That way, we can get the SymbolId via NodeIndex when iterating.
 fn nextSymbol(ir: *DiaIR) SymbolId {
     const id = ir.lower.symbol_refs[ir.symbol_ref];
     ir.symbol_ref += 1;
+    return id;
+}
+
+fn nextLabel(ir: *DiaIR) IdentId {
+    const id = ir.lower.labels[ir.label_ref];
+    ir.label_ref += 1;
     return id;
 }
 
@@ -360,8 +360,11 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
 
     try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
 
+    const ident_id = ir.nextLabel();
     // TODO: Create a new Inst tag and union struct for labels.
-    const label_inst = ir.appendInst(.load, label_node.token_pos, undefined);
+    const label_inst = ir.appendInst(.label, label_node.token_pos, .{
+        .label = ident_id,
+    });
 
     stmts.appendAssumeCapacity(label_inst);
 
@@ -372,8 +375,7 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
         stmts.appendAssumeCapacity(stmt_idx);
     }
 
-    // TODO: Determine if I can use appendSliceAssumeCapacity();
-    try ir.extra.appendSlice(ir.allocator, try stmts.toOwnedSlice(ir.allocator));
+    ir.extra.appendSliceAssumeCapacity(try stmts.toOwnedSlice(ir.allocator));
 
     return ir.appendInst(.block, node.token_pos, .{
         .range = .{ .start = extra_start, .len = len }

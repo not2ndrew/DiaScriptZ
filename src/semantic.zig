@@ -71,6 +71,7 @@ interner: Interner = .{},
 // Ex: "const x = 1"
 // Since x was declared, it will store a ref. Determine if I should store it or not.
 symbols: std.ArrayList(Symbol) = .empty,
+labels: std.ArrayList(IdentId) = .empty,
 
 // For any symbol declared, insert a symbolId associated with the symbol.
 symbol_refs: std.ArrayList(SymbolId) = .empty,
@@ -85,6 +86,7 @@ pub fn deinit(sem: *Semantic) void {
     sem.label_table.deinit(sem.allocator);
     sem.interner.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
+    sem.labels.deinit(sem.allocator);
     sem.symbol_refs.deinit(sem.allocator);
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
@@ -166,6 +168,7 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
 
     return .{
         .symbols = try sem.symbols.toOwnedSlice(allocator),
+        .labels = try sem.labels.toOwnedSlice(allocator),
         .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
         .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
         .pool = try sem.interner.finalize(allocator),
@@ -438,6 +441,8 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const entity = try sem.label_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing)
         return sem.report(token_pos, .duplicate_label);
+
+    try sem.labels.append(sem.allocator, ident_id);
 
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.
