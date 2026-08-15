@@ -1,13 +1,25 @@
 const std = @import("std");
 const ir = @import("dia_ir.zig");
-const Symbol = @import("semantic.zig").Symbol;
+const in = @import("interner.zig");
+const sem = @import("semantic.zig");
+const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
+const InstId = ir.InstId;
 const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
+const Insts = std.ArrayList(Inst);
 
-const Instructions = std.ArrayList(Inst);
+const IdentId = in.IdentId;
+
+const Symbol = sem.Symbol;
+const SymbolId = sem.SymbolId;
+
+pub const Value = union(enum) {
+    unknown,
+    uint: u8,
+};
 
 // Optimization includes:
 // 1) Constant folding
@@ -21,21 +33,18 @@ const Instructions = std.ArrayList(Inst);
 
 pub const Optimize = @This();
 
-instructions: *Instructions,
+instructions: *Insts,
 extra: *std.ArrayList(u32),
-string_bytes: []const u8,
-text_bytes: []const u8,
+lower: *const Lower,
 
-pub fn deinit(opt: *Optimize, allocator: Allocator) void {
-    allocator.free(opt.string_bytes);
-    allocator.free(opt.text_bytes);
-}
-
-pub fn optimizeRoot(opt: *Optimize) void {
+pub fn optimizeRoot(opt: *Optimize, allocator: Allocator) !void {
     const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
     const range = root_inst.data.range;
 
     opt.block(range.start, range.len);
+
+    try opt.instructions.shrinkToLen(allocator);
+    try opt.instructions.shrinkToLen(allocator);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) void {
@@ -50,7 +59,7 @@ fn block(opt: *Optimize, start: u32, len: u32) void {
 
 fn stmt(opt: *Optimize, inst: Inst) void {
     switch (inst.tag) {
-        .store => opt.store(inst),
+        .store => opt.storeVar(inst),
         else => {},
     }
 }
@@ -59,10 +68,18 @@ fn stmt(opt: *Optimize, inst: Inst) void {
 // 1) Variable must be "const"
 // 2) Variable must be assigned a number.
 // Anything else is a runtime variable.
-fn store(opt: *Optimize, inst: Inst) void {
-    const binary = inst.data.binary;
-    const decl = opt.instructions.items[binary.lhs];
-    _ = decl;
+fn storeVar(opt: *Optimize, inst: Inst) void {
+    const store = inst.data.store;
+    const value = opt.evalExpr(store.value);
+
+    switch (value) {
+        .uint => |num| {
+            std.debug.print("Number: {d}\n", .{num});
+        },
+        .unknown => {
+            // Runtime value.
+        },
+    }
 }
 
 // lhs is the declaration variable
@@ -74,39 +91,47 @@ fn arithmetic(opt: *Optimize, inst: Inst) void {
     const rhs_inst = opt.instructions.items[rhs];
 
     opt.expr(rhs_inst);
-
-    // if (lhs_inst.tag == .constant and rhs_inst.tag == .constant) {
-    //     const num = fold(Inst.tag, lhs_inst.data.uint, rhs_inst.data.uint);
-    //     lhs_inst.data.uint = num;
-    //     rhs_inst.data = .{ .none = {} };
-    // }
 }
 
-// TODO: Figure out how to perform constant folding on flattened instructions.
+// TODO: Optimizer needs diagnostics.
 fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
     return switch (tag) {
-        .plus => std.math.add(u8, lhs, rhs),
-        .minus => std.math.sub(u8, lhs, rhs),
-        .mult => std.math.mul(u8, lhs, rhs),
+        .add => std.math.add(u8, lhs, rhs),
+        .sub => std.math.sub(u8, lhs, rhs),
+        .mul => std.math.mul(u8, lhs, rhs),
         .div => std.math.divTrunc(u8, lhs, rhs),
         else => unreachable,
     };
 }
 
-fn expr(opt: *Optimize, inst: Inst) void {
-    switch (inst.tag) {
-        .plus => opt.evalBinary(inst),
-        .sub => opt.evalBinary(inst),
-        .mul => opt.evalBinary(inst),
-        .div => opt.evalBinary(inst),
-        .constant => {},
-        .load => {},
-        else => {},
-    }
+fn evalExpr(opt: *Optimize, inst_idx: InstId) Value {
+    const inst = opt.instructions.items[inst_idx];
+    return switch (inst.tag) {
+        .constant => .{ .uint = inst.data.uint },
+        .add, .sub,
+        .mul, .div => opt.evalBinary(inst),
+        .load => {
+            // TODO: Perform constant propagation
+            return .unknown;
+        },
+        else => .unknown,
+    };
 }
 
-fn evalBinary(opt: *Optimize, inst: Inst) void {
+// There are 4 possible combinations of binary
+// 1) uint and uint
+// 2) ident and uint
+// 3) uint and ident
+// 4) ident and ident
+fn evalBinary(opt: *Optimize, inst: Inst) Value {
     const binary = inst.data.binary;
-    opt.expr(binary.lhs);
-    opt.expr(binary.rhs);
+    const lhs = opt.evalExpr(binary.lhs);
+    const rhs = opt.evalExpr(binary.rhs);
+
+    if (lhs == .uint and rhs == .uint) {
+        const num = fold(inst.tag, lhs.uint, rhs.uint) catch return .unknown;
+        return .{ .uint = num };
+    }
+
+    return .unknown;
 }

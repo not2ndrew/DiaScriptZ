@@ -71,15 +71,12 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
 
     // Optimization IR here
     // TODO: Decide whether I should use toOwnSlice() on extra.
-    // var opt: Optimize = .{
-    //     .instructions = &diaIR.instructions,
-    //     .extra = &diaIR.extra,
-    //     .string_bytes = try diaIR.string_bytes.toOwnedSlice(allocator),
-    //     .text_bytes = try diaIR.text_bytes.toOwnedSlice(allocator),
-    // };
-    // defer opt.deinit(allocator);
-    //
-    // opt.optimizeRoot();
+    var opt: Optimize = .{
+        .instructions = &diaIR.instructions,
+        .extra = &diaIR.extra,
+        .lower = &low,
+    };
+    try opt.optimizeRoot(allocator);
 }
 
 fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {

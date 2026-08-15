@@ -116,7 +116,8 @@ pub fn generate(ir: *DiaIR) Error!void {
     // Root node in a post-traversal order is the last node.
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
-    _ = try ir.reduceBlock(range.start, range.len);
+    const root_range = try ir.reduceBlock(range.start, range.len);
+    _ = ir.appendInst(.block, 0, root_range);
 
     try ir.instructions.shrinkToLen(allocator);
     try ir.extra.shrinkToLen(allocator);
@@ -206,19 +207,14 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
 
 fn reduceDecl(ir: *DiaIR, node: Node) Error!InstId {
     const assign = node.data.node_and_node;
-    const ident_idx = assign.@"0";
     const value_idx = assign.@"1";
 
-    const ident = ir.ast.nodes.get(ident_idx);
     const symbol_id = ir.nextSymbol();
 
-    const ident_pos = ir.appendInst(.load, ident.token_pos, .{
-        .load = symbol_id
-    });
     const value = try ir.evalExpr(value_idx);
 
     return ir.appendInst(.store, node.token_pos, .{
-        .binary = .{ .lhs = ident_pos, .rhs = value }
+        .store = .{ .symbol = symbol_id, .value = value }
     });
 }
 
@@ -361,7 +357,6 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
 
     const ident_id = ir.nextLabel();
-    // TODO: Create a new Inst tag and union struct for labels.
     const label_inst = ir.appendInst(.label, label_node.token_pos, .{
         .label = ident_id,
     });

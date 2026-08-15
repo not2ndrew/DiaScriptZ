@@ -1,2 +1,2 @@
-var x = 10
-var y = x
+const a = 10
+const b = a
