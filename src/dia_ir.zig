@@ -76,7 +76,7 @@ pub const Inst = struct {
         label: IdentId,
         jump: IdentId,
         store: struct {
-            symbol: SymbolId,
+            symbol_id: SymbolId,
             value: InstId,
         },
         binary: struct {
@@ -214,7 +214,7 @@ fn reduceDecl(ir: *DiaIR, node: Node) Error!InstId {
     const value = try ir.evalExpr(value_idx);
 
     return ir.appendInst(.store, node.token_pos, .{
-        .store = .{ .symbol = symbol_id, .value = value }
+        .store = .{ .symbol_id = symbol_id, .value = value }
     });
 }
 
@@ -236,7 +236,7 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
         .binary = .{ .lhs = lhs, .rhs = rhs }
     });
     return ir.appendInst(.store, node.token_pos, .{
-        .store = .{ .symbol = symbol_id, .value = result }
+        .store = .{ .symbol_id = symbol_id, .value = result }
     });
 }
 

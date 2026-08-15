@@ -51,7 +51,7 @@ pub fn optimizeRoot(opt: *Optimize) !void {
     try opt.block(range.start, range.len);
 
     try opt.instructions.shrinkToLen(opt.allocator);
-    try opt.instructions.shrinkToLen(opt.allocator);
+    try opt.extra.shrinkToLen(opt.allocator);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) !void {
@@ -77,20 +77,19 @@ fn stmt(opt: *Optimize, inst: Inst) !void {
 // Anything else is a runtime variable.
 fn storeVar(opt: *Optimize, inst: Inst) !void {
     const store = inst.data.store;
-    const symbol_id = store.symbol;
+    const symbol_id = store.symbol_id;
     const symbol = opt.lower.symbols[symbol_id];
-
-    if (symbol.kind != .constant) return;
 
     const value = opt.evalExpr(store.value);
     switch (value) {
         .uint => {
-            try opt.constants.putNoClobber(opt.allocator, symbol_id, value);
+            if (symbol.kind == .constant)
+                return try opt.constants.putNoClobber(opt.allocator, symbol_id, value);
+
         },
-        .unknown => {
-            // It is const, but not comptime known.
-            // Don't put it in the constant environment.
-        },
+        // It is const, but not comptime known.
+        // Don't put it in the constant environment.
+        .unknown => {},
     }
 }
 
@@ -110,26 +109,23 @@ fn evalExpr(opt: *Optimize, inst_idx: InstId) Value {
     return switch (inst.tag) {
         .constant => .{ .uint = inst.data.uint },
         .add, .sub,
-        .mul, .div => opt.evalBinary(inst) catch .unknown,
+        .mul, .div => {
+            const binary = inst.data.binary;
+            const lhs = opt.evalExpr(binary.lhs);
+            const rhs = opt.evalExpr(binary.rhs);
+
+            if (lhs == .uint and rhs == .uint) {
+                const num = fold(inst.tag, lhs.uint, rhs.uint) catch return .unknown;
+                const constant: Inst.Data = .{ .uint = num };
+
+                opt.instructions.items[inst_idx].data = constant;
+
+                return .{ .uint = num };
+            }
+
+            return .unknown;
+        },
         .load => opt.constants.get(inst.data.load) orelse return .unknown,
         else => .unknown,
     };
-}
-
-// There are 4 possible combinations of binary
-// 1) uint and uint
-// 2) ident and uint
-// 3) uint and ident
-// 4) ident and ident
-fn evalBinary(opt: *Optimize, inst: Inst) !Value {
-    const binary = inst.data.binary;
-    const lhs = opt.evalExpr(binary.lhs);
-    const rhs = opt.evalExpr(binary.rhs);
-
-    if (lhs == .uint and rhs == .uint) {
-        const num = fold(inst.tag, lhs.uint, rhs.uint) catch return .unknown;
-        return .{ .uint = num };
-    }
-
-    return .unknown;
 }
