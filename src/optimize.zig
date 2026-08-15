@@ -33,64 +33,65 @@ pub const Value = union(enum) {
 
 pub const Optimize = @This();
 
+allocator: Allocator,
 instructions: *Insts,
 extra: *std.ArrayList(u32),
 lower: *const Lower,
 
-pub fn optimizeRoot(opt: *Optimize, allocator: Allocator) !void {
+constants: std.array_hash_map.Auto(SymbolId, Value) = .empty,
+
+pub fn deinit(opt: *Optimize) void {
+    opt.constants.deinit(opt.allocator);
+}
+
+pub fn optimizeRoot(opt: *Optimize) !void {
     const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
     const range = root_inst.data.range;
 
-    opt.block(range.start, range.len);
+    try opt.block(range.start, range.len);
 
-    try opt.instructions.shrinkToLen(allocator);
-    try opt.instructions.shrinkToLen(allocator);
+    try opt.instructions.shrinkToLen(opt.allocator);
+    try opt.instructions.shrinkToLen(opt.allocator);
 }
 
-fn block(opt: *Optimize, start: u32, len: u32) void {
+fn block(opt: *Optimize, start: u32, len: u32) !void {
     const end = start + len;
     for (start..end) |idx| {
         const idx_cast: u32 = @intCast(idx);
         const stmt_idx = opt.extra.items[idx_cast];
         const inst = opt.instructions.items[stmt_idx];
-        opt.stmt(inst);
+        try opt.stmt(inst);
     }
 }
 
-fn stmt(opt: *Optimize, inst: Inst) void {
-    switch (inst.tag) {
+fn stmt(opt: *Optimize, inst: Inst) !void {
+    try switch (inst.tag) {
         .store => opt.storeVar(inst),
         else => {},
-    }
+    };
 }
 
 // To perform comptime declaration,
 // 1) Variable must be "const"
 // 2) Variable must be assigned a number.
 // Anything else is a runtime variable.
-fn storeVar(opt: *Optimize, inst: Inst) void {
+fn storeVar(opt: *Optimize, inst: Inst) !void {
     const store = inst.data.store;
-    const value = opt.evalExpr(store.value);
+    const symbol_id = store.symbol;
+    const symbol = opt.lower.symbols[symbol_id];
 
+    if (symbol.kind != .constant) return;
+
+    const value = opt.evalExpr(store.value);
     switch (value) {
-        .uint => |num| {
-            std.debug.print("Number: {d}\n", .{num});
+        .uint => {
+            try opt.constants.putNoClobber(opt.allocator, symbol_id, value);
         },
         .unknown => {
-            // Runtime value.
+            // It is const, but not comptime known.
+            // Don't put it in the constant environment.
         },
     }
-}
-
-// lhs is the declaration variable
-// rhs is the value
-fn arithmetic(opt: *Optimize, inst: Inst) void {
-    const binary = inst.data.binary;
-    const rhs = binary.rhs;
-
-    const rhs_inst = opt.instructions.items[rhs];
-
-    opt.expr(rhs_inst);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -109,11 +110,8 @@ fn evalExpr(opt: *Optimize, inst_idx: InstId) Value {
     return switch (inst.tag) {
         .constant => .{ .uint = inst.data.uint },
         .add, .sub,
-        .mul, .div => opt.evalBinary(inst),
-        .load => {
-            // TODO: Perform constant propagation
-            return .unknown;
-        },
+        .mul, .div => opt.evalBinary(inst) catch .unknown,
+        .load => opt.constants.get(inst.data.load) orelse return .unknown,
         else => .unknown,
     };
 }
@@ -123,7 +121,7 @@ fn evalExpr(opt: *Optimize, inst_idx: InstId) Value {
 // 2) ident and uint
 // 3) uint and ident
 // 4) ident and ident
-fn evalBinary(opt: *Optimize, inst: Inst) Value {
+fn evalBinary(opt: *Optimize, inst: Inst) !Value {
     const binary = inst.data.binary;
     const lhs = opt.evalExpr(binary.lhs);
     const rhs = opt.evalExpr(binary.rhs);
