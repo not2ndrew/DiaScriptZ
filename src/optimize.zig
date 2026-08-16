@@ -40,10 +40,12 @@ instructions: *Insts,
 extra: *std.ArrayList(u32),
 lower: *const Lower,
 
-constants: std.array_hash_map.Auto(SymbolId, Value) = .empty,
+constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+bools: std.array_hash_map.Auto(InstId, bool) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
     opt.constants.deinit(opt.allocator);
+    opt.bools.deinit(opt.allocator);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -57,7 +59,7 @@ fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
     };
 }
 
-fn foldBool(tag: Inst.Tag, lhs: u8, rhs: u8) bool {
+fn compare(tag: Inst.Tag, lhs: u8, rhs: u8) bool {
     return switch (tag) {
         .eql => lhs == rhs,
         .not_eql => lhs != rhs,
@@ -69,7 +71,7 @@ fn foldBool(tag: Inst.Tag, lhs: u8, rhs: u8) bool {
     };
 }
 
-fn foldLogicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
+fn logicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
     return switch (tag) {
         .bool_and => lhs and rhs,
         .bool_or => lhs or rhs,
@@ -102,6 +104,11 @@ fn stmt(opt: *Optimize, inst_idx: InstId) !void {
         .store => opt.storeVar(inst),
         .branch => opt.foldBranch(inst),
         .dialogue => opt.foldDialogue(inst),
+        // TODO: Fix dependency loop from opt.stmt -> block -> opt.stmt -> ...
+        // .block => {
+        //     const range = inst.data.range;
+        //     try opt.block(range.start, range.len);
+        // },
         else => {},
     };
 }
@@ -119,7 +126,7 @@ fn storeVar(opt: *Optimize, inst: Inst) !void {
     switch (value) {
         .uint => {
             if (symbol.kind == .constant)
-                return try opt.constants.putNoClobber(opt.allocator, symbol_id, value);
+                return try opt.constants.putNoClobber(opt.allocator, symbol_id, value.uint);
 
         },
         // It is const, but not comptime known.
@@ -131,26 +138,62 @@ fn storeVar(opt: *Optimize, inst: Inst) !void {
 
 fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
     const inst = opt.instructions.items[inst_idx];
+
     return switch (inst.tag) {
         .constant => .{ .uint = inst.data.uint },
-        .add, .sub,
-        .mul, .div => {
-            const binary = inst.data.binary;
-            const lhs = opt.evalFold(binary.lhs);
-            const rhs = opt.evalFold(binary.rhs);
+        .load => {
+            const v = opt.constants.get(inst.data.load)
+                orelse return .unknown;
+            return .{ .uint = v };
+        },
+
+        .add, .sub, .mul, .div => {
+            const b = inst.data.binary;
+            const lhs = opt.evalFold(b.lhs);
+            const rhs = opt.evalFold(b.rhs);
 
             if (lhs == .uint and rhs == .uint) {
-                const num = fold(inst.tag, lhs.uint, rhs.uint) catch return .unknown;
-                const constant: Inst.Data = .{ .uint = num };
+                const result = fold(inst.tag, lhs.uint, rhs.uint)
+                    catch return .unknown;
 
-                opt.instructions.items[inst_idx].data = constant;
-
-                return .{ .uint = num };
+                opt.instructions.items[inst_idx].data = .{ .uint = result };
+                return .{ .uint = result };
             }
 
             return .unknown;
         },
-        .load => opt.constants.get(inst.data.load) orelse return .unknown,
+
+        .eql, .not_eql,
+        .less, .less_or_eql,
+        .greater, .greater_or_eql => {
+            const b = inst.data.binary;
+            const lhs = opt.evalFold(b.lhs);
+            const rhs = opt.evalFold(b.rhs);
+
+            if (lhs == .uint and rhs == .uint) {
+                const result = compare(inst.tag, lhs.uint, rhs.uint);
+
+                opt.instructions.items[inst_idx].data = .{
+                    .boolean = result,
+                };
+                return .{ .boolean = result };
+            }
+
+            return .unknown;
+        },
+
+        .bool_and, .bool_or => {
+            const b = inst.data.binary;
+            const lhs = opt.evalFold(b.lhs);
+            const rhs = opt.evalFold(b.rhs);
+
+            if (lhs == .boolean and rhs == .boolean) {
+                const result = logicalOp(inst.tag, lhs.boolean, rhs.boolean);
+                return .{ .boolean = result };
+            }
+
+            return .unknown;
+        },
         else => .unknown,
     };
 }
@@ -160,66 +203,14 @@ fn foldBranch(opt: *Optimize, inst: Inst) !void {
     const start = range.start;
 
     const cond_id = opt.extra.items[start];
-    const value = opt.foldCondition(cond_id);
+    // const then_id = opt.extra.items[start + 1];
+    // const else_id = opt.extra.items[start + 2];
 
-    const then_idx = opt.extra.items[start + 1];
-    try opt.stmt(then_idx);
-
-    const else_idx = opt.extra.items[start + 2];
-    if (else_idx != invalid_inst) {
-        const else_block = opt.instructions[else_idx];
-        try opt.stmt(else_block);
-    }
-
-    // TODO: Need a way to store the comptime op.
-    switch (value) {
-        .boolean => std.debug.print("Value: {}\n", .{value.boolean}),
+    const value = opt.evalFold(cond_id);
+    try switch (value) {
+        .boolean => opt.bools.putNoClobber(opt.allocator, cond_id, value.boolean),
         else => {},
-    }
-}
-
-fn foldCondition(opt: *Optimize, inst_idx: InstId) Value {
-    const inst = opt.instructions.items[inst_idx];
-    return switch (inst.tag) {
-        .bool_and, .bool_or => opt.foldConjunction(inst_idx),
-        else => opt.foldCompare(inst_idx),
     };
-}
-
-fn foldCompare(opt: *Optimize, inst_idx: InstId) Value {
-    const inst = opt.instructions.items[inst_idx];
-    return switch (inst.tag) {
-        .eql, .not_eql,
-        .less, .less_or_eql,
-        .greater, .greater_or_eql => {
-            const children = inst.data.binary;
-            const lhs = opt.evalFold(children.lhs);
-            const rhs = opt.evalFold(children.rhs);
-
-            if (lhs == .uint and rhs == .uint) {
-                // TODO: Constant fold and propagate boolean.
-                const flag = foldBool(inst.tag, lhs.uint, rhs.uint);
-                return .{ .boolean = flag };
-            }
-
-            return .unknown;
-        },
-        else => .unknown,
-    };
-}
-
-fn foldConjunction(opt: *Optimize, inst_idx: InstId) Value {
-    const inst = opt.instructions.items[inst_idx];
-    const children = inst.data.binary;
-    const lhs = opt.foldCondition(children.lhs);
-    const rhs = opt.foldCondition(children.rhs);
-
-    if (lhs == .boolean and rhs == .boolean) {
-        const op = foldLogicalOp(inst.tag, lhs.boolean, rhs.boolean);
-        return .{ .boolean = op };
-    }
-
-    return .unknown;
 }
 
 // ───────────────────────────────
@@ -253,8 +244,8 @@ fn foldDialogue(opt: *Optimize, inst: Inst) !void {
         const str = opt.instructions.items[str_idx];
 
         switch (str.tag) {
-            .string => {},
-            else => _ = opt.evalFold(idx),
+            .text => {},
+            else => _ = opt.evalFold(str_idx),
         }
     }
 }

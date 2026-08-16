@@ -73,6 +73,7 @@ pub const Inst = struct {
     };
 
     pub const Data = union {
+        boolean: bool,
         uint: u8,
         load: SymbolId,
         label: IdentId,
