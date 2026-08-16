@@ -43,7 +43,6 @@ fn skipWhiteSpace(self: *Tokenizer) !void {
                 self.index += 1;
                 self.line_start = true;
                 self.mode = .normal;
-                break;
             },
             else => return,
         }
