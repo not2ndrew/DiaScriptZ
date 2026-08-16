@@ -26,6 +26,7 @@ const Insts = std.ArrayList(Inst);
 const Error = Allocator.Error;
 
 pub const InstId = u32;
+pub const invalid_inst = std.math.maxInt(u32);
 
 pub const Inst = struct {
     tag: Tag,
@@ -61,6 +62,7 @@ pub const Inst = struct {
         bool_and,
 
         // Dialogue
+        dialogue,
         speaker,
         label,
         text,
@@ -201,7 +203,7 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         .choice => ir.reduceChoice(node),
 
         .label => ir.reduceLabel(node),
-        else => invalid_node,
+        else => invalid_inst,
     };
 }
 
@@ -293,7 +295,7 @@ fn reduceDialogue(ir: *DiaIR, node: Node) Error!InstId {
 
     const block_range = try ir.reduceDialogueParts(&parts, start, len);
 
-    return ir.appendInst(.block, node.token_pos, block_range);
+    return ir.appendInst(.dialogue, node.token_pos, block_range);
 }
 
 fn reduceChoice(ir: *DiaIR, node: Node) Error!InstId {
@@ -307,7 +309,7 @@ fn reduceChoice(ir: *DiaIR, node: Node) Error!InstId {
 
     // Choice is the same as dialogue except
     // speaker is an invalid node.
-    parts.appendAssumeCapacity(invalid_node);
+    parts.appendAssumeCapacity(invalid_inst);
 
     const block_range = try ir.reduceDialogueParts(&parts, range.start, len);
 
@@ -324,8 +326,8 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     }
 
     const jump_idx = ir.ast.extra_data[end - 1];
-    var jump: u32 = invalid_node;
-    if (jump_idx != invalid_node) {
+    var jump: u32 = invalid_inst;
+    if (jump_idx != invalid_inst) {
         const jump_node = ir.ast.nodes.get(jump_idx);
         const ident_id = ir.nextJump();
         jump = ir.appendInst(.jump, jump_node.token_pos, .{
@@ -407,7 +409,7 @@ fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         .minus => ir.evalBinary(.sub, node),
         .mult => ir.evalBinary(.mul, node),
         .div => ir.evalBinary(.div, node),
-        else => invalid_node,
+        else => unreachable,
     };
 }
 
@@ -440,7 +442,7 @@ fn evalCompare(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         .less_or_equal => ir.evalBinary(.less_or_eql, node),
         .greater => ir.evalBinary(.greater, node),
         .greater_or_equal => ir.evalBinary(.greater_or_eql, node),
-        else => invalid_node,
+        else => unreachable,
     };
 }
 

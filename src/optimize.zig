@@ -12,6 +12,7 @@ const Inst = ir.Inst;
 const Insts = std.ArrayList(Inst);
 
 const IdentId = in.IdentId;
+const invalid_inst = in.invalid_inst;
 
 const Symbol = sem.Symbol;
 const SymbolId = sem.SymbolId;
@@ -91,15 +92,16 @@ fn block(opt: *Optimize, start: u32, len: u32) !void {
     for (start..end) |idx| {
         const idx_cast: u32 = @intCast(idx);
         const stmt_idx = opt.extra.items[idx_cast];
-        const inst = opt.instructions.items[stmt_idx];
-        try opt.stmt(inst);
+        try opt.stmt(stmt_idx);
     }
 }
 
-fn stmt(opt: *Optimize, inst: Inst) !void {
+fn stmt(opt: *Optimize, inst_idx: InstId) !void {
+    const inst = opt.instructions.items[inst_idx];
     try switch (inst.tag) {
         .store => opt.storeVar(inst),
         .branch => opt.foldBranch(inst),
+        .dialogue => opt.foldDialogue(inst),
         else => {},
     };
 }
@@ -155,8 +157,21 @@ fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
 
 fn foldBranch(opt: *Optimize, inst: Inst) !void {
     const range = inst.data.range;
-    const cond_id = opt.extra.items[range.start];
+    const start = range.start;
+
+    const cond_id = opt.extra.items[start];
     const value = opt.foldCondition(cond_id);
+
+    const then_idx = opt.extra.items[start + 1];
+    try opt.stmt(then_idx);
+
+    const else_idx = opt.extra.items[start + 2];
+    if (else_idx != invalid_inst) {
+        const else_block = opt.instructions[else_idx];
+        try opt.stmt(else_block);
+    }
+
+    // TODO: Need a way to store the comptime op.
     switch (value) {
         .boolean => std.debug.print("Value: {}\n", .{value.boolean}),
         else => {},
@@ -205,4 +220,41 @@ fn foldConjunction(opt: *Optimize, inst_idx: InstId) Value {
     }
 
     return .unknown;
+}
+
+// ───────────────────────────────
+//           DIALOGUE
+// ───────────────────────────────
+
+// Dialogue lines and dialogue branches contains
+// the same format:
+// [ speaker, dia_part_0, dia_part_1, ..., goto ]
+fn foldDialogue(opt: *Optimize, inst: Inst) !void {
+    const range = inst.data.range;
+    const start = range.start;
+    const end = start + range.len;
+
+    // We can skip the speaker since we already know from Semantic
+    // that speaker is valid. The last idx of the range is always the jump.
+    // From Semantic, is also valid.
+    // TODO: Suppose there is a comptime expr in between strings.
+    // I need to merge the strings and interpolation together.
+    // Example:
+    //
+    // A: There are { 4 } apples here.
+    // 
+    // This can be converted to
+    // A: There are 4 apples here.
+    //
+    // A solution is to allocate memory and all of them together.
+    // That new slice could be placed in the old text span and adjust the textId.
+    for (start + 1.. end - 1) |idx| {
+        const str_idx = opt.extra.items[idx];
+        const str = opt.instructions.items[str_idx];
+
+        switch (str.tag) {
+            .string => {},
+            else => _ = opt.evalFold(idx),
+        }
+    }
 }
