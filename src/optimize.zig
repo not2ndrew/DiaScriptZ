@@ -12,10 +12,12 @@ const Inst = ir.Inst;
 const Insts = std.ArrayList(Inst);
 
 const IdentId = in.IdentId;
-const invalid_inst = in.invalid_inst;
+const invalid_inst = ir.invalid_inst;
 
 const Symbol = sem.Symbol;
 const SymbolId = sem.SymbolId;
+
+const Error = Allocator.Error;
 
 pub const Value = union(enum) {
     unknown,
@@ -79,7 +81,7 @@ fn logicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
     };
 }
 
-pub fn optimizeRoot(opt: *Optimize) !void {
+pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
     const range = root_inst.data.range;
 
@@ -89,7 +91,7 @@ pub fn optimizeRoot(opt: *Optimize) !void {
     try opt.extra.shrinkToLen(opt.allocator);
 }
 
-fn block(opt: *Optimize, start: u32, len: u32) !void {
+fn block(opt: *Optimize, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start..end) |idx| {
         const idx_cast: u32 = @intCast(idx);
@@ -98,17 +100,12 @@ fn block(opt: *Optimize, start: u32, len: u32) !void {
     }
 }
 
-fn stmt(opt: *Optimize, inst_idx: InstId) !void {
+fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions.items[inst_idx];
     try switch (inst.tag) {
         .store => opt.storeVar(inst),
         .branch => opt.foldBranch(inst),
         .dialogue => opt.foldDialogue(inst),
-        // TODO: Fix dependency loop from opt.stmt -> block -> opt.stmt -> ...
-        // .block => {
-        //     const range = inst.data.range;
-        //     try opt.block(range.start, range.len);
-        // },
         else => {},
     };
 }
@@ -117,12 +114,12 @@ fn stmt(opt: *Optimize, inst_idx: InstId) !void {
 // 1) Variable must be "const"
 // 2) Variable must be assigned a number.
 // Anything else is a runtime variable.
-fn storeVar(opt: *Optimize, inst: Inst) !void {
+fn storeVar(opt: *Optimize, inst: Inst) Error!void {
     const store = inst.data.store;
     const symbol_id = store.symbol_id;
     const symbol = opt.lower.symbols[symbol_id];
 
-    const value = opt.evalFold(store.value);
+    const value = opt.eval(store.value);
     switch (value) {
         .uint => {
             if (symbol.kind == .constant)
@@ -136,7 +133,7 @@ fn storeVar(opt: *Optimize, inst: Inst) !void {
     }
 }
 
-fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
+fn eval(opt: *Optimize, inst_idx: InstId) Value {
     const inst = opt.instructions.items[inst_idx];
 
     return switch (inst.tag) {
@@ -149,8 +146,8 @@ fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
 
         .add, .sub, .mul, .div => {
             const b = inst.data.binary;
-            const lhs = opt.evalFold(b.lhs);
-            const rhs = opt.evalFold(b.rhs);
+            const lhs = opt.eval(b.lhs);
+            const rhs = opt.eval(b.rhs);
 
             if (lhs == .uint and rhs == .uint) {
                 const result = fold(inst.tag, lhs.uint, rhs.uint)
@@ -167,8 +164,8 @@ fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
         .less, .less_or_eql,
         .greater, .greater_or_eql => {
             const b = inst.data.binary;
-            const lhs = opt.evalFold(b.lhs);
-            const rhs = opt.evalFold(b.rhs);
+            const lhs = opt.eval(b.lhs);
+            const rhs = opt.eval(b.rhs);
 
             if (lhs == .uint and rhs == .uint) {
                 const result = compare(inst.tag, lhs.uint, rhs.uint);
@@ -184,8 +181,8 @@ fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
 
         .bool_and, .bool_or => {
             const b = inst.data.binary;
-            const lhs = opt.evalFold(b.lhs);
-            const rhs = opt.evalFold(b.rhs);
+            const lhs = opt.eval(b.lhs);
+            const rhs = opt.eval(b.rhs);
 
             if (lhs == .boolean and rhs == .boolean) {
                 const result = logicalOp(inst.tag, lhs.boolean, rhs.boolean);
@@ -198,19 +195,36 @@ fn evalFold(opt: *Optimize, inst_idx: InstId) Value {
     };
 }
 
-fn foldBranch(opt: *Optimize, inst: Inst) !void {
+fn foldBranch(opt: *Optimize, inst: Inst) Error!void {
     const range = inst.data.range;
     const start = range.start;
 
     const cond_id = opt.extra.items[start];
-    // const then_id = opt.extra.items[start + 1];
-    // const else_id = opt.extra.items[start + 2];
+    const then_id = opt.extra.items[start + 1];
+    const else_id = opt.extra.items[start + 2];
 
-    const value = opt.evalFold(cond_id);
-    try switch (value) {
-        .boolean => opt.bools.putNoClobber(opt.allocator, cond_id, value.boolean),
+
+    const value = opt.eval(cond_id);
+    switch (value) {
+        // Given a comptime op, we can optimize one branch
+        // without check both branches.
+        .boolean => |v| {
+            try opt.bools.putNoClobber(opt.allocator, cond_id, v);
+
+            if (v) {
+                const then_block = opt.instructions.items[then_id];
+                const then_range = then_block.data.range;
+                try opt.block(then_range.start, then_range.len);
+            } else {
+                if (else_id != invalid_inst) {
+                    const else_block = opt.instructions.items[else_id];
+                    const else_range = else_block.data.range;
+                    try opt.block(else_range.start, else_range.len);
+                }
+            }
+        },
         else => {},
-    };
+    }
 }
 
 // ───────────────────────────────
@@ -220,7 +234,7 @@ fn foldBranch(opt: *Optimize, inst: Inst) !void {
 // Dialogue lines and dialogue branches contains
 // the same format:
 // [ speaker, dia_part_0, dia_part_1, ..., goto ]
-fn foldDialogue(opt: *Optimize, inst: Inst) !void {
+fn foldDialogue(opt: *Optimize, inst: Inst) Error!void {
     const range = inst.data.range;
     const start = range.start;
     const end = start + range.len;
@@ -245,7 +259,7 @@ fn foldDialogue(opt: *Optimize, inst: Inst) !void {
 
         switch (str.tag) {
             .text => {},
-            else => _ = opt.evalFold(str_idx),
+            else => _ = opt.eval(str_idx),
         }
     }
 }
