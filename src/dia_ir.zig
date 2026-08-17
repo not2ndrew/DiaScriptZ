@@ -314,7 +314,7 @@ fn reduceChoice(ir: *DiaIR, node: Node) Error!InstId {
 
     const block_range = try ir.reduceDialogueParts(&parts, range.start, len);
 
-    return ir.appendInst(.block, node.token_pos, block_range);
+    return ir.appendInst(.dialogue, node.token_pos, block_range);
 }
 
 // Dialogue parts scans the line and jump. NOT the speaker.
