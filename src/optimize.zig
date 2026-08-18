@@ -39,10 +39,6 @@ pub const Value = union(enum) {
 // A declaration is immutable if it is const.
 // Its initializer is compile-time evaluable if
 // its expression can be evaluated to a known value.
-//
-// Dead code elimination (DCE) should apply under two categories:
-// 1) Code that is never used
-// 2) Code whose result has no effects.
 
 pub const Optimize = @This();
 
@@ -51,11 +47,13 @@ instructions: *Insts,
 extra: *std.ArrayList(u32),
 lower: *const Lower,
 
-// TODO: Fix the parser such that "true" and "false" are allowed.
-// Then, allow the KV pair to be SymbolId -> Value.
-constants: std.AutoHashMap(SymbolId, u8) = .empty,
-branch_result: std.AutoHashMap(InstId, bool) = .empty,
-last_stored: std.AutoHashMap(SymbolId, InstId) = .empty,
+// TODO:
+// 1) Fix the parser such that "true" and "false" are allowed.
+//    Then, allow the KV pair to be SymbolId -> Value.
+// 2) Determine whether I should use SymbolId or InstId for constants.
+constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
+last_stored: std.array_hash_map.Auto(SymbolId, InstId) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
     opt.constants.deinit(opt.allocator);
@@ -69,9 +67,9 @@ fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) IntError!u8 {
         .add => std.math.add(u8, lhs, rhs) catch IntError.Overflow,
         .sub => std.math.sub(u8, lhs, rhs) catch IntError.Overflow,
         .mul => std.math.mul(u8, lhs, rhs) catch IntError.Overflow,
-        .div => std.math.divTrunc(u8, lhs, rhs) catch {
+        .div => {
             if (rhs == 0) return IntError.DivisionByZero;
-            return IntError.Overflow;
+            return std.math.divTrunc(u8, lhs, rhs) catch IntError.Overflow;
         },
         else => unreachable,
     };
@@ -97,8 +95,7 @@ fn logicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
     };
 }
 
-fn rewriteValue(opt: *Optimize, inst_idx: InstId) Error!void {
-    const value = try opt.eval(inst_idx);
+fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     const old = opt.instructions.items[inst_idx];
 
     switch (value) {
@@ -134,7 +131,8 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     //    Live instructions,
     //    Which branch is selected.
     // 2) Modify the Instructions and extra.
-    // opt.deadCodeElimination(range.start, range.len);
+    // try opt.deadCodeEliminate(range.start, range.len);
+
     try opt.instructions.shrinkToLen(opt.allocator);
     try opt.extra.shrinkToLen(opt.allocator);
 }
@@ -152,7 +150,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions.items[inst_idx];
     return switch (inst.tag) {
         .store => opt.storeVar(inst_idx),
-        .branch => opt.foldBranch(inst),
+        .branch => opt.foldBranch(inst_idx),
         .dialogue => opt.foldDialogue(inst),
         .label => opt.foldLabel(inst),
         else => {},
@@ -182,6 +180,9 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
         .load => {
             const v = opt.constants.get(inst.data.load)
                 orelse return .unknown;
+
+            const value: Value = .{ .uint = v };
+            opt.rewriteValue(inst_idx, value);
             return .{ .uint = v };
         },
 
@@ -192,6 +193,8 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 
             if (lhs == .uint and rhs == .uint) {
                 const result = try fold(inst.tag, lhs.uint, rhs.uint);
+                const value: Value = .{ .uint = result };
+                opt.rewriteValue(inst_idx, value);
 
                 return .{ .uint = result };
             }
@@ -208,6 +211,8 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 
             if (lhs == .uint and rhs == .uint) {
                 const result = compare(inst.tag, lhs.uint, rhs.uint);
+                const value: Value = .{ .boolean = result };
+                opt.rewriteValue(inst_idx, value);
 
                 return .{ .boolean = result };
             }
@@ -221,14 +226,19 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 
             switch (lhs) {
                 .boolean => |v| {
+                    const value: Value = .{ .boolean = v };
                     // Using logical equivalance, we can simply op immediately.
                     // false and ??? -> false
-                    if (!v and inst.tag == .bool_and)
+                    if (!v and inst.tag == .bool_and) {
+                        opt.rewriteValue(inst_idx, value);
                         return .{ .boolean = false };
+                    }
 
                     // true or ??? -> true
-                    if (v and inst.tag == .bool_or)
+                    if (v and inst.tag == .bool_or) {
+                        opt.rewriteValue(inst_idx, value);
                         return .{ .boolean = true };
+                    }
                 },
                 else => {},
             }
@@ -236,6 +246,8 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
             const rhs = try opt.eval(b.rhs);
             if (lhs == .boolean and rhs == .boolean) {
                 const result = logicalOp(inst.tag, lhs.boolean, rhs.boolean);
+                const value: Value = .{ .boolean = result };
+                opt.rewriteValue(inst_idx, value);
                 return .{ .boolean = result };
             }
 
@@ -249,7 +261,8 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 // extra[start + 0] = condition InstId
 // extra[start + 1] = then Block InstId
 // extra[start + 2] = else Block InstId or invalid_inst
-fn foldBranch(opt: *Optimize, inst: Inst) Error!void {
+fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
+    const inst = opt.instructions.items[inst_idx];
     const range = inst.data.range;
     const start = range.start;
 
@@ -262,13 +275,12 @@ fn foldBranch(opt: *Optimize, inst: Inst) Error!void {
         // Given a comptime op, we can optimize one branch
         // without check both branches.
         .boolean => |v| {
-            try opt.branch_result.put(opt.allocator, cond_id, v);
-
             const block_id = if (v)
                 then_id
             else
                 else_id;
 
+            try opt.branch_result.putNoClobber(opt.allocator, inst_idx, block_id);
             if (block_id == invalid_inst)
                 return;
 
@@ -329,8 +341,7 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 
     // Increment 1 to avoid label ident.
     for (start + 1 .. end) |idx| {
-        const idx_cast: u32 = @intCast(idx);
-        const stmt_idx = opt.extra.items[idx_cast];
+        const stmt_idx = opt.extra.items[idx];
         try opt.stmt(stmt_idx);
     }
 }
