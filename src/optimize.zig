@@ -50,15 +50,21 @@ lower: *const Lower,
 // TODO:
 // 1) Fix the parser such that "true" and "false" are allowed.
 //    Then, allow the KV pair to be SymbolId -> Value.
-// 2) Determine whether I should use SymbolId or InstId for constants.
 constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
-last_stored: std.array_hash_map.Auto(SymbolId, InstId) = .empty,
+
+live_insts: std.array_hash_map.Auto(InstId, void) = .empty,
+live_blocks: std.array_hash_map.Auto(InstId, void) = .empty,
+
+// For dead code elimination
+// remap: std.array_hash_map(InstId, InstId) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
     opt.constants.deinit(opt.allocator);
     opt.branch_result.deinit(opt.allocator);
-    opt.last_stored.deinit(opt.allocator);
+    opt.live_insts.deinit(opt.allocator);
+    opt.live_blocks.deinit(opt.allocator);
+    // opt.remap.deinit(opt.allocator);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -118,23 +124,21 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
 }
 
 pub fn optimizeRoot(opt: *Optimize) Error!void {
-    const root_inst = opt.instructions.items[opt.instructions.items.len - 1];
+    const root_idx: u32 = @intCast(opt.instructions.items.len - 1);
+    const root_inst = opt.instructions.items[root_idx];
     const range = root_inst.data.range;
 
     // Pass 1: Constant fold and propagate.
     try opt.block(range.start, range.len);
 
     // Pass 2: Dead Code elimination
-    // This should be done in phases
     // 1) Determine reachable instructions.
     //    Live blocks,
     //    Live instructions,
     //    Which branch is selected.
-    // 2) Modify the Instructions and extra.
-    // try opt.deadCodeEliminate(range.start, range.len);
+    try opt.markBlock(root_idx);
 
-    try opt.instructions.shrinkToLen(opt.allocator);
-    try opt.extra.shrinkToLen(opt.allocator);
+    // Pass 3: Recreate Instructions.
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
@@ -289,8 +293,6 @@ fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
 
             try opt.block(b_range.start, b_range.len);
         },
-        // Don't propagate branch local representation
-        // into the surrounding environment.
         .unknown => {},
         else => unreachable,
     }
@@ -349,3 +351,63 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 // ───────────────────────────────
 //      DEAD CODE ELIMINATION
 // ───────────────────────────────
+
+fn markBlock(opt: *Optimize, block_idx: InstId) Allocator.Error!void {
+    if (opt.live_blocks.contains(block_idx))
+        return;
+
+    try opt.live_blocks.putNoClobber(opt.allocator, block_idx, {});
+    const root_block = opt.instructions.items[block_idx];
+    const range = root_block.data.range;
+    const start = range.start;
+    const end = start + range.len;
+
+    for (start .. end) |idx| {
+        const stmt_idx = opt.extra.items[idx];
+        try opt.markInst(stmt_idx);
+    }
+}
+
+// markInst is responsible for marking an instruction once.
+fn markInst(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
+    if (opt.live_insts.contains(inst_idx))
+        return;
+
+    try opt.live_insts.putNoClobber(opt.allocator, inst_idx, {});
+
+    const inst = opt.instructions.items[inst_idx];
+    return switch (inst.tag) {
+        .store => opt.markExpr(inst.data.store.value),
+        .branch => {
+            const block_id = opt.branch_result.get(inst_idx)
+                orelse return;
+
+            if (block_id != invalid_inst)
+                   try opt.markBlock(block_id);
+        },
+        else => {},
+    };
+}
+
+fn markExpr(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
+    const inst = opt.instructions.items[inst_idx];
+    switch (inst.tag) {
+        .constant => {},
+        .load => {
+            // Find the store/value that this load depends on.
+            // Note that some constant propagation may occur.
+        },
+        .add, .sub, .mul, .div,
+        .eql, .not_eql,
+        .less, .less_or_eql,
+        .greater, .greater_or_eql,
+        .bool_and, .bool_or => {
+            const binary = inst.data.binary;
+            try opt.markExpr(binary.lhs);
+            try opt.markExpr(binary.rhs);
+        },
+        else => {},
+    }
+
+    try opt.markInst(inst_idx);
+}
