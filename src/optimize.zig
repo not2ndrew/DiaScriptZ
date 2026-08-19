@@ -43,37 +43,28 @@ pub const Value = union(enum) {
 pub const Optimize = @This();
 
 allocator: Allocator,
+lower: *const Lower,
+
 instructions: []Inst,
 extra: []InstId,
-lower: *const Lower,
 
 // TODO:
 // 1) Fix the parser such that "true" and "false" are allowed.
 //    Then, allow the KV pair to be SymbolId -> Value.
 constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+// KV pair is condition id -> block id
 branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
 
-live_insts: std.array_hash_map.Auto(InstId, void) = .empty,
-live_blocks: std.array_hash_map.Auto(InstId, void) = .empty,
-
-// Map from old instruction index to new instruction index.
-// TODO: Maybe consider remapping symbol id, text spans, etc.
-// remap: std.array_hash_map(InstId, InstId) = .empty,
-// remap_extra: std.array_hash_map(InstId, InstId) = .empty,
-// new_instructions: Insts = .empty,
-// new_extra: std.ArrayList(InstId) = .empty,
+new_instructions: Insts = .empty,
+new_extra: std.ArrayList(InstId) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
     opt.allocator.free(opt.instructions);
     opt.allocator.free(opt.extra);
     opt.constants.deinit(opt.allocator);
     opt.branch_result.deinit(opt.allocator);
-    opt.live_insts.deinit(opt.allocator);
-    opt.live_blocks.deinit(opt.allocator);
-    // opt.remap.deinit(opt.allocator);
-    // opt.remap_extra.deinit(opt.allocator);
-    // opt.new_instructions.deinit(opt.allocator);
-    // opt.new_extra.deinit(opt.allocator);
+    opt.new_instructions.deinit(opt.allocator);
+    opt.new_extra.deinit(opt.allocator);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -145,24 +136,27 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     //    Live blocks,
     //    Live instructions,
     //    Which branch is selected.
-    try opt.markBlock(root_idx);
+    var dce: DCE = .{ .opt = opt };
+    defer dce.deinit();
+
+    try dce.run(root_idx);
 
     // After constant folding and propagation, we can assume
     // the number of new instructions will be less or equal than
     // the number of old instructions.
-    // try opt.remap.ensureTotalCapacityPrecise(
-    //     opt.allocator, opt.instructions.len
-    // );
-    //
-    // try opt.new_instructions.ensureTotalCapacityPrecise(
+    // try opt.remap.ensureTotalCapacity(
     //     opt.allocator, opt.instructions.len
     // );
 
+    try opt.new_instructions.ensureTotalCapacityPrecise(
+        opt.allocator, opt.instructions.len
+    );
+
     // Pass 3: Recreate Instructions.
-    // try opt.rebuildBlocksAndExtra(root_idx);
-    //
-    // try opt.remap.shrinkToLen(opt.remap.items.len);
-    // try opt.new_instructions.shrinkToLen(opt.new_instructions.items.len);
+    // opt.rebuildBlocksAndExtra(root_idx);
+
+    // opt.remap.shrinkAndFree(opt.allocator, opt.remap.count());
+    try opt.new_instructions.shrinkToLen(opt.allocator);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
@@ -308,13 +302,18 @@ fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
             else
                 else_id;
 
-            try opt.branch_result.putNoClobber(opt.allocator, inst_idx, block_id);
             if (block_id == invalid_inst)
                 return;
 
             const b = opt.instructions[block_id];
             const b_range = b.data.range;
 
+            // If there is no statements inside the block,
+            // don't append to branch_result.
+            if (b_range.len == 0)
+                return;
+
+            try opt.branch_result.putNoClobber(opt.allocator, inst_idx, block_id);
             try opt.block(b_range.start, b_range.len);
         },
         .unknown => {},
@@ -376,60 +375,124 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 //      DEAD CODE ELIMINATION
 // ───────────────────────────────
 
-fn markBlock(opt: *Optimize, block_idx: InstId) Allocator.Error!void {
-    if (opt.live_blocks.contains(block_idx))
-        return;
+const DCE = struct {
+    opt: *Optimize,
+    used_symbols: std.array_hash_map.Auto(SymbolId, void) = .empty,
+    live: std.array_hash_map.Auto(InstId, void) = .empty,
 
-    try opt.live_blocks.putNoClobber(opt.allocator, block_idx, {});
-    const root_block = opt.instructions[block_idx];
-    const range = root_block.data.range;
-    const start = range.start;
-    const end = start + range.len;
-
-    for (start .. end) |idx| {
-        const stmt_idx = opt.extra[idx];
-        try opt.markInst(stmt_idx);
-    }
-}
-
-// markInst is responsible for marking an instruction once.
-fn markInst(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
-    if (opt.live_insts.contains(inst_idx))
-        return;
-
-    try opt.live_insts.putNoClobber(opt.allocator, inst_idx, {});
-
-    const inst = opt.instructions[inst_idx];
-    return switch (inst.tag) {
-        .store => opt.markExpr(inst.data.store.value),
-        .branch => {
-            const block_id = opt.branch_result.get(inst_idx)
-                orelse return;
-
-            if (block_id != invalid_inst)
-                   try opt.markBlock(block_id);
-        },
-        else => {},
-    };
-}
-
-fn markExpr(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
-    const inst = opt.instructions[inst_idx];
-    switch (inst.tag) {
-        .add, .sub, .mul, .div,
-        .eql, .not_eql,
-        .less, .less_or_eql,
-        .greater, .greater_or_eql,
-        .bool_and, .bool_or => {
-            const binary = inst.data.binary;
-            try opt.markExpr(binary.lhs);
-            try opt.markExpr(binary.rhs);
-        },
-        else => {},
+    pub fn deinit(dce: *DCE) void {
+        dce.used_symbols.deinit(dce.opt.allocator);
+        dce.live.deinit(dce.opt.allocator);
     }
 
-    try opt.markInst(inst_idx);
-}
+    pub fn run(dce: *DCE, root_idx: InstId) Allocator.Error!void {
+        const root_block = dce.opt.instructions[root_idx];
+        const range = root_block.data.range;
+        const start = range.start;
+        const end = start + range.len;
+
+        // Phase 1: Collect all uses
+        for (start .. end) |idx| {
+            const stmt_idx = dce.opt.extra[idx];
+            try dce.collectStmtUses(stmt_idx);
+        }
+
+        // Phase 2: Mark all uses
+        for (start .. end) |idx| {
+            const stmt_idx = dce.opt.extra[idx];
+            try dce.markInst(stmt_idx);
+        }
+    }
+
+    // ───────────────────────────────
+    //            PHASE 1
+    // ───────────────────────────────
+
+    fn collectStmtUses(dce: *DCE, inst_idx: InstId) Allocator.Error!void {
+        const inst = dce.opt.instructions[inst_idx];
+
+        switch (inst.tag) {
+            .store => try dce.collectUses(inst.data.store.value),
+            .branch => {
+                const range = inst.data.range;
+                // The start is the condition index.
+                try dce.collectUses(dce.opt.extra[range.start]);
+
+                // Use the selected branch if constant folding took place.
+                if (dce.opt.branch_result.get(inst_idx)) |block_id| {
+                    try dce.collectBlockUses(block_id);
+                }
+            },
+            .dialogue => {
+                const range = inst.data.range;
+                const start = range.start;
+                const end = start + range.len;
+                for (start + 1 .. end - 1) |idx| {
+                    const str_idx: InstId = @intCast(idx);
+                    try dce.collectUses(str_idx);
+                }
+            },
+            .label => {
+                const range = inst.data.range;
+                const start = range.start;
+                const end = start + range.len;
+                for (start + 1 .. end) |idx| {
+                    const stmt_idx: InstId = @intCast(idx);
+                    try dce.collectStmtUses(stmt_idx);
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn collectUses(dce: *DCE, inst_idx: InstId) Allocator.Error!void {
+        const inst = dce.opt.instructions[inst_idx];
+
+        switch (inst.tag) {
+            .load => try dce.used_symbols.put(dce.opt.allocator, inst.data.load, {}),
+
+            .add, .sub, .mul, .div,
+            .eql, .not_eql,
+            .less, .less_or_eql,
+            .greater, .greater_or_eql,
+            .bool_and, .bool_or => {
+                const binary = inst.data.binary;
+                try dce.collectUses(binary.lhs);
+                try dce.collectUses(binary.rhs);
+            },
+            else => {},
+        }
+    }
+
+    fn collectBlockUses(dce: *DCE, block_idx: InstId) Allocator.Error!void {
+        const block_inst = dce.opt.instructions[block_idx];
+        const range = block_inst.data.range;
+        const start = range.start;
+        const end = start + range.len;
+
+        for (start .. end) |idx| {
+            const stmt_idx: InstId = @intCast(idx);
+            try dce.collectUses(stmt_idx);
+        }
+    }
+
+    // ───────────────────────────────
+    //            PHASE 2
+    // ───────────────────────────────
+
+    // We only need store instructions to see if a symbol has been used.
+    fn markInst(dce: *DCE, inst_idx: InstId) Allocator.Error!void {
+        const inst = dce.opt.instructions[inst_idx];
+        switch (inst.tag) {
+            .store => {
+                const store = inst.data.store;
+                if (dce.used_symbols.contains(store.symbol_id))
+                    try dce.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+            },
+            else => {},
+        }
+    }
+};
 
 // ───────────────────────────────
 //            REMAPPING

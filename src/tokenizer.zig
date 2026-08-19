@@ -197,7 +197,7 @@ pub fn next(self: *Tokenizer) !Token {
         '}' => {
             switch (self.mode) {
                 .interpolation => {
-                    self.mode = .string;
+                    self.mode = .normal;
                     result.tag = .inter_close;
                 },
                 else => {
