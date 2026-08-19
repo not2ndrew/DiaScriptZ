@@ -73,8 +73,8 @@ pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, er
     // TODO: Decide whether I should use toOwnSlice() on extra.
     var opt: Optimize = .{
         .allocator = allocator,
-        .instructions = &diaIR.instructions,
-        .extra = &diaIR.extra,
+        .instructions = try diaIR.instructions.toOwnedSlice(allocator),
+        .extra = try diaIR.extra.toOwnedSlice(allocator),
         .lower = &low,
     };
     defer opt.deinit();

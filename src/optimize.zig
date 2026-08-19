@@ -43,8 +43,8 @@ pub const Value = union(enum) {
 pub const Optimize = @This();
 
 allocator: Allocator,
-instructions: *Insts,
-extra: *std.ArrayList(u32),
+instructions: []Inst,
+extra: []InstId,
 lower: *const Lower,
 
 // TODO:
@@ -56,15 +56,24 @@ branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
 live_insts: std.array_hash_map.Auto(InstId, void) = .empty,
 live_blocks: std.array_hash_map.Auto(InstId, void) = .empty,
 
-// For dead code elimination
+// Map from old instruction index to new instruction index.
+// TODO: Maybe consider remapping symbol id, text spans, etc.
 // remap: std.array_hash_map(InstId, InstId) = .empty,
+// remap_extra: std.array_hash_map(InstId, InstId) = .empty,
+// new_instructions: Insts = .empty,
+// new_extra: std.ArrayList(InstId) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
+    opt.allocator.free(opt.instructions);
+    opt.allocator.free(opt.extra);
     opt.constants.deinit(opt.allocator);
     opt.branch_result.deinit(opt.allocator);
     opt.live_insts.deinit(opt.allocator);
     opt.live_blocks.deinit(opt.allocator);
     // opt.remap.deinit(opt.allocator);
+    // opt.remap_extra.deinit(opt.allocator);
+    // opt.new_instructions.deinit(opt.allocator);
+    // opt.new_extra.deinit(opt.allocator);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -102,18 +111,18 @@ fn logicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
 }
 
 fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
-    const old = opt.instructions.items[inst_idx];
+    const old = opt.instructions[inst_idx];
 
     switch (value) {
         .uint => |v| {
-            opt.instructions.items[inst_idx] = .{
+            opt.instructions[inst_idx] = .{
                 .tag = .constant,
                 .token_pos = old.token_pos,
                 .data = .{ .uint = v },
             };
         },
         .boolean => |v| {
-            opt.instructions.items[inst_idx] = .{
+            opt.instructions[inst_idx] = .{
                 .tag = .constant,
                 .token_pos = old.token_pos,
                 .data = .{ .boolean = v },
@@ -124,8 +133,8 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
 }
 
 pub fn optimizeRoot(opt: *Optimize) Error!void {
-    const root_idx: u32 = @intCast(opt.instructions.items.len - 1);
-    const root_inst = opt.instructions.items[root_idx];
+    const root_idx: u32 = @intCast(opt.instructions.len - 1);
+    const root_inst = opt.instructions[root_idx];
     const range = root_inst.data.range;
 
     // Pass 1: Constant fold and propagate.
@@ -138,20 +147,35 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     //    Which branch is selected.
     try opt.markBlock(root_idx);
 
+    // After constant folding and propagation, we can assume
+    // the number of new instructions will be less or equal than
+    // the number of old instructions.
+    // try opt.remap.ensureTotalCapacityPrecise(
+    //     opt.allocator, opt.instructions.len
+    // );
+    //
+    // try opt.new_instructions.ensureTotalCapacityPrecise(
+    //     opt.allocator, opt.instructions.len
+    // );
+
     // Pass 3: Recreate Instructions.
+    // try opt.rebuildBlocksAndExtra(root_idx);
+    //
+    // try opt.remap.shrinkToLen(opt.remap.items.len);
+    // try opt.new_instructions.shrinkToLen(opt.new_instructions.items.len);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start..end) |idx| {
         const idx_cast: u32 = @intCast(idx);
-        const stmt_idx = opt.extra.items[idx_cast];
+        const stmt_idx = opt.extra[idx_cast];
         try opt.stmt(stmt_idx);
     }
 }
 
 fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
     return switch (inst.tag) {
         .store => opt.storeVar(inst_idx),
         .branch => opt.foldBranch(inst_idx),
@@ -166,7 +190,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
 // 2) Variable must be assigned a number.
 // Anything else is a runtime variable.
 fn storeVar(opt: *Optimize, inst_idx: InstId) Error!void {
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
     const store = inst.data.store;
     const symbol_id = store.symbol_id;
     const symbol = opt.lower.symbols[symbol_id];
@@ -177,7 +201,7 @@ fn storeVar(opt: *Optimize, inst_idx: InstId) Error!void {
 }
 
 fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
 
     return switch (inst.tag) {
         .constant => .{ .uint = inst.data.uint },
@@ -266,13 +290,13 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 // extra[start + 1] = then Block InstId
 // extra[start + 2] = else Block InstId or invalid_inst
 fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
     const range = inst.data.range;
     const start = range.start;
 
-    const cond_id = opt.extra.items[start];
-    const then_id = opt.extra.items[start + 1];
-    const else_id = opt.extra.items[start + 2];
+    const cond_id = opt.extra[start];
+    const then_id = opt.extra[start + 1];
+    const else_id = opt.extra[start + 2];
 
     const value = try opt.eval(cond_id);
     switch (value) {
@@ -288,7 +312,7 @@ fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
             if (block_id == invalid_inst)
                 return;
 
-            const b = opt.instructions.items[block_id];
+            const b = opt.instructions[block_id];
             const b_range = b.data.range;
 
             try opt.block(b_range.start, b_range.len);
@@ -324,8 +348,8 @@ fn foldDialogue(opt: *Optimize, inst: Inst) Error!void {
     //
     // Maybe this can be done in a separate pass.
     for (start + 1.. end - 1) |idx| {
-        const str_idx = opt.extra.items[idx];
-        const str = opt.instructions.items[str_idx];
+        const str_idx = opt.extra[idx];
+        const str = opt.instructions[str_idx];
 
         switch (str.tag) {
             .text => {},
@@ -343,7 +367,7 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 
     // Increment 1 to avoid label ident.
     for (start + 1 .. end) |idx| {
-        const stmt_idx = opt.extra.items[idx];
+        const stmt_idx = opt.extra[idx];
         try opt.stmt(stmt_idx);
     }
 }
@@ -357,13 +381,13 @@ fn markBlock(opt: *Optimize, block_idx: InstId) Allocator.Error!void {
         return;
 
     try opt.live_blocks.putNoClobber(opt.allocator, block_idx, {});
-    const root_block = opt.instructions.items[block_idx];
+    const root_block = opt.instructions[block_idx];
     const range = root_block.data.range;
     const start = range.start;
     const end = start + range.len;
 
     for (start .. end) |idx| {
-        const stmt_idx = opt.extra.items[idx];
+        const stmt_idx = opt.extra[idx];
         try opt.markInst(stmt_idx);
     }
 }
@@ -375,7 +399,7 @@ fn markInst(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
 
     try opt.live_insts.putNoClobber(opt.allocator, inst_idx, {});
 
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
     return switch (inst.tag) {
         .store => opt.markExpr(inst.data.store.value),
         .branch => {
@@ -390,13 +414,8 @@ fn markInst(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
 }
 
 fn markExpr(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
-    const inst = opt.instructions.items[inst_idx];
+    const inst = opt.instructions[inst_idx];
     switch (inst.tag) {
-        .constant => {},
-        .load => {
-            // Find the store/value that this load depends on.
-            // Note that some constant propagation may occur.
-        },
         .add, .sub, .mul, .div,
         .eql, .not_eql,
         .less, .less_or_eql,
@@ -411,3 +430,7 @@ fn markExpr(opt: *Optimize, inst_idx: InstId) Allocator.Error!void {
 
     try opt.markInst(inst_idx);
 }
+
+// ───────────────────────────────
+//            REMAPPING
+// ───────────────────────────────
