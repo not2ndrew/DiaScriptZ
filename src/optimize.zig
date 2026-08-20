@@ -3,6 +3,7 @@ const ir = @import("dia_ir.zig");
 const in = @import("interner.zig");
 const sem = @import("semantic.zig");
 const Lower = @import("lower.zig").Lower;
+const rebuildBlocksAndExtra = @import("remap.zig").rebuildBlocksAndExtra;
 
 const Allocator = std.mem.Allocator;
 
@@ -165,11 +166,19 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
         opt.allocator, opt.instructions.len
     );
 
-    // Pass 3: Recreate Instructions.
-    // opt.rebuildBlocksAndExtra(root_idx);
+    opt.old_to_new_inst.appendNTimesAssumeCapacity(
+        invalid_inst, opt.old_to_new_inst.capacity
+    );
 
-    // opt.remap.shrinkAndFree(opt.allocator, opt.remap.count());
+    opt.old_to_new_extra.appendNTimesAssumeCapacity(
+        invalid_inst, opt.old_to_new_extra.capacity
+    );
+
+    // Pass 3: Recreate Instructions.
+    opt.rebuildBlocksAndExtra(root_idx);
+
     try opt.new_instructions.shrinkToLen(opt.allocator);
+    try opt.new_extra.shrinkToLen(opt.allocator);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
@@ -491,7 +500,6 @@ const DCE = struct {
     //            PHASE 2
     // ───────────────────────────────
 
-    // We only need store instructions to see if a symbol has been used.
     fn markInst(dce: *DCE, inst_idx: InstId) Allocator.Error!void {
         const inst = dce.opt.instructions[inst_idx];
         switch (inst.tag) {
@@ -500,75 +508,13 @@ const DCE = struct {
                 if (dce.used_symbols.contains(store.symbol_id))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
+            // TODO: Branch, and label both contains stmts inside.
+            // They also need markings.
+            .branch, .dialogue,
+            .jump, .label => {
+                try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+            },
             else => {},
         }
     }
 };
-
-// ───────────────────────────────
-//            REMAPPING
-// ───────────────────────────────
-
-fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) void {
-    const root_block = opt.instructions[root_idx];
-    const range = root_block.data.range;
-    const start = range.start;
-    const end = start + range.len;
-
-    for (start .. end) |idx| {
-        const stmt_idx = opt.extra[idx];
-        try opt.assignId(stmt_idx);
-    }
-}
-
-fn assignId(opt: *Optimize, inst_idx: InstId) void {
-    if (!opt.live.contains(inst_idx))
-        return;
-
-    const new_inst = opt.rewriteInst(inst_idx);
-    opt.new_instructions.appendAssumeCapacity(new_inst);
-}
-
-fn rewriteInst(opt: *Optimize, old_id: InstId) InstId {
-    if (opt.old_to_new[old_id] != invalid_inst)
-        return opt.old_to_new_inst[old_id];
-
-    const new_id: InstId = @intCast(opt.new_instructions.items.len);
-    opt.old_to_new_inst.items[old_id] = new_id;
-
-    var inst = opt.instructions[old_id];
-
-    switch (inst.tag) {
-        .store => inst.data.store.value = opt.rewriteInst(inst.data.store.value),
-        // TODO: Handle range somewhere else.
-        // .branch, .dialogue,
-        // .label, .block => {},
-
-        .add, .sub, .mul, .div,
-        .eql, .not_eql,
-        .less, .less_or_eql,
-        .greater, .greater_or_eql,
-        .bool_and, .bool_or => {
-            inst.data.binary.lhs = opt.rewriteInst(inst.data.binary.lhs);
-            inst.data.binary.rhs = opt.rewriteInst(inst.data.binary.rhs);
-        },
-        else => {},
-    }
-
-    opt.new_instructions.appendAssumeCapacity(inst);
-
-    return new_id;
-}
-
-fn rewriteExtraRange(opt: *Optimize, old_start: u32, old_len: u32) InstId {
-    const new_start: InstId = @intCast(opt.new_extra.items.len);
-
-    for (old_start .. old_start + old_len) |i| {
-        const old_inst: InstId = @intCast(opt.extra[i]);
-        const new_inst = opt.rewriteInst(old_inst);
-
-        opt.new_extra.appendAssumeCapacity(new_inst);
-    }
-
-    return new_start;
-}
