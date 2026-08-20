@@ -55,16 +55,23 @@ constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 // KV pair is condition id -> block id
 branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
 
+live: std.array_hash_map.Auto(InstId, void) = .empty,
 new_instructions: Insts = .empty,
 new_extra: std.ArrayList(InstId) = .empty,
+
+old_to_new_inst: std.ArrayList(InstId) = .empty,
+old_to_new_extra: std.ArrayList(InstId) = .empty,
 
 pub fn deinit(opt: *Optimize) void {
     opt.allocator.free(opt.instructions);
     opt.allocator.free(opt.extra);
     opt.constants.deinit(opt.allocator);
     opt.branch_result.deinit(opt.allocator);
+    opt.live.deinit(opt.allocator);
     opt.new_instructions.deinit(opt.allocator);
     opt.new_extra.deinit(opt.allocator);
+    opt.old_to_new_inst.deinit(opt.allocator);
+    opt.old_to_new_extra.deinit(opt.allocator);
 }
 
 // TODO: Optimizer needs diagnostics.
@@ -144,11 +151,17 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     // After constant folding and propagation, we can assume
     // the number of new instructions will be less or equal than
     // the number of old instructions.
-    // try opt.remap.ensureTotalCapacity(
-    //     opt.allocator, opt.instructions.len
-    // );
-
     try opt.new_instructions.ensureTotalCapacityPrecise(
+        opt.allocator, opt.instructions.len
+    );
+    try opt.new_extra.ensureTotalCapacityPrecise(
+        opt.allocator, opt.instructions.len
+    );
+
+    try opt.old_to_new_inst.ensureTotalCapacityPrecise(
+        opt.allocator, opt.instructions.len
+    );
+    try opt.old_to_new_extra.ensureTotalCapacityPrecise(
         opt.allocator, opt.instructions.len
     );
 
@@ -378,11 +391,9 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 const DCE = struct {
     opt: *Optimize,
     used_symbols: std.array_hash_map.Auto(SymbolId, void) = .empty,
-    live: std.array_hash_map.Auto(InstId, void) = .empty,
 
     pub fn deinit(dce: *DCE) void {
         dce.used_symbols.deinit(dce.opt.allocator);
-        dce.live.deinit(dce.opt.allocator);
     }
 
     pub fn run(dce: *DCE, root_idx: InstId) Allocator.Error!void {
@@ -428,7 +439,7 @@ const DCE = struct {
                 const start = range.start;
                 const end = start + range.len;
                 for (start + 1 .. end - 1) |idx| {
-                    const str_idx: InstId = @intCast(idx);
+                    const str_idx = dce.opt.extra[idx];
                     try dce.collectUses(str_idx);
                 }
             },
@@ -471,7 +482,7 @@ const DCE = struct {
         const end = start + range.len;
 
         for (start .. end) |idx| {
-            const stmt_idx: InstId = @intCast(idx);
+            const stmt_idx = dce.opt.extra[idx];
             try dce.collectUses(stmt_idx);
         }
     }
@@ -487,7 +498,7 @@ const DCE = struct {
             .store => {
                 const store = inst.data.store;
                 if (dce.used_symbols.contains(store.symbol_id))
-                    try dce.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+                    try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
             else => {},
         }
@@ -497,3 +508,67 @@ const DCE = struct {
 // ───────────────────────────────
 //            REMAPPING
 // ───────────────────────────────
+
+fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) void {
+    const root_block = opt.instructions[root_idx];
+    const range = root_block.data.range;
+    const start = range.start;
+    const end = start + range.len;
+
+    for (start .. end) |idx| {
+        const stmt_idx = opt.extra[idx];
+        try opt.assignId(stmt_idx);
+    }
+}
+
+fn assignId(opt: *Optimize, inst_idx: InstId) void {
+    if (!opt.live.contains(inst_idx))
+        return;
+
+    const new_inst = opt.rewriteInst(inst_idx);
+    opt.new_instructions.appendAssumeCapacity(new_inst);
+}
+
+fn rewriteInst(opt: *Optimize, old_id: InstId) InstId {
+    if (opt.old_to_new[old_id] != invalid_inst)
+        return opt.old_to_new_inst[old_id];
+
+    const new_id: InstId = @intCast(opt.new_instructions.items.len);
+    opt.old_to_new_inst.items[old_id] = new_id;
+
+    var inst = opt.instructions[old_id];
+
+    switch (inst.tag) {
+        .store => inst.data.store.value = opt.rewriteInst(inst.data.store.value),
+        // TODO: Handle range somewhere else.
+        // .branch, .dialogue,
+        // .label, .block => {},
+
+        .add, .sub, .mul, .div,
+        .eql, .not_eql,
+        .less, .less_or_eql,
+        .greater, .greater_or_eql,
+        .bool_and, .bool_or => {
+            inst.data.binary.lhs = opt.rewriteInst(inst.data.binary.lhs);
+            inst.data.binary.rhs = opt.rewriteInst(inst.data.binary.rhs);
+        },
+        else => {},
+    }
+
+    opt.new_instructions.appendAssumeCapacity(inst);
+
+    return new_id;
+}
+
+fn rewriteExtraRange(opt: *Optimize, old_start: u32, old_len: u32) InstId {
+    const new_start: InstId = @intCast(opt.new_extra.items.len);
+
+    for (old_start .. old_start + old_len) |i| {
+        const old_inst: InstId = @intCast(opt.extra[i]);
+        const new_inst = opt.rewriteInst(old_inst);
+
+        opt.new_extra.appendAssumeCapacity(new_inst);
+    }
+
+    return new_start;
+}
