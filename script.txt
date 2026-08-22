@@ -1,5 +1,9 @@
-var a = 1 + 1
+const a = 1 + 1
 const b = a
 const c = 0
 
-Test: The value of b is { b }
+if (a > 2) {
+   foo: asdf
+} else {
+   baa: asdf
+}

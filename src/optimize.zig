@@ -122,6 +122,19 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     }
 }
 
+fn intToChar(num: u8) []u8 {
+    const num_of_digits = std.math.log10_int(num);
+    var buf = [num_of_digits]u8;
+
+    inline for (0 .. num_of_digits) |i| {
+        const digit = @mod(num, 10);
+        const digit_to_str = digit - '0';
+        buf[i] = digit_to_str;
+    }
+
+    return buf;
+}
+
 pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_idx: u32 = @intCast(opt.instructions.len - 1);
     const root_inst = opt.instructions[root_idx];
@@ -141,7 +154,10 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     try dce.run(root_idx);
 
     // Pass 3: Recreate Instructions.
-    try opt.rebuildBlocksAndExtra(root_idx);
+    const new_set = try opt.rebuildBlocksAndExtra(root_idx);
+    // leave this for now.
+    opt.allocator.free(new_set.instructions);
+    opt.allocator.free(new_set.extra);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
@@ -321,23 +337,23 @@ fn foldDialogue(opt: *Optimize, inst: Inst) Error!void {
     // We can skip the speaker since we already know from Semantic
     // that speaker is valid. The last idx of the range is always the jump.
     // From Semantic, is also valid.
-    // TODO: Suppose there is a comptime expr in between strings.
-    // I need to merge the strings and interpolation together.
-    // Example:
+    // TODO: Handle merging dialogue parts at runtime rather than comptime.
     //
-    // A: There are { 2 + 2 } apples here.
-    // 
-    // This can be converted to
-    // A: There are 4 apples here.
+    // BIG CHANGE SOLUTION:
+    // Make all dialogue text runtime. For dialogue with interpolation, merge all parts
+    // into a singular string regardless of comptime or runtime.
     //
-    // Maybe this can be done in a separate pass.
+    // We don't want to allocate memory in comptime and then runtime; it's too inefficient in performance.
+    // It's better to allocate one huge memory and then insert all characters all at once.
+    //
+    // However, comptime interpolation variables MUST still be optimized using constant propagation.
     for (start + 1.. end - 1) |idx| {
-        const str_idx = opt.extra[idx];
-        const str = opt.instructions[str_idx];
+        const part_idx = opt.extra[idx];
+        const part = opt.instructions[part_idx];
 
-        switch (str.tag) {
+        switch (part.tag) {
             .text => {},
-            else => _ = try opt.eval(str_idx),
+            else => _ = try opt.eval(part_idx),
         }
     }
 }
@@ -365,9 +381,11 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 const DCE = struct {
     opt: *Optimize,
     used_symbols: std.array_hash_map.Auto(SymbolId, void) = .empty,
+    used_labels: std.array_hash_map.Auto(IdentId, void) = .empty,
 
     pub fn deinit(dce: *DCE) void {
         dce.used_symbols.deinit(dce.opt.allocator);
+        dce.used_labels.deinit(dce.opt.allocator);
     }
 
     pub fn run(dce: *DCE, root_idx: InstId) Allocator.Error!void {
@@ -412,6 +430,11 @@ const DCE = struct {
                 const range = inst.data.range;
                 const start = range.start;
                 const end = start + range.len;
+                const jump = dce.opt.extra[end];
+
+                if (jump != invalid_inst)
+                    try dce.used_labels.put(dce.opt.allocator, jump, {});
+
                 for (start + 1 .. end - 1) |idx| {
                     const str_idx = dce.opt.extra[idx];
                     try dce.collectUses(str_idx);
@@ -478,17 +501,16 @@ const DCE = struct {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);
             },
-            .dialogue => {
-                const range = inst.data.range;
-                try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
-                for (range.start + 1 .. range.start + range.len - 1) |idx| {
-                    const stmt_idx = dce.opt.extra[idx];
-                    try dce.markInst(stmt_idx);
-                }
-            },
+            .dialogue => try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {}),
             .label => {
                 const range = inst.data.range;
-                try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+                const label_id = dce.opt.extra[range.start];
+
+                if (dce.used_symbols.contains(label_id))
+                    try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
+                else
+                    return;
+
                 for (range.start + 1 .. range.start + range.len) |idx| {
                     const stmt_idx = dce.opt.extra[idx];
                     try dce.markInst(stmt_idx);

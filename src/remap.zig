@@ -1,10 +1,10 @@
 const std = @import("std");
 const Optimize = @import("optimize.zig").Optimize;
-const in = @import("dia_ir.zig");
+const ir = @import("dia_ir.zig");
 
-const Inst = in.Inst;
-const InstId = in.InstId;
-const invalid_inst = in.invalid_inst;
+const Inst = ir.Inst;
+const InstId = ir.InstId;
+const invalid_inst = ir.invalid_inst;
 
 // ───────────────────────────────
 //            REMAPPING
@@ -12,6 +12,11 @@ const invalid_inst = in.invalid_inst;
 //
 // Remapping is a section of the optimizer that takes in the modified instructions from DCE
 // and maps them to a new instruction and extra arraylist.
+
+pub const NewInsts = struct {
+    instructions: []Inst,
+    extra: []InstId,
+};
 
 pub const Remap = @This();
 
@@ -32,7 +37,7 @@ fn deinit(re: *Remap) void {
 
 // TODO: After remapping to new instructions and extra, we should
 // use toOwnSlice() and return it in a struct.
-pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !void {
+pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
     var remap: Remap = .{
         .opt = opt,
     };
@@ -94,6 +99,12 @@ pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !void {
 
     try remap.new_instructions.shrinkToLen(opt.allocator);
     try remap.new_extra.shrinkToLen(opt.allocator);
+
+    // MAKE SURE TO FREE INSTRUCTIONS AND EXTRA AFTERWARDS.
+    return .{
+        .instructions = try remap.new_instructions.toOwnedSlice(opt.allocator),
+        .extra = try remap.new_extra.toOwnedSlice(opt.allocator),
+    };
 }
 
 fn rebuildInst(re: *Remap, old_id: InstId) InstId {

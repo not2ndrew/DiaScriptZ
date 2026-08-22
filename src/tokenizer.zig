@@ -120,9 +120,9 @@ pub fn next(self: *Tokenizer) !Token {
 
     const start = self.index;
     const ch = self.buffer[start];
-    self.index += 1;
 
     if (self.mode == .string) return self.findStr();
+    self.index += 1;
     switch (ch) {
         '\n' => {
             // We only reach here if the condition is fulfilled
