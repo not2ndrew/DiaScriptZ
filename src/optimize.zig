@@ -122,19 +122,6 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     }
 }
 
-fn intToChar(num: u8) []u8 {
-    const num_of_digits = std.math.log10_int(num);
-    var buf = [num_of_digits]u8;
-
-    inline for (0 .. num_of_digits) |i| {
-        const digit = @mod(num, 10);
-        const digit_to_str = digit - '0';
-        buf[i] = digit_to_str;
-    }
-
-    return buf;
-}
-
 pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_idx: u32 = @intCast(opt.instructions.len - 1);
     const root_inst = opt.instructions[root_idx];
@@ -155,6 +142,10 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
 
     // Pass 3: Recreate Instructions.
     const new_set = try opt.rebuildBlocksAndExtra(root_idx);
+
+    for (new_set.instructions) |inst| {
+        std.debug.print("Tag: {t}\n", .{inst.tag});
+    }
     // leave this for now.
     opt.allocator.free(new_set.instructions);
     opt.allocator.free(new_set.extra);
@@ -337,16 +328,9 @@ fn foldDialogue(opt: *Optimize, inst: Inst) Error!void {
     // We can skip the speaker since we already know from Semantic
     // that speaker is valid. The last idx of the range is always the jump.
     // From Semantic, is also valid.
-    // TODO: Handle merging dialogue parts at runtime rather than comptime.
     //
-    // BIG CHANGE SOLUTION:
-    // Make all dialogue text runtime. For dialogue with interpolation, merge all parts
-    // into a singular string regardless of comptime or runtime.
-    //
-    // We don't want to allocate memory in comptime and then runtime; it's too inefficient in performance.
-    // It's better to allocate one huge memory and then insert all characters all at once.
-    //
-    // However, comptime interpolation variables MUST still be optimized using constant propagation.
+    // Merging dialogue parts will be done at runtime regardless of
+    // a variable's declaration type.
     for (start + 1.. end - 1) |idx| {
         const part_idx = opt.extra[idx];
         const part = opt.instructions[part_idx];
@@ -497,11 +481,40 @@ const DCE = struct {
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
             .branch => {
+                // TODO: This should be handled in folding stage.
+                // The issue is branch is scanning both then and else blocks.
+                // If the condition is comptime evaluated, we deattach all stmts
+                // connected to the block and move to the parent block.
+                // Ex:
+                //
+                // if (1 == 1) {
+                //    A: This should be running
+                //    var a = 10
+                // } else {
+                //    B: Ignore this
+                // }
+                //
+                // Should be converted to
+                //
+                // A: This should be running
+                // var a = 10
+                //
+                // The block is discarded and the stmts moves to the parent block.
+                //
+                // We don't have to worry about variable shadowing because our Semantic
+                // guarantees there are none.
+                //
                 const range = inst.data.range;
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);
             },
-            .dialogue => try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {}),
+            .block => {
+                const range = inst.data.range;
+                try dce.markBlock(range.start, range.len);
+            },
+            .dialogue => {
+                try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+            },
             .label => {
                 const range = inst.data.range;
                 const label_id = dce.opt.extra[range.start];

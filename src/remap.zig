@@ -1,6 +1,7 @@
 const std = @import("std");
-const Optimize = @import("optimize.zig").Optimize;
 const ir = @import("dia_ir.zig");
+const Optimize = @import("optimize.zig").Optimize;
+const TokenIndex = @import("token.zig").TokenIndex;
 
 const Inst = ir.Inst;
 const InstId = ir.InstId;
@@ -26,17 +27,13 @@ new_instructions: std.ArrayList(Inst) = .empty,
 new_extra: std.ArrayList(InstId) = .empty,
 
 old_to_new_inst: std.ArrayList(InstId) = .empty,
-old_to_new_extra: std.ArrayList(InstId) = .empty,
 
 fn deinit(re: *Remap) void {
     re.new_instructions.deinit(re.opt.allocator);
     re.new_extra.deinit(re.opt.allocator);
     re.old_to_new_inst.deinit(re.opt.allocator);
-    re.old_to_new_extra.deinit(re.opt.allocator);
 }
 
-// TODO: After remapping to new instructions and extra, we should
-// use toOwnSlice() and return it in a struct.
 pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
     var remap: Remap = .{
         .opt = opt,
@@ -49,6 +46,7 @@ pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
     try remap.new_instructions.ensureTotalCapacityPrecise(
         opt.allocator, opt.instructions.len
     );
+
     try remap.new_extra.ensureTotalCapacityPrecise(
         opt.allocator, opt.instructions.len
     );
@@ -56,55 +54,60 @@ pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
     try remap.old_to_new_inst.ensureTotalCapacityPrecise(
         opt.allocator, opt.instructions.len
     );
-    try remap.old_to_new_extra.ensureTotalCapacityPrecise(
-        opt.allocator, opt.instructions.len
-    );
 
+    // To avoid out of bound errors, we need to insert invalid_inst.
     remap.old_to_new_inst.appendNTimesAssumeCapacity(
         invalid_inst, remap.old_to_new_inst.capacity
     );
-
-    remap.old_to_new_extra.appendNTimesAssumeCapacity(
-        invalid_inst, remap.old_to_new_extra.capacity
-    );
-
     const root_block = opt.instructions[root_idx];
     const range = root_block.data.range;
-    const start = range.start;
-    const end = start + range.len;
 
-    const new_start: InstId = @intCast(remap.new_extra.items.len);
-
-    for (start .. end) |idx| {
-        const stmt_id = opt.extra[idx];
-
-        if (!opt.live.contains(stmt_id)) continue;
-        const new_id = remap.rebuildInst(stmt_id);
-
-        remap.new_extra.appendAssumeCapacity(new_id);
-    }
-
-    const new_len: InstId = @intCast(remap.new_extra.items.len - new_start);
-
-    var new_block: Inst = root_block;
-    new_block.data.range = .{
-        .start = new_start,
-        .len = new_len,
-    };
-
-    const new_id: InstId = @intCast(remap.new_instructions.items.len);
-
-    remap.old_to_new_inst.items[root_idx] = new_id;
-    remap.new_instructions.appendAssumeCapacity(new_block);
-
-    try remap.new_instructions.shrinkToLen(opt.allocator);
-    try remap.new_extra.shrinkToLen(opt.allocator);
+    _ = remap.rebuildBlock(
+        root_idx,
+        .block,
+        root_block.token_pos,
+        range.start,
+        range.start + range.len
+    );
 
     // MAKE SURE TO FREE INSTRUCTIONS AND EXTRA AFTERWARDS.
     return .{
         .instructions = try remap.new_instructions.toOwnedSlice(opt.allocator),
         .extra = try remap.new_extra.toOwnedSlice(opt.allocator),
     };
+}
+
+fn rebuildBlock(re: *Remap, old_id: InstId, comptime tag: Inst.Tag, token_pos: TokenIndex, old_start: u32, old_end: u32) InstId {
+    const new_start: InstId = @intCast(re.new_extra.items.len);
+
+    for (old_start .. old_end) |idx| {
+        const stmt_idx = re.opt.extra[idx];
+
+        if (!re.opt.live.contains(stmt_idx))
+            continue;
+
+        const new_stmt = re.rebuildInst(stmt_idx);
+        re.new_extra.appendAssumeCapacity(new_stmt);
+    }
+
+    const new_len: u32 = @intCast(re.new_extra.items.len - new_start);
+    const new_block: Inst = .{
+        .tag = tag,
+        .token_pos = token_pos,
+        .data = .{
+            .range = .{
+                .start = new_start,
+                .len = new_len,
+            }
+        }
+    };
+
+    const new_id: InstId = @intCast(re.new_instructions.items.len);
+
+    re.old_to_new_inst.items[old_id] = new_id;
+    re.new_instructions.appendAssumeCapacity(new_block);
+
+    return new_id;
 }
 
 fn rebuildInst(re: *Remap, old_id: InstId) InstId {
@@ -153,18 +156,35 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
     const else_id = re.opt.extra[old_start + 2];
 
     const new_cond = re.rebuildInst(cond_id);
-    const new_then = re.rebuildBlock(then_id);
 
-    re.new_extra.appendAssumeCapacity(new_cond);
-    re.new_extra.appendAssumeCapacity(new_then);
+    const then_block = re.opt.instructions[then_id];
+    const t_range = then_block.data.range;
+    const new_then = re.rebuildBlock(
+        then_id,
+        .block,
+        then_block.token_pos,
+        t_range.start,
+        t_range.start + t_range.len
+    );
 
+    var new_else: InstId = invalid_inst;
     if (else_id != invalid_inst) {
-        const new_else = re.rebuildBlock(else_id);
-        re.new_extra.appendAssumeCapacity(new_else);
-    } else {
-        re.new_extra.appendAssumeCapacity(invalid_inst);
+        const else_block = re.opt.instructions[else_id];
+        const e_range = else_block.data.range;
+        new_else = re.rebuildBlock(
+            else_id,
+            .block,
+            else_block.token_pos,
+            e_range.start,
+            e_range.start + e_range.len
+        );
     }
 
+    re.new_extra.appendSliceAssumeCapacity(&[_]InstId{
+        new_cond, new_then, new_else
+    });
+
+    // A branch's length is always 3. No need to get a new len.
     var new_branch: Inst = old;
     new_branch.data.range.start = new_start;
 
@@ -184,9 +204,6 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     for (old_start + 1 .. old_end - 1) |idx| {
         const stmt_idx = re.opt.extra[idx];
         
-        if (!re.opt.live.contains(stmt_idx))
-            continue;
-
         const new_stmt = re.rebuildInst(stmt_idx);
         re.new_extra.appendAssumeCapacity(new_stmt);
     }
@@ -212,36 +229,13 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     re.new_instructions.appendAssumeCapacity(new_dialogue);
 }
 
-fn rebuildBlock(re: *Remap, old_id: InstId) InstId {
+fn rebuildLabel(re: *Remap, old_id: InstId) InstId {
     const old = re.opt.instructions[old_id];
-
     const range = old.data.range;
     const old_start = range.start;
     const old_end = old_start + range.len;
-    const new_start: InstId = @intCast(re.new_extra.items.len);
 
-    for (old_start .. old_end) |idx| {
-        const stmt_idx = re.opt.extra[idx];
-        
-        if (!re.opt.live.contains(stmt_idx))
-            continue;
-
-        const new_stmt = re.rebuildInst(stmt_idx);
-        re.new_extra.appendAssumeCapacity(new_stmt);
-    }
-
-    const new_len: u32 = @intCast(re.new_extra.items.len - new_start);
-    var new_block: Inst = old;
-    new_block.data.range = .{
-        .start = new_start,
-        .len = new_len,
-    };
-    const new_id: InstId = @intCast(re.new_instructions.items.len);
-
-    re.old_to_new_inst.items[old_id] = new_id;
-    re.new_instructions.appendAssumeCapacity(new_block);
-
-    return new_id;
+    return re.rebuildBlock(old_id, .label, old.token_pos, old_start + 1, old_end);
 }
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
@@ -251,8 +245,12 @@ fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
     for (range.start..range.start + range.len) |i| {
         const stmt_id = re.opt.extra[i];
 
-        if (!re.opt.live.contains(stmt_id))
+        if (!re.opt.live.contains(stmt_id)) {
+            const inst = re.opt.instructions[stmt_id];
+            std.debug.print("Inst Id {d} with Tag {t} was skipped\n", .{stmt_id, inst.tag});
             continue;
+
+        }
 
         _ = re.rebuildInst(stmt_id);
     }

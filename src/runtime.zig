@@ -20,6 +20,17 @@ const InstId = ir.InstId;
 //
 //
 // Finalized result should be sent to code generation.
+//
+// TODO: Handle merging dialogue parts at runtime rather than comptime.
+//
+// BIG CHANGE SOLUTION:
+// Make all dialogue text runtime. For dialogue with interpolation, merge all parts
+// into a singular string regardless of comptime or runtime.
+//
+// We don't want to allocate memory in comptime and then runtime; it's too inefficient in performance.
+// It's better to allocate one huge memory and then insert all characters all at once.
+//
+// However, comptime interpolation variables MUST still be optimized using constant propagation.
 
 pub const Runtime = @This();
 
