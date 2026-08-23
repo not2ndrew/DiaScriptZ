@@ -275,32 +275,6 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 // extra[start + 0] = condition InstId
 // extra[start + 1] = then Block InstId
 // extra[start + 2] = else Block InstId or invalid_inst
-// TODO: This should be handled in folding stage.
-// The issue is branch is scanning both then and else blocks.
-// If the condition is comptime evaluated, we deattach all stmts
-// connected to the block and move to the parent block.
-// Ex:
-//
-// if (1 == 1) {
-//    A: This should be running
-//    var a = 10
-// } else {
-//    B: Ignore this
-// }
-//
-// Should be converted to
-//
-// A: This should be running
-// var a = 10
-//
-// The block is discarded and the stmts moves to the parent block.
-//
-// We don't have to worry about variable shadowing because our Semantic
-// guarantees there are none.
-//
-// Solution:
-// For comptime branch, mark one block and its stmts inside.
-// Then we go inside remap and append all stmts to parent block.
 fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     const range = inst.data.range;

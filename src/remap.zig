@@ -118,9 +118,9 @@ fn rebuildInst(re: *Remap, old_id: InstId) InstId {
 
     switch (inst.tag) {
         .store => inst.data.store.value = re.rebuildInst(inst.data.store.value),
-        // TODO: Handle label since it contains blocks as well.
         .branch => re.rebuildBranch(old_id),
         .dialogue => re.rebuildDialogue(old_id),
+        .label => re.rebuildLabel(old_id),
 
         .add, .sub, .mul, .div,
         .eql, .not_eql,
@@ -132,8 +132,6 @@ fn rebuildInst(re: *Remap, old_id: InstId) InstId {
         },
         else => {},
     }
-
-    re.new_instructions.appendAssumeCapacity(inst);
 
     return new_id;
 }
@@ -229,13 +227,13 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     re.new_instructions.appendAssumeCapacity(new_dialogue);
 }
 
-fn rebuildLabel(re: *Remap, old_id: InstId) InstId {
+fn rebuildLabel(re: *Remap, old_id: InstId) void {
     const old = re.opt.instructions[old_id];
     const range = old.data.range;
     const old_start = range.start;
     const old_end = old_start + range.len;
 
-    return re.rebuildBlock(old_id, .label, old.token_pos, old_start + 1, old_end);
+    _ = re.rebuildBlock(old_id, .label, old.token_pos, old_start + 1, old_end);
 }
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
@@ -245,12 +243,8 @@ fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
     for (range.start..range.start + range.len) |i| {
         const stmt_id = re.opt.extra[i];
 
-        if (!re.opt.live.contains(stmt_id)) {
-            const inst = re.opt.instructions[stmt_id];
-            std.debug.print("Inst Id {d} with Tag {t} was skipped\n", .{stmt_id, inst.tag});
+        if (!re.opt.live.contains(stmt_id))
             continue;
-
-        }
 
         _ = re.rebuildInst(stmt_id);
     }
