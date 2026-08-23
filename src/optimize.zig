@@ -275,6 +275,32 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
 // extra[start + 0] = condition InstId
 // extra[start + 1] = then Block InstId
 // extra[start + 2] = else Block InstId or invalid_inst
+// TODO: This should be handled in folding stage.
+// The issue is branch is scanning both then and else blocks.
+// If the condition is comptime evaluated, we deattach all stmts
+// connected to the block and move to the parent block.
+// Ex:
+//
+// if (1 == 1) {
+//    A: This should be running
+//    var a = 10
+// } else {
+//    B: Ignore this
+// }
+//
+// Should be converted to
+//
+// A: This should be running
+// var a = 10
+//
+// The block is discarded and the stmts moves to the parent block.
+//
+// We don't have to worry about variable shadowing because our Semantic
+// guarantees there are none.
+//
+// Solution:
+// For comptime branch, mark one block and its stmts inside.
+// Then we go inside remap and append all stmts to parent block.
 fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     const range = inst.data.range;
@@ -299,11 +325,6 @@ fn foldBranch(opt: *Optimize, inst_idx: InstId) Error!void {
 
             const b = opt.instructions[block_id];
             const b_range = b.data.range;
-
-            // If there is no statements inside the block,
-            // don't append to branch_result.
-            if (b_range.len == 0)
-                return;
 
             try opt.branch_result.putNoClobber(opt.allocator, inst_idx, block_id);
             try opt.block(b_range.start, b_range.len);
@@ -401,13 +422,20 @@ const DCE = struct {
         switch (inst.tag) {
             .store => try dce.collectUses(inst.data.store.value),
             .branch => {
-                const range = inst.data.range;
-                // The start is the condition index.
-                try dce.collectUses(dce.opt.extra[range.start]);
-
-                // Use the selected branch if constant folding took place.
+                // Comptime branch: Only 1 block needs to be marked.
                 if (dce.opt.branch_result.get(inst_idx)) |block_id| {
-                    try dce.collectBlockUses(block_id);
+                    if (block_id != invalid_inst)
+                        try dce.collectBlockUses(block_id);
+                } else {
+                    // Runtime branch: Check condition, and two branches
+                    const range = inst.data.range;
+                    try dce.collectUses(dce.opt.extra[range.start]);
+
+                    try dce.collectBlockUses(dce.opt.extra[range.start + 1]);
+
+                    const else_id = dce.opt.extra[range.start + 2];
+                    if (else_id != invalid_inst)
+                        try dce.collectBlockUses(else_id);
                 }
             },
             .dialogue => {
@@ -481,29 +509,6 @@ const DCE = struct {
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
             .branch => {
-                // TODO: This should be handled in folding stage.
-                // The issue is branch is scanning both then and else blocks.
-                // If the condition is comptime evaluated, we deattach all stmts
-                // connected to the block and move to the parent block.
-                // Ex:
-                //
-                // if (1 == 1) {
-                //    A: This should be running
-                //    var a = 10
-                // } else {
-                //    B: Ignore this
-                // }
-                //
-                // Should be converted to
-                //
-                // A: This should be running
-                // var a = 10
-                //
-                // The block is discarded and the stmts moves to the parent block.
-                //
-                // We don't have to worry about variable shadowing because our Semantic
-                // guarantees there are none.
-                //
                 const range = inst.data.range;
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);
