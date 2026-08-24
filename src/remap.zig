@@ -119,7 +119,7 @@ fn rebuildInst(re: *Remap, old_id: InstId) InstId {
     switch (inst.tag) {
         .store => inst.data.store.value = re.rebuildInst(inst.data.store.value),
         .branch => re.rebuildBranch(old_id),
-        .dialogue => re.rebuildDialogue(old_id),
+        .dialogue, .choice => re.rebuildDialogue(old_id),
         .label => re.rebuildLabel(old_id),
 
         .add, .sub, .mul, .div,

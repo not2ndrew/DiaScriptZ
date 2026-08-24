@@ -165,7 +165,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
     return switch (inst.tag) {
         .store => opt.storeVar(inst_idx),
         .branch => opt.foldBranch(inst_idx),
-        .dialogue => opt.foldDialogue(inst),
+        .dialogue, .choice => opt.foldDialogue(inst),
         .label => opt.foldLabel(inst),
         else => {},
     };
@@ -487,7 +487,7 @@ const DCE = struct {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);
             },
-            .dialogue => {
+            .dialogue, .choice => {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
             .label => {

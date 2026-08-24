@@ -194,6 +194,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
         => sem.visitAssign(node),
         .if_stmt => sem.visitIfStmt(node),
         .dialogue => sem.visitDialogue(node),
+        .choice => sem.visitChoice(node),
         .label => sem.visitLabel(node),
         else => sem.report(node.token_pos, .unexpected_token),
     };
@@ -380,6 +381,13 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     }
 
     try sem.symbol_refs.append(sem.allocator, symbol_id);
+
+    try sem.visitDialogueParts(start, range.len);
+}
+
+fn visitChoice(sem: *Semantic, node: Node) !void {
+    const range = node.data.range;
+    const start = range.start;
 
     try sem.visitDialogueParts(start, range.len);
 }

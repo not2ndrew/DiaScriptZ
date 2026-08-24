@@ -31,6 +31,8 @@ const InstId = ir.InstId;
 // It's better to allocate one huge memory and then insert all characters all at once.
 //
 // However, comptime interpolation variables MUST still be optimized using constant propagation.
+//
+// Since this is runtime, I do require I/O from Init in compile.zig.
 
 pub const Runtime = @This();
 
