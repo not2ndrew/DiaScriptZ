@@ -118,7 +118,7 @@ pub fn parseAll(p: *Parser) Error!void {
     const len: u32 = @intCast(stmts.items.len);
     try p.extra_data.appendSlice(p.allocator, stmts.items);
 
-    _ = try p.addNode(.block, root_token_pos, .{
+    _ = try p.addNode(.stmt_block, root_token_pos, .{
         .range = .{ .start = start, .len = len }
     });
 }
@@ -314,7 +314,7 @@ fn parseStmtBlock(p: *Parser, comptime start_tag: TokenTag, comptime end_tag: To
     const block_pos = try p.expect(start_tag);
     const range = try p.collectStmtUntil(end_tag, &stmts);
 
-    return try p.addNode(.block, block_pos, .{
+    return try p.addNode(.stmt_block, block_pos, .{
         .range = .{ .start = range.start, .len = range.len }
     });
 }

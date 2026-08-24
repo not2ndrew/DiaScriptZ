@@ -19,7 +19,8 @@ pub const NodeTag = enum {
     choice,
     
     // Block
-    block,
+    stmt_block,
+    choice_block,
 
     // Single characters
     assign, // =

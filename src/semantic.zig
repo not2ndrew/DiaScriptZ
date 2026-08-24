@@ -20,12 +20,14 @@ const invalid_node = zig_node.invalid_node;
 
 const Interner = inter.Interner;
 const IdentId = inter.IdentId;
+const Span = inter.Span;
 
 const AstError = diag.Error;
 const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
+const MAX_NUM_CHOICES_IN_BLOCK = 4;
 const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
 const LabelTable = std.array_hash_map.Auto(IdentId, void);
 
@@ -67,9 +69,6 @@ label_table: LabelTable = .empty,
 
 interner: Interner = .{},
 
-// TODO: Determine whether I want to store a ref to the declaration identifier itself.
-// Ex: "const x = 1"
-// Since x was declared, it will store a ref. Determine if I should store it or not.
 symbols: std.ArrayList(Symbol) = .empty,
 labels: std.ArrayList(IdentId) = .empty,
 
@@ -81,6 +80,9 @@ unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
 resolved_jumps: std.ArrayList(IdentId) = .empty,
 initializing_symbol: ?SymbolId = null,
 
+choices: std.ArrayList(NodeIndex) = .empty,
+choice_span: std.ArrayList(Span) = .empty,
+
 pub fn deinit(sem: *Semantic) void {
     sem.symbol_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
@@ -91,6 +93,8 @@ pub fn deinit(sem: *Semantic) void {
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
     sem.resolved_jumps.deinit(sem.allocator);
+    sem.choices.deinit(sem.allocator);
+    sem.choice_span.deinit(sem.allocator);
 }
 
 fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
@@ -139,16 +143,11 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
 
     const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
-    const start = range.start;
-    const end = range.start + range.len;
 
     // Put a limit to how many scopes can be generated
     try sem.scope_stack.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
 
-    for (start..end) |idx| {
-        const node_idx = ast.extra_data[idx];
-        try sem.visitStmt(node_idx);
-    }
+    try sem.visitStmtList(range.start, range.len);
 
     try sem.resolved_jumps.ensureTotalCapacityPrecise(sem.allocator, sem.unresolved_jumps.items.len);
 
@@ -176,14 +175,52 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
 }
 
 fn visitBlock(sem: *Semantic, token_pos: TokenIndex, start: u32, len: u32) !void {
-    const end = start + len;
-
     try sem.addScope(token_pos);
-    for (start..end) |idx| {
-        const node_index = sem.ast.extra_data[idx];
-        try sem.visitStmt(node_index);
-    }
+    try sem.visitStmtList(start, len);
     sem.endScope();
+}
+
+fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
+    const end = start + len;
+    var i: u32 = start;
+    while (i < end) {
+        const node_idx = sem.ast.extra_data[i];
+        const node = sem.ast.nodes.get(node_idx);
+
+        if (node.tag != .choice) {
+            try sem.visitStmt(node_idx);
+            i += 1;
+            continue;
+        }
+
+        const choice_start = i;
+        var count: u8 = 0;
+        // Handle choice blocks here
+        while (i < end) : (i += 1) {
+            const choice_idx = sem.ast.extra_data[i];
+            const choice_node = sem.ast.nodes.get(choice_idx);
+
+            if (choice_node.tag != .choice)
+                break;
+
+            count += 1;
+
+            if (count > MAX_NUM_CHOICES_IN_BLOCK) {
+                try sem.report(choice_node.token_pos, .too_many_choices);
+            }
+
+            try sem.visitChoice(choice_node);
+            try sem.choices.append(sem.allocator, choice_start);
+        }
+
+        // Singular choices do not require a block.
+        if (i >= 2) {
+            try sem.choice_span.append(sem.allocator, .{
+                .start = choice_start,
+                .len = i
+            });
+        }
+    }
 }
 
 fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
@@ -194,7 +231,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
         => sem.visitAssign(node),
         .if_stmt => sem.visitIfStmt(node),
         .dialogue => sem.visitDialogue(node),
-        .choice => sem.visitChoice(node),
+        // Choice is handled in visitStmtList
         .label => sem.visitLabel(node),
         else => sem.report(node.token_pos, .unexpected_token),
     };
@@ -385,6 +422,7 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     try sem.visitDialogueParts(start, range.len);
 }
 
+// TODO: Choices can exist by themselves. You can group up choices to a maximum of 4.
 fn visitChoice(sem: *Semantic, node: Node) !void {
     const range = node.data.range;
     const start = range.start;
@@ -394,7 +432,7 @@ fn visitChoice(sem: *Semantic, node: Node) !void {
 
 fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
     const end = start + len;
-    for (start + 1..end - 1) |idx| {
+    for (start + 1 .. end - 1) |idx| {
         const text_idx = sem.ast.extra_data[idx];
         try sem.visitText(text_idx);
     }

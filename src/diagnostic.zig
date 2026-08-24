@@ -48,6 +48,7 @@ pub const Error = struct {
         modified_const,
         too_many_scopes,
         invalid_label_scope,
+        too_many_choices,
     };
 };
 
@@ -219,7 +220,10 @@ pub const DiagRenderer = struct {
             },
             .invalid_label_scope => {
                 return w.print("Label '{s}' must be placed in GLOBAL scope", .{str});
-            }
+            },
+            .too_many_choices => {
+                return w.writeAll("Too many choices in a block");
+            },
         }
     }
 };

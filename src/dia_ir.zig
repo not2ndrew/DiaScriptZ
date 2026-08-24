@@ -195,7 +195,7 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         // Comparison IR
         .if_stmt => try ir.reduceIfStmt(node),
 
-        .block, => {
+        .stmt_block, => {
             const range = node.data.range;
             const block_range = try ir.reduceBlock(range.start, range.len);
             return ir.appendInst(.block, node.token_pos, block_range);
