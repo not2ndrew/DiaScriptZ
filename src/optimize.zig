@@ -487,10 +487,6 @@ const DCE = struct {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);
             },
-            .block => {
-                const range = inst.data.range;
-                try dce.markBlock(range.start, range.len);
-            },
             .dialogue => {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },

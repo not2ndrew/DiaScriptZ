@@ -24,14 +24,6 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     if (parse_tree.errors.items.len > 0)
         return printErrors(&parse_tree, allocator, file_name);
 
-    // for (parse_tree.ast.tokens.items(.tag)) |tag| {
-    //     std.debug.print("Token Tag: {t}\n", .{tag});
-    // }
-    //
-    // for (parse_tree.ast.nodes.items(.tag)) |tag| {
-    //     std.debug.print("Node Tag: {t}\n", .{tag});
-    // }
-
     try lower_ir.lower(allocator, &parse_tree, &parse_tree.ast, &parse_tree.errors, file_name);
 
     try printErrors(&parse_tree, allocator, file_name);

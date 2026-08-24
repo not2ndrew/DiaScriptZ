@@ -366,16 +366,16 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
 
     stmts.appendAssumeCapacity(label_inst);
 
-    const end = start + len - 1;
-    for (start + 1..end) |idx| {
+    const end = start + len;
+    for (start + 1 .. end) |idx| {
         const ast_stmt = ir.ast.extra_data[idx];
         const stmt_idx = try ir.reduceStmt(ast_stmt);
         stmts.appendAssumeCapacity(stmt_idx);
     }
 
-    ir.extra.appendSliceAssumeCapacity(try stmts.toOwnedSlice(ir.allocator));
+    ir.extra.appendSliceAssumeCapacity(stmts.items);
 
-    return ir.appendInst(.block, node.token_pos, .{
+    return ir.appendInst(.label, node.token_pos, .{
         .range = .{ .start = extra_start, .len = len }
     });
 }
