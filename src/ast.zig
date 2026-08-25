@@ -45,7 +45,6 @@ pub const Ast = struct {
 pub const ParseResult = struct {
     ast: Ast,
     source_file: SourceFile,
-    errors: std.ArrayList(Error),
 
     pub fn deinit(p: *ParseResult, allocator: Allocator) void {
         allocator.free(p.source_file.offsets);
@@ -54,7 +53,7 @@ pub const ParseResult = struct {
 };
 
 /// Make sure to deinit() nodes, stmts, and tokens
-pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
+pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !ParseResult {
     var tokens: Tokens = .empty;
     defer tokens.deinit(allocator);
 
@@ -78,22 +77,42 @@ pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
         if (token.tag == .EOF) break;
     }
 
+    const offset_slice = try offsets.toOwnedSlice(allocator);
+    var token_slice = tokens.toOwnedSlice();
+
+    errdefer {
+        allocator.free(offset_slice);
+        token_slice.deinit(allocator);
+    }
+
     const source_file: SourceFile = .{
-        .offsets = try offsets.toOwnedSlice(allocator),
+        .offsets = offset_slice,
         .source = buf,
     };
 
-    return parseFromTokens(allocator, source_file, tokens.toOwnedSlice());
+    return parseFromTokens(allocator, source_file, token_slice, file_name);
 }
 
-fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
+fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice, file_name: []const u8) !ParseResult {
     var parser: Parser = .{
         .allocator = allocator,
         .tokens = tokens,
     };
+    errdefer parser.deinit();
 
     // tokens -> AST
     try parser.parseAll();
+
+    if (parser.errors.items.len > 0) {
+        const renderer: diag.DiagRenderer = .{
+            .source_file = source_file,
+            .tokens = tokens,
+        };
+
+        // Diagnostics
+        try renderer.printErrors(&parser.errors, allocator, file_name);
+        return error.ParseError;
+    }
 
     // Converting to slice removes all excess memory in nodes and stmts.
     // This also means you own the memory. So call deinit on ast when finished.
@@ -108,6 +127,5 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
     return .{
         .ast = ast,
         .source_file = source_file,
-        .errors = parser.errors,
     };
 }

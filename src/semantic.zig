@@ -1,7 +1,7 @@
 const std = @import("std");
 const tok = @import("token.zig");
 const zig_node = @import("node.zig");
-const Ast = @import("ast.zig").Ast;
+const as = @import("ast.zig");
 const inter = @import("interner.zig");
 const diag = @import("diagnostic.zig");
 const Lower = @import("lower.zig").Lower;
@@ -18,12 +18,14 @@ const NodeIndex = zig_node.NodeIndex;
 const Tag = zig_node.NodeTag;
 const invalid_node = zig_node.invalid_node;
 
+const Ast = as.Ast;
+const ParseResult = as.ParseResult;
+
 const Interner = inter.Interner;
 const IdentId = inter.IdentId;
 const Span = inter.Span;
 
 const AstError = diag.Error;
-const Errors = std.ArrayList(AstError);
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
@@ -60,7 +62,7 @@ pub const Semantic = @This();
 
 allocator: Allocator,
 ast: *const Ast,
-errors: *std.ArrayList(AstError),
+errors: std.ArrayList(AstError) = .empty,
 
 // symbol_table is local hashmap for declaration variables and dialogue speakers.
 symbol_table: SymbolTable = .empty,
@@ -84,6 +86,7 @@ choices: std.ArrayList(NodeIndex) = .empty,
 choice_span: std.ArrayList(Span) = .empty,
 
 pub fn deinit(sem: *Semantic) void {
+    sem.errors.deinit(sem.allocator);
     sem.symbol_table.deinit(sem.allocator);
     sem.label_table.deinit(sem.allocator);
     sem.interner.deinit(sem.allocator);
@@ -133,15 +136,14 @@ fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId, token_pos: TokenI
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
+pub fn analyze(allocator: Allocator, tree: *const ParseResult, file_name: []const u8) !Lower {
     var sem: Semantic = .{
         .allocator = allocator,
-        .ast = ast,
-        .errors = errors,
+        .ast = &tree.ast,
     };
     defer sem.deinit();
 
-    const root_node = ast.nodes.get(ast.nodes.len - 1);
+    const root_node = tree.ast.nodes.get(tree.ast.nodes.len - 1);
     const range = root_node.data.range;
 
     // Put a limit to how many scopes can be generated
@@ -163,6 +165,11 @@ pub fn analyze(allocator: Allocator, ast: *const Ast, errors: *Errors) !Lower {
             try sem.report(token_pos, .ident_mismatch);
 
         sem.resolved_jumps.appendAssumeCapacity(ident_id);
+    }
+
+    if (sem.errors.items.len > 0) {
+        try diag.printErrors(allocator, &sem.errors, tree, file_name);
+        return error.SemanticError;
     }
 
     return .{
@@ -205,6 +212,16 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
 
             count += 1;
 
+            // TODO: This points incorrectly.
+            // * Option 1
+            // * Option 2
+            // * Option 3
+            // * Option 4
+            // * Option 5
+            // script.txt:9:1 error: Too many choices in a block
+            //      |
+            //    9 | * Option 5
+            //      | ^
             if (count > MAX_NUM_CHOICES_IN_BLOCK) {
                 try sem.report(choice_node.token_pos, .too_many_choices);
             }
@@ -251,7 +268,8 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const name = sem.ast.tokenSlice(pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
 
-    try sem.checkSymbolLabelConflict(ident_id, pos);
+    // TODO: Force checkSymbolLabelConflict to return an error.
+    // try sem.checkSymbolLabelConflict(ident_id, pos);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {

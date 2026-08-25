@@ -1,6 +1,7 @@
 const std = @import("std");
 const zig_node = @import("node.zig");
 const tok = @import("token.zig");
+const ParseResult = @import("ast.zig").ParseResult;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -52,11 +53,21 @@ pub const Error = struct {
     };
 };
 
+pub fn printErrors(allocator: Allocator, errors: *std.ArrayList(Error), parse_tree: *const ParseResult, file_name: []const u8) !void {
+    const renderer: DiagRenderer = .{
+        .source_file = parse_tree.source_file,
+        .tokens = parse_tree.ast.tokens,
+    };
+
+    // Diagnostics
+    try renderer.printErrors(errors, allocator, file_name);
+}
+
 pub const SourceFile = struct {
     source: []const u8,
     offsets: []usize,
 
-    pub fn getLineCol(self: *SourceFile, byte_pos: usize) struct { line: usize, col: usize } {
+    pub fn getLineCol(self: *const SourceFile, byte_pos: usize) struct { line: usize, col: usize } {
         const offsets = self.offsets;
         var low: usize = 0;
         var high: usize = offsets.len;
@@ -85,7 +96,7 @@ pub const SourceFile = struct {
         return .{ .line = line, .col = col };
     }
 
-    pub fn getLineSlice(self: *SourceFile, byte_pos: usize) []const u8 {
+    pub fn getLineSlice(self: *const SourceFile, byte_pos: usize) []const u8 {
         var pos = byte_pos;
 
         if (pos >= self.source.len and self.source.len > 0) {
@@ -128,8 +139,8 @@ pub const DiagRenderer = struct {
     //      | ^
     //
     pub fn printErrors(
-        self: *DiagRenderer,
-        errors: []const Error,
+        self: *const DiagRenderer,
+        errors: *std.ArrayList(Error),
         allocator: Allocator,
         file_name: []const u8,
     ) !void {
@@ -137,7 +148,7 @@ pub const DiagRenderer = struct {
         defer alloc_write.deinit();
         const writer = &alloc_write.writer;
 
-        for (errors) |err| {
+        for (errors.items) |err| {
             const token = self.tokens.get(err.token_pos);
             try self.errorMessage(writer, err);
             const pos = self.source_file.getLineCol(token.start);
@@ -169,7 +180,7 @@ pub const DiagRenderer = struct {
     // TODO: Create a lexeme function for token
     // Many tokens can be determined entirely by their tag.
     // Then use that []const u8 value and print it out.
-    fn errorMessage(self: *DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
+    fn errorMessage(self: *const DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
         const str = self.source_file.source[token.start..token.end];
         switch (err.tag) {

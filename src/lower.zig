@@ -45,51 +45,35 @@ pub fn deinit(low: *Lower, allocator: Allocator) void {
     low.pool.deinit(allocator);
 }
 
-// TODO: Reduce the amount of parameters this takes.
-// Also, make sure that after parsing, AST can no longer be modified.
-// The reason why I use *const AST is using a local AST copies ALOT of values.
-pub fn lower(allocator: Allocator, parse_tree: *ParseResult, ast: *const Ast, errors: *Errors, file_name: []const u8) !void {
-    var low = try sem.analyze(allocator, ast, errors);
+pub fn lower(allocator: Allocator, parse_tree: ParseResult, file_name: []const u8) !void {
+    var low = try sem.analyze(allocator, &parse_tree, file_name);
     defer low.deinit(allocator);
 
     // The AST -> IR lowering process assumes an AST
     // does not have any parse or syntax errors.
     // If there is exist an error,
     // we halt the entire program and return all errors found.
-    if (errors.items.len > 0)
-        return printErrors(parse_tree, allocator, file_name);
-
-    var diaIR: DiaIR = .{
-        .allocator = allocator,
-        .ast = ast,
-        .lower = &low,
-    };
-    defer diaIR.deinit();
-
-    // AST -> IR
-    try diaIR.generate();
-
-    // Optimization IR here
-    // TODO: Decide whether I should use toOwnSlice() on extra.
-    var opt: Optimize = .{
-        .allocator = allocator,
-        .instructions = try diaIR.instructions.toOwnedSlice(allocator),
-        .extra = try diaIR.extra.toOwnedSlice(allocator),
-        .lower = &low,
-    };
-    defer opt.deinit();
-    try opt.optimizeRoot();
-}
-
-fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {
-    const errors = try parse_tree.errors.toOwnedSlice(allocator);
-    defer allocator.free(errors);
-
-    var renderer: DiagRenderer = .{
-        .source_file = parse_tree.source_file,
-        .tokens = parse_tree.ast.tokens,
-    };
-
-    // Diagnostics
-    try renderer.printErrors(errors, allocator, file_name);
+    // if (errors.items.len > 0)
+    //     return printErrors(parse_tree, allocator, file_name);
+    //
+    // var diaIR: DiaIR = .{
+    //     .allocator = allocator,
+    //     .ast = ast,
+    //     .lower = &low,
+    // };
+    // defer diaIR.deinit();
+    //
+    // // AST -> IR
+    // try diaIR.generate();
+    //
+    // // Optimization IR here
+    // // TODO: Decide whether I should use toOwnSlice() on extra.
+    // var opt: Optimize = .{
+    //     .allocator = allocator,
+    //     .instructions = try diaIR.instructions.toOwnedSlice(allocator),
+    //     .extra = try diaIR.extra.toOwnedSlice(allocator),
+    //     .lower = &low,
+    // };
+    // defer opt.deinit();
+    // try opt.optimizeRoot();
 }

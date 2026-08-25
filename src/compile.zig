@@ -18,15 +18,16 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
 
     // Generate AST from source
     // TODO: Make sure to free parse_tree AFTER code optimization is complete.
-    var parse_tree = try tree.parse(allocator, source);
+    var parse_tree = tree.parse(allocator, source, file_name) catch |err| {
+        if (err == error.ParseError) return;
+        return err;
+    };
     defer parse_tree.deinit(allocator);
 
-    if (parse_tree.errors.items.len > 0)
-        return printErrors(&parse_tree, allocator, file_name);
-
-    try lower_ir.lower(allocator, &parse_tree, &parse_tree.ast, &parse_tree.errors, file_name);
-
-    try printErrors(&parse_tree, allocator, file_name);
+    lower_ir.lower(allocator, parse_tree, file_name) catch |err| {
+        if (err == error.SemanticError) return;
+        return err;
+    };
 }
 
 /// Make sure to free the []const u8 result!!!
@@ -53,17 +54,4 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     }
 
     return source;
-}
-
-fn printErrors(parse_tree: *ParseResult, allocator: Allocator, file_name: []const u8) !void {
-    const errors = try parse_tree.errors.toOwnedSlice(allocator);
-    defer allocator.free(errors);
-
-    var renderer: DiagRenderer = .{
-        .source_file = parse_tree.source_file,
-        .tokens = parse_tree.ast.tokens,
-    };
-
-    // Diagnostics
-    try renderer.printErrors(errors, allocator, file_name);
 }

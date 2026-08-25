@@ -32,6 +32,12 @@ extra_data: std.ArrayList(u32) = .empty,
 errors: std.ArrayList(AstError) = .empty,
 token_pos: u32 = 0,
 
+pub fn deinit(p: *Parser) void {
+    p.nodes.deinit(p.allocator);
+    p.extra_data.deinit(p.allocator);
+    p.errors.deinit(p.allocator);
+}
+
 fn reportUnexpected(p: *Parser, tag: AstError.Tag) !void {
     try p.errors.append(p.allocator, .{
         .token_pos = p.token_pos,
