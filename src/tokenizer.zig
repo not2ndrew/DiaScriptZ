@@ -68,7 +68,6 @@ fn findStr(self: *Tokenizer) !Token {
                 }
             },
             '\n' => {
-                try self.offsets.append(self.allocator, self.index);
                 self.mode = .normal;
                 self.line_start = true;
                 break;

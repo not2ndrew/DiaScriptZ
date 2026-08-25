@@ -129,9 +129,12 @@ fn addSymbol(sem: *Semantic, symbol: Symbol) !SymbolId {
     return idx;
 }
 
-fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId, token_pos: TokenIndex) !void {
-    if (sem.symbol_table.contains(ident_id))
-        return sem.report(token_pos, .ident_mismatch);
+fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId) bool {
+    if (sem.symbol_table.contains(ident_id) or sem.label_table.contains(ident_id)) {
+        return true;
+    }
+
+    return false;
 }
 
 // The last node of a post-traversal list
@@ -212,16 +215,6 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
 
             count += 1;
 
-            // TODO: This points incorrectly.
-            // * Option 1
-            // * Option 2
-            // * Option 3
-            // * Option 4
-            // * Option 5
-            // script.txt:9:1 error: Too many choices in a block
-            //      |
-            //    9 | * Option 5
-            //      | ^
             if (count > MAX_NUM_CHOICES_IN_BLOCK) {
                 try sem.report(choice_node.token_pos, .too_many_choices);
             }
@@ -242,13 +235,13 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
 
 fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
+    // Choice is handled in visitStmtList
     return switch (node.tag) {
         .declar_stmt => sem.visitVarDecl(node),
         .assign, .plus_equal, .minus_equal, .mult_equal, .div_equal
         => sem.visitAssign(node),
         .if_stmt => sem.visitIfStmt(node),
         .dialogue => sem.visitDialogue(node),
-        // Choice is handled in visitStmtList
         .label => sem.visitLabel(node),
         else => sem.report(node.token_pos, .unexpected_token),
     };
@@ -268,8 +261,8 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const name = sem.ast.tokenSlice(pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
 
-    // TODO: Force checkSymbolLabelConflict to return an error.
-    // try sem.checkSymbolLabelConflict(ident_id, pos);
+    if (sem.checkSymbolLabelConflict(ident_id))
+        return sem.report(pos, .ident_mismatch);
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
@@ -415,7 +408,8 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const name = sem.ast.tokenSlice(token_pos);
 
     const ident_id = try sem.interner.intern(sem.allocator, name);
-    try sem.checkSymbolLabelConflict(ident_id, token_pos);
+    if (sem.checkSymbolLabelConflict(ident_id))
+        return sem.report(token_pos, .ident_mismatch);
 
     var symbol_id: SymbolId = undefined;
 
@@ -500,7 +494,8 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     if (sem.scope_stack.items.len != 0)
         return sem.report(token_pos, .invalid_label_scope);
 
-    try sem.checkSymbolLabelConflict(ident_id, token_pos);
+    if (sem.checkSymbolLabelConflict(ident_id))
+        return sem.report(token_pos, .ident_mismatch);
 
     const entity = try sem.label_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing)
