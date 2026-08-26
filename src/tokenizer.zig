@@ -39,7 +39,6 @@ fn skipWhiteSpace(self: *Tokenizer) !void {
             ' ', '\r', '\t' => self.index += 1,
             '\n' => {
                 if (self.insert_semi) return;
-                try self.offsets.append(self.allocator, self.index);
                 self.index += 1;
                 self.line_start = true;
                 self.mode = .normal;

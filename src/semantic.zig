@@ -29,7 +29,7 @@ const AstError = diag.Error;
 const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
-const MAX_NUM_CHOICES_IN_BLOCK = 4;
+pub const MAX_NUM_CHOICES = 4;
 const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
 const LabelTable = std.array_hash_map.Auto(IdentId, void);
 
@@ -215,7 +215,7 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
 
             count += 1;
 
-            if (count > MAX_NUM_CHOICES_IN_BLOCK) {
+            if (count > MAX_NUM_CHOICES) {
                 try sem.report(choice_node.token_pos, .too_many_choices);
             }
 
@@ -408,7 +408,7 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const name = sem.ast.tokenSlice(token_pos);
 
     const ident_id = try sem.interner.intern(sem.allocator, name);
-    if (sem.checkSymbolLabelConflict(ident_id))
+    if (sem.label_table.contains(ident_id))
         return sem.report(token_pos, .ident_mismatch);
 
     var symbol_id: SymbolId = undefined;
