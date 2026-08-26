@@ -194,11 +194,11 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         // Comparison IR
         .if_stmt => try ir.reduceIfStmt(node),
 
-        .stmt_block, => {
-            const range = node.data.range;
-            const block_range = try ir.reduceBlock(range.start, range.len);
-            return ir.appendInst(.block, node.token_pos, block_range);
-        },
+        // .stmt_block, => {
+        //     const range = node.data.range;
+        //     const block_range = try ir.reduceBlock(range.start, range.len);
+        //     return ir.appendInst(.block, node.token_pos, block_range);
+        // },
         // Dialogue IR
         .dialogue => ir.reduceDialogue(node),
         .choice => ir.reduceChoice(node),
@@ -257,12 +257,16 @@ fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
     const condition = try ir.reduceCondition(condition_idx);
 
     const then_idx = ir.ast.extra_data[start + 1];
-    const then_block = try ir.reduceStmt(then_idx);
+    const then_node = ir.ast.nodes.get(then_idx);
+    const t_range = then_node.data.range;
+    const then_block = ir.reduceBlock(t_range.start, t_range.len);
 
     const else_idx = ir.ast.extra_data[start + 2];
     var else_block: u32 = invalid_node;
     if (else_idx != invalid_node) {
-        else_block = try ir.reduceStmt(else_idx);
+        const else_node = ir.ast.nodes.get(else_idx);
+        const e_range = else_node.data.range;
+        else_block = try ir.reduceBlock(e_range.start, e_range.len);
     }
 
     stmts.appendAssumeCapacity(condition);

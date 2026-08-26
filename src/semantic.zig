@@ -198,8 +198,9 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
             continue;
         }
 
-        const choice_start = i;
-        var count: u8 = 0;
+        var count: u32 = 0;
+        var last_choice_pos: TokenIndex = 0;
+
         // Handle choice blocks here
         while (i < end) : (i += 1) {
             const choice_idx = sem.ast.extra_data[i];
@@ -209,22 +210,13 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
                 break;
 
             count += 1;
-
-            if (count > MAX_NUM_CHOICES) {
-                try sem.report(choice_node.token_pos, .too_many_choices);
-            }
+            last_choice_pos = choice_node.token_pos;
 
             try sem.visitChoice(choice_node);
-            try sem.choices.append(sem.allocator, choice_start);
         }
 
-        // Singular choices do not require a block.
-        if (i >= 2) {
-            try sem.choice_span.append(sem.allocator, .{
-                .start = choice_start,
-                .len = i
-            });
-        }
+        if (count > MAX_NUM_CHOICES)
+            try sem.report(last_choice_pos, .too_many_choices);
     }
 }
 
