@@ -63,15 +63,15 @@ pub fn lower(allocator: Allocator, parse_tree: ParseResult, file_name: []const u
 
     // AST -> IR
     try diaIR.generate();
-    //
-    // // Optimization IR here
-    // // TODO: Decide whether I should use toOwnSlice() on extra.
-    // var opt: Optimize = .{
-    //     .allocator = allocator,
-    //     .instructions = try diaIR.instructions.toOwnedSlice(allocator),
-    //     .extra = try diaIR.extra.toOwnedSlice(allocator),
-    //     .lower = &low,
-    // };
-    // defer opt.deinit();
-    // try opt.optimizeRoot();
+
+    // Optimization IR here
+    // TODO: Decide whether I should use toOwnSlice() on extra.
+    var opt: Optimize = .{
+        .allocator = allocator,
+        .instructions = try diaIR.instructions.toOwnedSlice(allocator),
+        .extra = try diaIR.extra.toOwnedSlice(allocator),
+        .lower = &low,
+    };
+    defer opt.deinit();
+    try opt.optimizeRoot();
 }

@@ -146,6 +146,7 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     for (new_set.instructions) |inst| {
         std.debug.print("Tag: {t}\n", .{inst.tag});
     }
+
     // leave this for now.
     opt.allocator.free(new_set.instructions);
     opt.allocator.free(new_set.extra);
@@ -167,6 +168,10 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
         .branch => opt.foldBranch(inst_idx),
         .dialogue, .choice => opt.foldDialogue(inst),
         .label => opt.foldLabel(inst),
+        .choice_block => {
+            const range = inst.data.range;
+            try opt.block(range.start, range.len);
+        },
         else => {},
     };
 }
@@ -431,7 +436,16 @@ const DCE = struct {
                 const start = range.start;
                 const end = start + range.len;
                 for (start + 1 .. end) |idx| {
-                    const stmt_idx: InstId = @intCast(idx);
+                    const stmt_idx: InstId = dce.opt.extra[idx];
+                    try dce.collectStmtUses(stmt_idx);
+                }
+            },
+            .choice_block => {
+                const range = inst.data.range;
+                const start = range.start;
+                const end = start + range.len;
+                for (start .. end) |idx| {
+                    const stmt_idx: InstId = dce.opt.extra[idx];
                     try dce.collectStmtUses(stmt_idx);
                 }
             },
@@ -482,7 +496,7 @@ const DCE = struct {
                 if (dce.used_symbols.contains(store.symbol_id))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
-            .branch => {
+            .branch, .choice_block => {
                 const range = inst.data.range;
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
                 try dce.markBlock(range.start, range.len);

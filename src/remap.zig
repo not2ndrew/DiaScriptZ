@@ -121,6 +121,11 @@ fn rebuildInst(re: *Remap, old_id: InstId) InstId {
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         .label => re.rebuildLabel(old_id),
+        // .choice_block => {
+        //     const range = inst.data.range;
+        //     const end = range.start + range.len;
+        //     re.rebuildBlock(old_id, .choice_block, inst.token_pos, range.start, end);
+        // },
 
         .add, .sub, .mul, .div,
         .eql, .not_eql,
@@ -199,6 +204,12 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     const old_end = old_start + range.len;
     const new_start: InstId = @intCast(re.new_extra.items.len);
 
+    // TODO: Need to remap speaker from old to new.
+    // const old_speaker_id = re.opt.extra[old_start];
+    // const old_speaker = re.opt.instructions[old_speaker_id];
+    //
+    // const new_speaker_id: InstId = @intCast(re.new_instructions.items.len);
+
     for (old_start + 1 .. old_end - 1) |idx| {
         const stmt_idx = re.opt.extra[idx];
         
@@ -230,10 +241,16 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
 fn rebuildLabel(re: *Remap, old_id: InstId) void {
     const old = re.opt.instructions[old_id];
     const range = old.data.range;
-    const old_start = range.start;
-    const old_end = old_start + range.len;
 
-    _ = re.rebuildBlock(old_id, .label, old.token_pos, old_start + 1, old_end);
+    // Skip the first
+    for (range.start + 1 .. range.start + range.len) |i| {
+        const stmt_id = re.opt.extra[i];
+
+        if (!re.opt.live.contains(stmt_id))
+            continue;
+
+        _ = re.rebuildInst(stmt_id);
+    }
 }
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
