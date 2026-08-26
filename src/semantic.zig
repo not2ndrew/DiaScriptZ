@@ -82,9 +82,6 @@ unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
 resolved_jumps: std.ArrayList(IdentId) = .empty,
 initializing_symbol: ?SymbolId = null,
 
-choices: std.ArrayList(NodeIndex) = .empty,
-choice_span: std.ArrayList(Span) = .empty,
-
 pub fn deinit(sem: *Semantic) void {
     sem.errors.deinit(sem.allocator);
     sem.symbol_table.deinit(sem.allocator);
@@ -96,8 +93,6 @@ pub fn deinit(sem: *Semantic) void {
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
     sem.resolved_jumps.deinit(sem.allocator);
-    sem.choices.deinit(sem.allocator);
-    sem.choice_span.deinit(sem.allocator);
 }
 
 fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {

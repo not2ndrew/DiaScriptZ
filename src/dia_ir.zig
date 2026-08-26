@@ -170,8 +170,7 @@ fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!Inst.Data {
     const end = start + len;
 
     for (start..end) |idx| {
-        const idx_cast: u32 = @intCast(idx);
-        const stmt_idx = ir.ast.extra_data[idx_cast];
+        const stmt_idx = ir.ast.extra_data[idx];
         const inst_idx = try ir.reduceStmt(stmt_idx);
         stmts.appendAssumeCapacity(inst_idx);
     }
