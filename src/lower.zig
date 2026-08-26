@@ -53,18 +53,16 @@ pub fn lower(allocator: Allocator, parse_tree: ParseResult, file_name: []const u
     // does not have any parse or syntax errors.
     // If there is exist an error,
     // we halt the entire program and return all errors found.
-    // if (errors.items.len > 0)
-    //     return printErrors(parse_tree, allocator, file_name);
-    //
-    // var diaIR: DiaIR = .{
-    //     .allocator = allocator,
-    //     .ast = ast,
-    //     .lower = &low,
-    // };
-    // defer diaIR.deinit();
-    //
-    // // AST -> IR
-    // try diaIR.generate();
+
+    var diaIR: DiaIR = .{
+        .allocator = allocator,
+        .ast = &parse_tree.ast,
+        .lower = &low,
+    };
+    defer diaIR.deinit();
+
+    // AST -> IR
+    try diaIR.generate();
     //
     // // Optimization IR here
     // // TODO: Decide whether I should use toOwnSlice() on extra.

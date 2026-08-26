@@ -20,9 +20,6 @@ const IdentId = in.IdentId;
 const InternPool = in.InternPool;
 const Span = in.Span;
 
-const Nodes = std.MultiArrayList(Node).Slice;
-const Insts = std.ArrayList(Inst);
-
 const Error = Allocator.Error;
 
 pub const InstId = u32;
@@ -44,6 +41,7 @@ pub const Inst = struct {
         // are handled in Semantic.
         store,
         block,
+        choice_block,
 
         // Arithmetic
         add,
@@ -98,7 +96,7 @@ allocator: Allocator,
 ast: *const Ast,
 lower: *const Lower,
 
-instructions: Insts = .empty,
+instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(InstId) = .empty,
 symbol_ref: SymbolId = 0,
 label_ref: IdentId = 0,
@@ -120,8 +118,9 @@ pub fn generate(ir: *DiaIR) Error!void {
     // Root node in a post-traversal order is the last node.
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
-    const root_range = try ir.reduceBlock(range.start, range.len);
-    _ = ir.appendInst(.block, 0, root_range);
+    _ = try ir.reduceBlock(range.start, range.len);
+    // const root_range = try ir.reduceBlock(range.start, range.len);
+    // _ = ir.appendInst(.block, 0, root_range);
 
     try ir.instructions.shrinkToLen(allocator);
     try ir.extra.shrinkToLen(allocator);
@@ -162,23 +161,83 @@ fn nextText(ir: *DiaIR) u32 {
     return len;
 }
 
-fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!Inst.Data {
+fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!InstId {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
 
-    try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
+    var i: u32 = start;
     const end = start + len;
 
-    for (start..end) |idx| {
-        const stmt_idx = ir.ast.extra_data[idx];
-        const inst_idx = try ir.reduceStmt(stmt_idx);
-        stmts.appendAssumeCapacity(inst_idx);
+    while (i < end) {
+        const node_idx = ir.ast.extra_data[i];
+        const node = ir.ast.nodes.get(node_idx);
+
+        if (node.tag != .choice) {
+            const inst = try ir.reduceStmt(node_idx);
+            try stmts.append(ir.allocator, inst);
+
+            i += 1;
+            continue;
+        }
+
+        // Handle choices
+        const choice_count = ir.countChoices(i, end);
+        if (choice_count != 1) {
+            const choice_block = try ir.reduceChoiceBlock(i, choice_count);
+            try stmts.append(ir.allocator, choice_block);
+        } else {
+            const choice = try ir.reduceChoice(node);
+            try stmts.append(ir.allocator, choice);
+        }
+
+        i += choice_count;
     }
 
     const range_start: u32 = @intCast(ir.extra.items.len);
-    ir.extra.appendSliceAssumeCapacity(stmts.items);
+    try ir.extra.appendSlice(ir.allocator, stmts.items);
 
-    return .{ .range = .{ .start = range_start, .len = len }};
+    const range_len: u32 = @intCast(ir.extra.items.len - range_start);
+
+    return ir.appendInst(.block, 0, .{
+        .range = .{ .start = range_start, .len = range_len }
+    });
+}
+
+fn countChoices(ir: *DiaIR, start: u32, end: u32) InstId {
+    var i = start;
+    while (i < end) : (i += 1) {
+        const node_idx = ir.ast.extra_data[i];
+        const node = ir.ast.nodes.get(node_idx);
+
+        if (node.tag != .choice) break;
+    }
+
+    return i - start;
+}
+
+fn reduceChoiceBlock(ir: *DiaIR, start: u32, len: u32) !InstId {
+    var choices: std.ArrayList(InstId) = .empty;
+    defer choices.deinit(ir.allocator);
+
+    try choices.ensureTotalCapacityPrecise(ir.allocator, len);
+
+    const first_choice = ir.ast.nodes.get(ir.ast.extra_data[start]);
+
+    const end = start + len;
+    for (start .. end) |idx| {
+        const choice_idx = ir.ast.extra_data[idx];
+        const choice_node = ir.ast.nodes.get(choice_idx);
+        const choice = try ir.reduceChoice(choice_node);
+
+        choices.appendAssumeCapacity(choice);
+    }
+
+    const extra_start: InstId = @intCast(ir.extra.items.len);
+    try ir.extra.appendSlice(ir.allocator, choices.items);
+
+    return ir.appendInst(.choice_block, first_choice.token_pos, .{
+        .range = .{ .start = extra_start, .len = len }
+    });
 }
 
 fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
@@ -194,11 +253,6 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         // Comparison IR
         .if_stmt => try ir.reduceIfStmt(node),
 
-        // .stmt_block, => {
-        //     const range = node.data.range;
-        //     const block_range = try ir.reduceBlock(range.start, range.len);
-        //     return ir.appendInst(.block, node.token_pos, block_range);
-        // },
         // Dialogue IR
         .dialogue => ir.reduceDialogue(node),
         .choice => ir.reduceChoice(node),
@@ -259,7 +313,7 @@ fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
     const then_idx = ir.ast.extra_data[start + 1];
     const then_node = ir.ast.nodes.get(then_idx);
     const t_range = then_node.data.range;
-    const then_block = ir.reduceBlock(t_range.start, t_range.len);
+    const then_block = try ir.reduceBlock(t_range.start, t_range.len);
 
     const else_idx = ir.ast.extra_data[start + 2];
     var else_block: u32 = invalid_node;
