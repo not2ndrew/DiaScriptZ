@@ -86,7 +86,7 @@ fn rebuildBlock(re: *Remap, old_id: InstId, comptime tag: Inst.Tag, token_pos: T
         if (!re.opt.live.contains(stmt_idx))
             continue;
 
-        const new_stmt = re.rebuildInst(stmt_idx);
+        const new_stmt = re.rebuildStmt(stmt_idx);
         re.new_extra.appendAssumeCapacity(new_stmt);
     }
 
@@ -110,35 +110,51 @@ fn rebuildBlock(re: *Remap, old_id: InstId, comptime tag: Inst.Tag, token_pos: T
     return new_id;
 }
 
-fn rebuildInst(re: *Remap, old_id: InstId) InstId {
+fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
     const new_id: InstId = @intCast(re.new_instructions.items.len);
     re.old_to_new_inst.items[old_id] = new_id;
 
-    var inst = re.opt.instructions[old_id];
+    const inst = re.opt.instructions[old_id];
 
     switch (inst.tag) {
-        .store => inst.data.store.value = re.rebuildInst(inst.data.store.value),
+        .store => re.rebuildStore(old_id),
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         .label => re.rebuildLabel(old_id),
-        // .choice_block => {
-        //     const range = inst.data.range;
-        //     const end = range.start + range.len;
-        //     re.rebuildBlock(old_id, .choice_block, inst.token_pos, range.start, end);
-        // },
+        else => {},
+    }
 
+    return new_id;
+}
+
+// No need to remap symbol since it is stored in SymbolId.
+fn rebuildStore(re: *Remap, old_id: InstId) void {
+    const inst = re.opt.instructions[old_id];
+    re.opt.instructions[old_id].data.store.value = re.rebuildExpr(inst.data.store.value);
+
+    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+}
+
+fn rebuildExpr(re: *Remap, expr: InstId) InstId {
+    const old_expr = re.opt.instructions[expr];
+    const new_expr: InstId = @intCast(re.new_instructions.items.len);
+
+    switch (old_expr.tag) {
+        .load => re.opt.instructions[expr].data.load = new_expr,
         .add, .sub, .mul, .div,
         .eql, .not_eql,
         .less, .less_or_eql,
         .greater, .greater_or_eql,
         .bool_and, .bool_or => {
-            inst.data.binary.lhs = re.rebuildInst(inst.data.binary.lhs);
-            inst.data.binary.rhs = re.rebuildInst(inst.data.binary.rhs);
+            const binary = old_expr.data.binary;
+            re.opt.instructions[expr].data.binary.lhs = re.rebuildExpr(binary.lhs);
+            re.opt.instructions[expr].data.binary.rhs = re.rebuildExpr(binary.rhs);
         },
         else => {},
     }
 
-    return new_id;
+    re.old_to_new_inst.items[expr] = new_expr;
+    return new_expr;
 }
 
 fn rebuildBranch(re: *Remap, old_id: InstId) void {
@@ -158,7 +174,7 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
     const then_id = re.opt.extra[old_start + 1];
     const else_id = re.opt.extra[old_start + 2];
 
-    const new_cond = re.rebuildInst(cond_id);
+    const new_cond = re.rebuildStmt(cond_id);
 
     const then_block = re.opt.instructions[then_id];
     const t_range = then_block.data.range;
@@ -197,6 +213,7 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
     re.new_instructions.appendAssumeCapacity(new_branch);
 }
 
+// TODO: Need to remap speaker from old to new.
 fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     const old = re.opt.instructions[old_id];
     const range = old.data.range;
@@ -204,23 +221,17 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     const old_end = old_start + range.len;
     const new_start: InstId = @intCast(re.new_extra.items.len);
 
-    // TODO: Need to remap speaker from old to new.
-    // const old_speaker_id = re.opt.extra[old_start];
-    // const old_speaker = re.opt.instructions[old_speaker_id];
-    //
-    // const new_speaker_id: InstId = @intCast(re.new_instructions.items.len);
-
     for (old_start + 1 .. old_end - 1) |idx| {
         const stmt_idx = re.opt.extra[idx];
         
-        const new_stmt = re.rebuildInst(stmt_idx);
+        const new_stmt = re.rebuildStmt(stmt_idx);
         re.new_extra.appendAssumeCapacity(new_stmt);
     }
 
     const jump_id = re.opt.extra[old_end - 1];
     if (jump_id != invalid_inst) {
         const jump = re.opt.instructions[jump_id];
-        const new_id = re.rebuildInst(jump.data.jump);
+        const new_id = re.rebuildStmt(jump.data.jump);
         re.new_extra.appendAssumeCapacity(new_id);
     } else {
         re.new_extra.appendAssumeCapacity(invalid_inst);
@@ -249,7 +260,7 @@ fn rebuildLabel(re: *Remap, old_id: InstId) void {
         if (!re.opt.live.contains(stmt_id))
             continue;
 
-        _ = re.rebuildInst(stmt_id);
+        _ = re.rebuildStmt(stmt_id);
     }
 }
 
@@ -263,6 +274,6 @@ fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
         if (!re.opt.live.contains(stmt_id))
             continue;
 
-        _ = re.rebuildInst(stmt_id);
+        _ = re.rebuildStmt(stmt_id);
     }
 }

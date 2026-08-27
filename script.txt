@@ -1,1 +1,5 @@
-A: Hello World
+var y = 0
+var x = 1 + y
+// This should be removed by optimizer via DCE.
+// It's also a temp holder so I can see var x in debug print.
+var z = x
