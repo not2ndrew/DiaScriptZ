@@ -143,10 +143,6 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     // Pass 3: Recreate Instructions.
     const new_set = try opt.rebuildBlocksAndExtra(root_idx);
 
-    for (new_set.instructions) |inst| {
-        std.debug.print("Tag: {t}\n", .{inst.tag});
-    }
-
     // leave this for now.
     opt.allocator.free(new_set.instructions);
     opt.allocator.free(new_set.extra);
@@ -172,7 +168,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
             const range = inst.data.range;
             try opt.block(range.start, range.len);
         },
-        else => {},
+        else => unreachable,
     };
 }
 
@@ -421,10 +417,12 @@ const DCE = struct {
                 const range = inst.data.range;
                 const start = range.start;
                 const end = start + range.len;
-                const jump = dce.opt.extra[end];
+                const jump = dce.opt.extra[end - 1];
 
-                if (jump != invalid_inst)
-                    try dce.used_labels.put(dce.opt.allocator, jump, {});
+                if (jump != invalid_inst) {
+                    const jump_id = dce.opt.instructions[jump].data.jump;
+                    try dce.used_labels.put(dce.opt.allocator, jump_id, {});
+                }
 
                 for (start + 1 .. end - 1) |idx| {
                     const str_idx = dce.opt.extra[idx];
@@ -518,24 +516,18 @@ const DCE = struct {
             },
             .label_block => {
                 const range = inst.data.range;
+                const label_id = dce.opt.extra[range.start];
+                const label = dce.opt.instructions[label_id];
 
-                for (range.start .. range.start + range.len) |idx| {
+                if (dce.used_labels.contains(label.data.label))
+                    try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
+                else
+                    return;
+
+                for (range.start + 1 .. range.start + range.len) |idx| {
                     const stmt_idx = dce.opt.extra[idx];
-                    const label_inst = dce.opt.instructions[stmt_idx];
-                    std.debug.print("label_inst tag: {t}\n", .{label_inst.tag});
+                    try dce.markInst(stmt_idx);
                 }
-                // const label_id = dce.opt.extra[range.start];
-                // const label = dce.opt.instructions[label_id];
-                //
-                // if (dce.used_labels.contains(label.data.label))
-                //     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
-                // else
-                //     return;
-                //
-                // for (range.start + 1 .. range.start + range.len) |idx| {
-                //     const stmt_idx = dce.opt.extra[idx];
-                //     try dce.markInst(stmt_idx);
-                // }
             },
             else => {},
         }

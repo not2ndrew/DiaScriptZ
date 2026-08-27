@@ -120,7 +120,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         .label_block => re.rebuildLabel(old_id),
-        else => {},
+        else => unreachable,
     }
 
     re.old_to_new_inst.items[old_id] = new_id;
@@ -254,20 +254,19 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     re.rebuildOptionalExpr(old_jump);
 
     const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
-    var new_dialogue: Inst = old;
-    new_dialogue.data.range = .{
-        .start = new_start,
-        .len = new_len,
-    };
     const new_id: InstId = @intCast(re.new_instructions.items.len);
 
+    re.opt.instructions[old_id].data.range.start = new_start;
+    re.opt.instructions[old_id].data.range.len = new_len;
+
     re.old_to_new_inst.items[old_id] = new_id;
-    re.new_instructions.appendAssumeCapacity(new_dialogue);
+    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
 }
 
 fn rebuildLabel(re: *Remap, old_id: InstId) void {
     const old = re.opt.instructions[old_id];
     const range = old.data.range;
+    const new_start: InstId = @intCast(re.new_extra.items.len);
 
     const label_id = re.opt.extra[range.start];
     const label = re.rebuildExpr(label_id);
@@ -284,6 +283,15 @@ fn rebuildLabel(re: *Remap, old_id: InstId) void {
         const new_stmt = re.rebuildStmt(stmt_id);
         re.new_extra.appendAssumeCapacity(new_stmt);
     }
+
+    const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
+    const new_id: InstId = @intCast(re.new_instructions.items.len);
+
+    re.opt.instructions[old_id].data.range.start = new_start;
+    re.opt.instructions[old_id].data.range.len = new_len;
+
+    re.old_to_new_inst.items[old_id] = new_id;
+    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
 }
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {

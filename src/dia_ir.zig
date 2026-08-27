@@ -417,19 +417,16 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
 
     const label_idx = ir.ast.extra_data[start];
     const label_node = ir.ast.nodes.get(label_idx);
-    const extra_start: u32 = @intCast(ir.extra.items.len);
 
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
-
-    try stmts.ensureTotalCapacityPrecise(ir.allocator, len);
 
     const ident_id = ir.nextLabel();
     const label_inst = ir.appendInst(.label, label_node.token_pos, .{
         .label = ident_id,
     });
 
-    stmts.appendAssumeCapacity(label_inst);
+    try stmts.append(ir.allocator, label_inst);
 
     var i: u32 = start + 1;
     const end = start + len;
@@ -465,7 +462,7 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     const range_len: u32 = @intCast(ir.extra.items.len - range_start);
 
     return ir.appendInst(.label_block, node.token_pos, .{
-        .range = .{ .start = extra_start, .len = range_len }
+        .range = .{ .start = range_start, .len = range_len }
     });
 }
 
