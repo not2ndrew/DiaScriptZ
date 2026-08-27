@@ -167,7 +167,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
         .store => opt.storeVar(inst_idx),
         .branch => opt.foldBranch(inst_idx),
         .dialogue, .choice => opt.foldDialogue(inst),
-        .label => opt.foldLabel(inst),
+        .label_block => opt.foldLabel(inst),
         .choice_block => {
             const range = inst.data.range;
             try opt.block(range.start, range.len);
@@ -431,7 +431,7 @@ const DCE = struct {
                     try dce.collectUses(str_idx);
                 }
             },
-            .label => {
+            .label_block => {
                 const range = inst.data.range;
                 const start = range.start;
                 const end = start + range.len;
@@ -516,19 +516,26 @@ const DCE = struct {
             .dialogue, .choice => {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
-            .label => {
+            .label_block => {
                 const range = inst.data.range;
-                const label_id = dce.opt.extra[range.start];
 
-                if (dce.used_symbols.contains(label_id))
-                    try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
-                else
-                    return;
-
-                for (range.start + 1 .. range.start + range.len) |idx| {
+                for (range.start .. range.start + range.len) |idx| {
                     const stmt_idx = dce.opt.extra[idx];
-                    try dce.markInst(stmt_idx);
+                    const label_inst = dce.opt.instructions[stmt_idx];
+                    std.debug.print("label_inst tag: {t}\n", .{label_inst.tag});
                 }
+                // const label_id = dce.opt.extra[range.start];
+                // const label = dce.opt.instructions[label_id];
+                //
+                // if (dce.used_labels.contains(label.data.label))
+                //     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
+                // else
+                //     return;
+                //
+                // for (range.start + 1 .. range.start + range.len) |idx| {
+                //     const stmt_idx = dce.opt.extra[idx];
+                //     try dce.markInst(stmt_idx);
+                // }
             },
             else => {},
         }

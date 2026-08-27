@@ -119,7 +119,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
         .store => re.rebuildStore(old_id),
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
-        // .label => re.rebuildLabel(old_id),
+        .label_block => re.rebuildLabel(old_id),
         else => {},
     }
 
@@ -150,7 +150,7 @@ fn rebuildExpr(re: *Remap, expr: InstId) InstId {
             re.opt.instructions[expr].data.binary.lhs = re.rebuildExpr(binary.lhs);
             re.opt.instructions[expr].data.binary.rhs = re.rebuildExpr(binary.rhs);
         },
-        .constant, .text => {},
+        .constant, .text, .label => {},
         else => unreachable,
     }
 
@@ -166,7 +166,8 @@ fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
         const old_expr = re.opt.instructions[extra_inst];
 
         switch (old_expr.tag) {
-            .speaker, .jump => re.opt.instructions[extra_inst].data.load = new_expr,
+            .speaker => re.opt.instructions[extra_inst].data.load = new_expr,
+            .jump => {},
             else => unreachable,
         }
 
@@ -264,20 +265,26 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     re.new_instructions.appendAssumeCapacity(new_dialogue);
 }
 
-// fn rebuildLabel(re: *Remap, old_id: InstId) void {
-//     const old = re.opt.instructions[old_id];
-//     const range = old.data.range;
-//
-//     // Skip the first
-//     for (range.start + 1 .. range.start + range.len) |i| {
-//         const stmt_id = re.opt.extra[i];
-//
-//         if (!re.opt.live.contains(stmt_id))
-//             continue;
-//
-//         _ = re.rebuildStmt(stmt_id);
-//     }
-// }
+fn rebuildLabel(re: *Remap, old_id: InstId) void {
+    const old = re.opt.instructions[old_id];
+    const range = old.data.range;
+
+    const label_id = re.opt.extra[range.start];
+    const label = re.rebuildExpr(label_id);
+
+    re.new_extra.appendAssumeCapacity(label);
+
+    // Skip the first
+    for (range.start + 1 .. range.start + range.len) |i| {
+        const stmt_id = re.opt.extra[i];
+
+        if (!re.opt.live.contains(stmt_id))
+            continue;
+
+        const new_stmt = re.rebuildStmt(stmt_id);
+        re.new_extra.appendAssumeCapacity(new_stmt);
+    }
+}
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
     const block_inst = re.opt.instructions[block_id];
@@ -289,6 +296,7 @@ fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
         if (!re.opt.live.contains(stmt_id))
             continue;
 
-        _ = re.rebuildStmt(stmt_id);
+        const new_stmt = re.rebuildStmt(stmt_id);
+        re.new_extra.appendAssumeCapacity(new_stmt);
     }
 }

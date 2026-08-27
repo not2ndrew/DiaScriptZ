@@ -1,4 +1,5 @@
-const x = 10
-if (x > 1) {
-   A: Hello World
-}
+A: Go here to the label name -> name
+
+~ name
+   A: Hello world
+end

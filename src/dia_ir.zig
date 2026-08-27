@@ -41,6 +41,7 @@ pub const Inst = struct {
         // are handled in Semantic.
         store,
         block,
+        label_block,
         choice_block,
 
         // Arithmetic
@@ -405,6 +406,8 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     return .{ .range = .{ .start = extra_start, .len = len }};
 }
 
+// TODO: reduceBlock and reduceLabel:
+// Try to find a helper function to prevent duplicate code.
 // label extra_data layout:
 // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
 fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
@@ -428,17 +431,41 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
 
     stmts.appendAssumeCapacity(label_inst);
 
+    var i: u32 = start + 1;
     const end = start + len;
-    for (start + 1 .. end) |idx| {
-        const ast_stmt = ir.ast.extra_data[idx];
-        const stmt_idx = try ir.reduceStmt(ast_stmt);
-        stmts.appendAssumeCapacity(stmt_idx);
+
+    while (i < end) {
+        const node_idx = ir.ast.extra_data[i];
+        const stmt_node = ir.ast.nodes.get(node_idx);
+
+        if (stmt_node.tag != .choice) {
+            const inst = try ir.reduceStmt(node_idx);
+            try stmts.append(ir.allocator, inst);
+
+            i += 1;
+            continue;
+        }
+
+        // Handle choices
+        const choice_count = ir.countChoices(i, end);
+        if (choice_count != 1) {
+            const choice_block = try ir.reduceChoiceBlock(i, choice_count);
+            try stmts.append(ir.allocator, choice_block);
+        } else {
+            const choice = try ir.reduceChoice(node);
+            try stmts.append(ir.allocator, choice);
+        }
+
+        i += choice_count;
     }
 
-    ir.extra.appendSliceAssumeCapacity(stmts.items);
+    const range_start: u32 = @intCast(ir.extra.items.len);
+    try ir.extra.appendSlice(ir.allocator, stmts.items);
 
-    return ir.appendInst(.label, node.token_pos, .{
-        .range = .{ .start = extra_start, .len = len }
+    const range_len: u32 = @intCast(ir.extra.items.len - range_start);
+
+    return ir.appendInst(.label_block, node.token_pos, .{
+        .range = .{ .start = extra_start, .len = range_len }
     });
 }
 
