@@ -417,7 +417,7 @@ const DCE = struct {
                         try dce.collectBlockUses(else_id);
                 }
             },
-            .dialogue => {
+            .dialogue, .choice => {
                 const range = inst.data.range;
                 const start = range.start;
                 const end = start + range.len;
@@ -498,8 +498,20 @@ const DCE = struct {
             },
             .branch, .choice_block => {
                 const range = inst.data.range;
+                const condition = dce.opt.extra[range.start];
+                const then_block = dce.opt.extra[range.start + 1];
+                const else_block = dce.opt.extra[range.start + 2];
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
-                try dce.markBlock(range.start, range.len);
+
+                try dce.markInst(condition);
+
+                const t_range = dce.opt.instructions[then_block].data.range;
+                try dce.markBlock(t_range.start, t_range.len);
+
+                if (else_block != invalid_inst) {
+                    const e_range = dce.opt.instructions[else_block].data.range;
+                    try dce.markBlock(e_range.start, e_range.len);
+                }
             },
             .dialogue, .choice => {
                 try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});

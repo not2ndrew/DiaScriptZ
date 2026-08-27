@@ -117,7 +117,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
 
     switch (inst.tag) {
         .store => re.rebuildStore(old_id),
-        // .branch => re.rebuildBranch(old_id),
+        .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         // .label => re.rebuildLabel(old_id),
         else => {},
@@ -177,61 +177,60 @@ fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
     }
 }
 
-// fn rebuildBranch(re: *Remap, old_id: InstId) void {
-//     // This is for compile time branch.
-//     if (re.opt.branch_result.get(old_id)) |block_id| {
-//         re.rebuildBlockContents(block_id);
-//         return;
-//     }
-//
-//     // This is for runtime branch.
-//     const old = re.opt.instructions[old_id];
-//     const range = old.data.range;
-//     const old_start = range.start;
-//
-//     const new_start: InstId = @intCast(re.new_extra.items.len);
-//     const cond_id = re.opt.extra[old_start];
-//     const then_id = re.opt.extra[old_start + 1];
-//     const else_id = re.opt.extra[old_start + 2];
-//
-//     const new_cond = re.rebuildStmt(cond_id);
-//
-//     const then_block = re.opt.instructions[then_id];
-//     const t_range = then_block.data.range;
-//     const new_then = re.rebuildBlock(
-//         then_id,
-//         .block,
-//         then_block.token_pos,
-//         t_range.start,
-//         t_range.start + t_range.len
-//     );
-//
-//     var new_else: InstId = invalid_inst;
-//     if (else_id != invalid_inst) {
-//         const else_block = re.opt.instructions[else_id];
-//         const e_range = else_block.data.range;
-//         new_else = re.rebuildBlock(
-//             else_id,
-//             .block,
-//             else_block.token_pos,
-//             e_range.start,
-//             e_range.start + e_range.len
-//         );
-//     }
-//
-//     re.new_extra.appendSliceAssumeCapacity(&[_]InstId{
-//         new_cond, new_then, new_else
-//     });
-//
-//     // A branch's length is always 3. No need to get a new len.
-//     var new_branch: Inst = old;
-//     new_branch.data.range.start = new_start;
-//
-//     const new_id: InstId = @intCast(re.new_instructions.items.len);
-//
-//     re.old_to_new_inst.items[old_id] = new_id;
-//     re.new_instructions.appendAssumeCapacity(new_branch);
-// }
+fn rebuildBranch(re: *Remap, old_id: InstId) void {
+    // This is for compile time branch.
+    if (re.opt.branch_result.get(old_id)) |block_id| {
+        re.rebuildBlockContents(block_id);
+        return;
+    }
+
+    // This is for runtime branch.
+    const old = re.opt.instructions[old_id];
+    const range = old.data.range;
+    const old_start = range.start;
+
+    const new_start: InstId = @intCast(re.new_extra.items.len);
+    const cond_id = re.opt.extra[old_start];
+    const then_id = re.opt.extra[old_start + 1];
+    const else_id = re.opt.extra[old_start + 2];
+
+    const new_cond = re.rebuildStmt(cond_id);
+
+    const then_block = re.opt.instructions[then_id];
+    const t_range = then_block.data.range;
+    const new_then = re.rebuildBlock(
+        then_id,
+        .block,
+        then_block.token_pos,
+        t_range.start,
+        t_range.start + t_range.len
+    );
+
+    var new_else: InstId = invalid_inst;
+    if (else_id != invalid_inst) {
+        const else_block = re.opt.instructions[else_id];
+        const e_range = else_block.data.range;
+        new_else = re.rebuildBlock(
+            else_id,
+            .block,
+            else_block.token_pos,
+            e_range.start,
+            e_range.start + e_range.len
+        );
+    }
+
+    re.new_extra.appendSliceAssumeCapacity(&[_]InstId{
+        new_cond, new_then, new_else
+    });
+
+    // A branch's length is always 3. No need to get a new len.
+    re.opt.instructions[old_id].data.range.start = new_start;
+
+    const new_id: InstId = @intCast(re.new_instructions.items.len);
+
+    re.old_to_new_inst.items[old_id] = new_id;
+    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+}
 
 fn rebuildDialogue(re: *Remap, old_id: InstId) void {
     const old = re.opt.instructions[old_id];
@@ -280,16 +279,16 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) void {
 //     }
 // }
 
-// fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
-//     const block_inst = re.opt.instructions[block_id];
-//     const range = block_inst.data.range;
-//
-//     for (range.start..range.start + range.len) |i| {
-//         const stmt_id = re.opt.extra[i];
-//
-//         if (!re.opt.live.contains(stmt_id))
-//             continue;
-//
-//         _ = re.rebuildStmt(stmt_id);
-//     }
-// }
+fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
+    const block_inst = re.opt.instructions[block_id];
+    const range = block_inst.data.range;
+
+    for (range.start..range.start + range.len) |i| {
+        const stmt_id = re.opt.extra[i];
+
+        if (!re.opt.live.contains(stmt_id))
+            continue;
+
+        _ = re.rebuildStmt(stmt_id);
+    }
+}
