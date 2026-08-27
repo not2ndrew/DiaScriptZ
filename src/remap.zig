@@ -48,7 +48,7 @@ pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
     );
 
     try remap.new_extra.ensureTotalCapacityPrecise(
-        opt.allocator, opt.instructions.len
+        opt.allocator, opt.extra.len
     );
 
     try remap.old_to_new_inst.ensureTotalCapacityPrecise(
@@ -118,7 +118,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
     switch (inst.tag) {
         .store => re.rebuildStore(old_id),
         // .branch => re.rebuildBranch(old_id),
-        // .dialogue, .choice => re.rebuildDialogue(old_id),
+        .dialogue, .choice => re.rebuildDialogue(old_id),
         // .label => re.rebuildLabel(old_id),
         else => {},
     }
@@ -150,7 +150,8 @@ fn rebuildExpr(re: *Remap, expr: InstId) InstId {
             re.opt.instructions[expr].data.binary.lhs = re.rebuildExpr(binary.lhs);
             re.opt.instructions[expr].data.binary.rhs = re.rebuildExpr(binary.rhs);
         },
-        else => {},
+        .constant, .text => {},
+        else => unreachable,
     }
 
     re.old_to_new_inst.items[expr] = new_expr;
@@ -158,22 +159,23 @@ fn rebuildExpr(re: *Remap, expr: InstId) InstId {
     return new_expr;
 }
 
-// fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
-//     const new_expr: InstId = @intCast(re.new_instructions.items.len);
-//
-//     if (extra_inst != invalid_inst) {
-//         const old_expr = re.opt.instructions[extra_inst];
-//
-//         switch (old_expr.tag) {
-//             .speaker, .jump => re.opt.instructions[extra_inst].data.load = new_expr,
-//             else => {},
-//         }
-//
-//         re.new_extra.appendAssumeCapacity(new_expr);
-//     } else {
-//         re.new_extra.appendAssumeCapacity(invalid_inst);
-//     }
-// }
+fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
+    const new_expr: InstId = @intCast(re.new_instructions.items.len);
+
+    if (extra_inst != invalid_inst) {
+        const old_expr = re.opt.instructions[extra_inst];
+
+        switch (old_expr.tag) {
+            .speaker, .jump => re.opt.instructions[extra_inst].data.load = new_expr,
+            else => unreachable,
+        }
+
+        re.new_extra.appendAssumeCapacity(new_expr);
+        re.new_instructions.appendAssumeCapacity(re.opt.instructions[extra_inst]);
+    } else {
+        re.new_extra.appendAssumeCapacity(invalid_inst);
+    }
+}
 
 // fn rebuildBranch(re: *Remap, old_id: InstId) void {
 //     // This is for compile time branch.
@@ -231,37 +233,37 @@ fn rebuildExpr(re: *Remap, expr: InstId) InstId {
 //     re.new_instructions.appendAssumeCapacity(new_branch);
 // }
 
-// fn rebuildDialogue(re: *Remap, old_id: InstId) void {
-//     const old = re.opt.instructions[old_id];
-//     const range = old.data.range;
-//     const old_start = range.start;
-//     const old_end = old_start + range.len;
-//     const new_start: InstId = @intCast(re.new_extra.items.len);
-//
-//     const old_speaker = re.opt.extra[range.start];
-//     re.rebuildOptionalExpr(old_speaker);
-//
-//     for (old_start + 1 .. old_end - 1) |idx| {
-//         const stmt_idx = re.opt.extra[idx];
-//
-//         const new_stmt = re.rebuildExpr(stmt_idx);
-//         re.new_extra.appendAssumeCapacity(new_stmt);
-//     }
-//
-//     const old_jump = re.opt.extra[old_end - 1];
-//     re.rebuildOptionalExpr(old_jump);
-//
-//     const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
-//     var new_dialogue: Inst = old;
-//     new_dialogue.data.range = .{
-//         .start = new_start,
-//         .len = new_len,
-//     };
-//     const new_id: InstId = @intCast(re.new_instructions.items.len);
-//
-//     re.old_to_new_inst.items[old_id] = new_id;
-//     re.new_instructions.appendAssumeCapacity(new_dialogue);
-// }
+fn rebuildDialogue(re: *Remap, old_id: InstId) void {
+    const old = re.opt.instructions[old_id];
+    const range = old.data.range;
+    const old_start = range.start;
+    const old_end = old_start + range.len;
+    const new_start: InstId = @intCast(re.new_extra.items.len);
+
+    const old_speaker = re.opt.extra[range.start];
+    re.rebuildOptionalExpr(old_speaker);
+
+    for (old_start + 1 .. old_end - 1) |idx| {
+        const stmt_idx = re.opt.extra[idx];
+
+        const new_stmt = re.rebuildExpr(stmt_idx);
+        re.new_extra.appendAssumeCapacity(new_stmt);
+    }
+
+    const old_jump = re.opt.extra[old_end - 1];
+    re.rebuildOptionalExpr(old_jump);
+
+    const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
+    var new_dialogue: Inst = old;
+    new_dialogue.data.range = .{
+        .start = new_start,
+        .len = new_len,
+    };
+    const new_id: InstId = @intCast(re.new_instructions.items.len);
+
+    re.old_to_new_inst.items[old_id] = new_id;
+    re.new_instructions.appendAssumeCapacity(new_dialogue);
+}
 
 // fn rebuildLabel(re: *Remap, old_id: InstId) void {
 //     const old = re.opt.instructions[old_id];

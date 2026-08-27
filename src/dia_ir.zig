@@ -344,11 +344,15 @@ fn reduceDialogue(ir: *DiaIR, node: Node) Error!InstId {
     defer parts.deinit(ir.allocator);
 
     try parts.ensureTotalCapacityPrecise(ir.allocator, len);
+    const speaker_node = ir.ast.nodes.get(ir.ast.extra_data[range.start]);
 
-    const speaker_id = ir.nextSymbol();
-    const speaker = ir.appendInst(.speaker, node.token_pos, .{
-        .load = speaker_id,
-    });
+    var speaker: InstId = invalid_inst;
+    if (speaker_node.tag != .anonymous) {
+        const speaker_id = ir.nextSymbol();
+        speaker = ir.appendInst(.speaker, node.token_pos, .{
+            .load = speaker_id,
+        });
+    }
 
     parts.appendAssumeCapacity(speaker);
 

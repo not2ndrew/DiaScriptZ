@@ -394,6 +394,11 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const token_pos = speaker.token_pos;
     const name = sem.ast.tokenSlice(token_pos);
 
+    if (speaker.tag == .anonymous) {
+        try sem.visitDialogueParts(start, range.len);
+        return;
+    }
+
     const ident_id = try sem.interner.intern(sem.allocator, name);
     if (sem.label_table.contains(ident_id))
         return sem.report(token_pos, .ident_mismatch);
