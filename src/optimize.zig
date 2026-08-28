@@ -128,10 +128,6 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     try opt.block(range.start, range.len);
 
     // Pass 2: Dead Code elimination
-    // 1) Determine reachable instructions.
-    //    Live blocks,
-    //    Live instructions,
-    //    Which branch is selected.
     var dce: DCE = .{ .opt = opt };
     defer dce.deinit();
 
@@ -148,8 +144,7 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start..end) |idx| {
-        const idx_cast: u32 = @intCast(idx);
-        const stmt_idx = opt.extra[idx_cast];
+        const stmt_idx = opt.extra[idx];
         try opt.stmt(stmt_idx);
     }
 }
@@ -339,21 +334,14 @@ fn foldDialogue(opt: *Optimize, inst: Inst) Error!void {
 // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
 fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
     const range = inst.data.range;
-    const start = range.start;
-    const end = start + range.len;
-
-    // Increment 1 to avoid label ident.
-    for (start + 1 .. end) |idx| {
-        const stmt_idx = opt.extra[idx];
-        try opt.stmt(stmt_idx);
-    }
+    try opt.block(range.start + 1, range.len - 1);
 }
 
 // ───────────────────────────────
 //      DEAD CODE ELIMINATION
 // ───────────────────────────────
 // Dead Code Elimination (DCE) marks all instructions that will be used
-// in the instructions. Any instruction that is NOT marked will be ignored.
+// in the program. Any instruction that is NOT marked will be ignored.
 
 const DCE = struct {
     opt: *Optimize,

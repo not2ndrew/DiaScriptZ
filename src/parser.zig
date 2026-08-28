@@ -93,6 +93,14 @@ fn expect(p: *Parser, expected: TokenTag) Error!TokenIndex {
     return idx;
 }
 
+fn addNodeRange(p: *Parser, parts: []const u32) Error!Node.Range {
+    const start: u32 = @intCast(p.extra_data.items.len);
+    try p.extra_data.appendSlice(p.allocator, parts);
+
+    return .{ .start = start, .len = @intCast(parts.len) };
+}
+
+
 fn addNode(p: *Parser, tag: Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
     try p.nodes.append(p.allocator, .{
         .tag = tag,
@@ -120,12 +128,8 @@ pub fn parseAll(p: *Parser) Error!void {
         try stmts.append(p.allocator, stmt_index);
     }
 
-    const start: u32 = @intCast(p.extra_data.items.len);
-    const len: u32 = @intCast(stmts.items.len);
-    try p.extra_data.appendSlice(p.allocator, stmts.items);
-
     _ = try p.addNode(.stmt_block, root_token_pos, .{
-        .range = .{ .start = start, .len = len }
+        .range = try p.addNodeRange(stmts.items),
     });
 }
 
@@ -231,15 +235,10 @@ fn parseIfStmt(p: *Parser) Error!NodeIndex {
         else_block = try p.parseStmtBlock(.open_brace, .close_brace);
     }
 
-    const start: u32 = @intCast(p.extra_data.items.len);
-    try p.extra_data.appendSlice(p.allocator, &[_]u32{
-        condition, then_block, else_block,
-    });
-
     // if_stmt extra_data layout:
     // [ condition, then_block, else_block ]
     return p.addNode(.if_stmt, if_pos, .{
-        .range = .{ .start = start, .len = 3 }
+        .range = try p.addNodeRange(&[_]NodeIndex{ condition, then_block, else_block })
     });
 }
 
@@ -318,10 +317,9 @@ fn parseStmtBlock(p: *Parser, comptime start_tag: TokenTag, comptime end_tag: To
     defer stmts.deinit(p.allocator);
 
     const block_pos = try p.expect(start_tag);
-    const range = try p.collectStmtUntil(end_tag, &stmts);
 
     return try p.addNode(.stmt_block, block_pos, .{
-        .range = .{ .start = range.start, .len = range.len }
+        .range = try p.collectStmtUntil(end_tag, &stmts),
     });
 }
 
@@ -379,9 +377,8 @@ token_pos: TokenIndex, speaker: NodeIndex) Error!NodeIndex {
 
     _ = try p.expect(.semi_colon);
 
-    const range = try p.commitDialogueData(dia_parts.items);
     return try p.addNode(tag, token_pos, .{
-        .range = .{ .start = range.start, .len = range.len }
+        .range = try p.addNodeRange(dia_parts.items),
     });
 }
 
@@ -425,14 +422,6 @@ fn parseDialogueGoto(p: *Parser) Error!NodeIndex {
     return invalid_node;
 }
 
-fn commitDialogueData(p: *Parser, dia_parts: []u32) Error!Node.Range {
-    const start: u32 = @intCast(p.extra_data.items.len);
-    const len: u32 = @intCast(dia_parts.len);
-    try p.extra_data.appendSlice(p.allocator, dia_parts);
-
-    return .{ .start = start, .len = len };
-}
-
 // label = “~” ident stmt_block “end” ;
 fn parseLabel(p: *Parser) Error!NodeIndex {
     var stmts: std.ArrayList(u32) = .empty;
@@ -446,12 +435,12 @@ fn parseLabel(p: *Parser) Error!NodeIndex {
 
     _ = try p.expect(.semi_colon);
 
-    const range = try p.collectStmtUntil(.keyword_end, &stmts);
+    // const range = try p.collectStmtUntil(.keyword_end, &stmts);
 
     // label extra_data layout:
     // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
     return p.addNode(.label, ident_pos, .{
-        .range = .{ .start = range.start, .len = range.len }
+        .range = try p.collectStmtUntil(.keyword_end, &stmts),
     });
 }
 
@@ -474,14 +463,7 @@ fn collectStmtUntil(p: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !
     // a semicolon may be omitted before a closing ")" or "}".
     if (p.peekTag() == .semi_colon) p.token_pos += 1;
 
-    const start: u32 = @intCast(p.extra_data.items.len);
-    const len: u32 = @intCast(stmts.items.len);
-    try p.extra_data.appendSlice(
-        p.allocator,
-        stmts.items
-    );
-
-    return .{ .start = start, .len = len };
+    return try p.addNodeRange(stmts.items);
 }
 
 fn parseGenericIdent(p: *Parser, comptime tag: Tag) Error!NodeIndex {
