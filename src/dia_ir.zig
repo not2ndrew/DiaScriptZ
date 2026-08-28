@@ -237,9 +237,6 @@ fn reduceChoiceBlock(ir: *DiaIR, start: u32, len: u32) !InstId {
         choices.appendAssumeCapacity(choice);
     }
 
-    // const extra_start: InstId = @intCast(ir.extra.items.len);
-    // try ir.extra.appendSlice(ir.allocator, choices.items);
-
     return ir.appendInst(.choice_block, first_choice.token_pos, .{
         .range = ir.appendSpan(choices.items)
     });
@@ -467,10 +464,12 @@ fn evalValue(ir: *DiaIR, node: Node) Error!InstId {
             const span: Span = ir.lower.pool.text_spans[text_id];
             return ir.appendInst(.text, node.token_pos, .{ .range = span });
         },
+
         .plus => ir.evalBinary(.add, node),
         .minus => ir.evalBinary(.sub, node),
         .mult => ir.evalBinary(.mul, node),
         .div => ir.evalBinary(.div, node),
+
         else => unreachable,
     };
 }

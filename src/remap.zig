@@ -195,7 +195,7 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
     const then_id = re.opt.extra[old_start + 1];
     const else_id = re.opt.extra[old_start + 2];
 
-    const new_cond = re.rebuildStmt(cond_id);
+    const new_cond = re.rebuildExpr(cond_id);
 
     const then_block = re.opt.instructions[then_id];
     const t_range = then_block.data.range;
