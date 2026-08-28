@@ -120,8 +120,6 @@ pub fn generate(ir: *DiaIR) Error!void {
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
     _ = try ir.reduceBlock(range.start, range.len);
-    // const root_range = try ir.reduceBlock(range.start, range.len);
-    // _ = ir.appendInst(.block, 0, root_range);
 
     try ir.instructions.shrinkToLen(allocator);
     try ir.extra.shrinkToLen(allocator);
@@ -136,6 +134,13 @@ fn appendInst(ir: *DiaIR, comptime tag: Inst.Tag, token_pos: TokenIndex, data: I
     });
 
     return len;
+}
+
+fn appendSpan(ir: *DiaIR, items: []const InstId) Span {
+    const start: u32 = @intCast(ir.extra.items.len);
+    ir.extra.appendSliceAssumeCapacity(items);
+
+    return .{ .start = start, .len = @intCast(items.len) };
 }
 
 fn nextSymbol(ir: *DiaIR) SymbolId {
@@ -166,6 +171,14 @@ fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!InstId {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
 
+    try ir.reduceStmtList(&stmts, start, len);
+
+    return ir.appendInst(.block, 0, .{
+        .range = ir.appendSpan(stmts.items),
+    });
+}
+
+fn reduceStmtList(ir: *DiaIR, stmts: *std.ArrayList(InstId), start: u32, len: u32) Error!void {
     var i: u32 = start;
     const end = start + len;
 
@@ -174,7 +187,7 @@ fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!InstId {
         const node = ir.ast.nodes.get(node_idx);
 
         if (node.tag != .choice) {
-            const inst = try ir.reduceStmt(node_idx);
+            const inst = try ir.reduceStmt(node);
             try stmts.append(ir.allocator, inst);
 
             i += 1;
@@ -193,15 +206,6 @@ fn reduceBlock(ir: *DiaIR, start: u32, len: u32) Error!InstId {
 
         i += choice_count;
     }
-
-    const range_start: u32 = @intCast(ir.extra.items.len);
-    try ir.extra.appendSlice(ir.allocator, stmts.items);
-
-    const range_len: u32 = @intCast(ir.extra.items.len - range_start);
-
-    return ir.appendInst(.block, 0, .{
-        .range = .{ .start = range_start, .len = range_len }
-    });
 }
 
 fn countChoices(ir: *DiaIR, start: u32, end: u32) InstId {
@@ -233,16 +237,15 @@ fn reduceChoiceBlock(ir: *DiaIR, start: u32, len: u32) !InstId {
         choices.appendAssumeCapacity(choice);
     }
 
-    const extra_start: InstId = @intCast(ir.extra.items.len);
-    try ir.extra.appendSlice(ir.allocator, choices.items);
+    // const extra_start: InstId = @intCast(ir.extra.items.len);
+    // try ir.extra.appendSlice(ir.allocator, choices.items);
 
     return ir.appendInst(.choice_block, first_choice.token_pos, .{
-        .range = .{ .start = extra_start, .len = len }
+        .range = ir.appendSpan(choices.items)
     });
 }
 
-fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
-    const node = ir.ast.nodes.get(node_idx);
+fn reduceStmt(ir: *DiaIR, node: Node) Error!InstId {
     return switch (node.tag) {
         // Arithmetic IR
         .declar_stmt, .assign => ir.reduceDecl(node),
@@ -259,17 +262,18 @@ fn reduceStmt(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         .choice => ir.reduceChoice(node),
 
         .label => ir.reduceLabel(node),
-        else => invalid_inst,
+        else => unreachable,
     };
 }
 
 fn reduceDecl(ir: *DiaIR, node: Node) Error!InstId {
     const assign = node.data.node_and_node;
     const value_idx = assign.@"1";
+    const value_node = ir.ast.nodes.get(value_idx);
 
     const symbol_id = ir.nextSymbol();
 
-    const value = try ir.evalExpr(value_idx);
+    const value = try ir.evalValue(value_node);
 
     return ir.appendInst(.store, node.token_pos, .{
         .store = .{ .symbol_id = symbol_id, .value = value }
@@ -282,13 +286,15 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
     const ident_idx = operand.@"0";
     const value_idx = operand.@"1";
 
+    const value_node = ir.ast.nodes.get(value_idx);
+
     const ident = ir.ast.nodes.get(ident_idx);
     const symbol_id = ir.nextSymbol();
 
     const lhs = ir.appendInst(.load, ident.token_pos, .{
         .load = symbol_id,
     });
-    const rhs = try ir.evalExpr(value_idx);
+    const rhs = try ir.evalValue(value_node);
 
     const result = ir.appendInst(tag, node.token_pos, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
@@ -308,8 +314,9 @@ fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
 
     try stmts.ensureTotalCapacity(ir.allocator, len);
 
-    const condition_idx = ir.ast.extra_data[start];
-    const condition = try ir.reduceCondition(condition_idx);
+    const cond_idx = ir.ast.extra_data[start];
+    const cond_node = ir.ast.nodes.get(cond_idx);
+    const cond = try ir.reduceCondition(cond_node);
 
     const then_idx = ir.ast.extra_data[start + 1];
     const then_node = ir.ast.nodes.get(then_idx);
@@ -324,15 +331,12 @@ fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
         else_block = try ir.reduceBlock(e_range.start, e_range.len);
     }
 
-    stmts.appendAssumeCapacity(condition);
+    stmts.appendAssumeCapacity(cond);
     stmts.appendAssumeCapacity(then_block);
     stmts.appendAssumeCapacity(else_block);
 
-    const extra_start: u32 = @intCast(ir.extra.items.len);
-    ir.extra.appendSliceAssumeCapacity(stmts.items);
-
     return ir.appendInst(.branch, node.token_pos, .{
-        .range = .{ .start = extra_start, .len = len }
+        .range = ir.appendSpan(stmts.items),
     });
 }
 
@@ -385,7 +389,8 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     const end = start + len;
     for (start + 1..end - 1) |idx| {
         const text_idx = ir.ast.extra_data[idx];
-        const text = try ir.evalText(text_idx);
+        const text_node = ir.ast.nodes.get(text_idx);
+        const text = try ir.evalValue(text_node);
         parts.appendAssumeCapacity(text);
     }
 
@@ -401,9 +406,7 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
 
     parts.appendAssumeCapacity(jump);
 
-    const extra_start: u32 = @intCast(ir.extra.items.len);
-    ir.extra.appendSliceAssumeCapacity(parts.items);
-    return .{ .range = .{ .start = extra_start, .len = len }};
+    return .{ .range = ir.appendSpan(parts.items)};
 }
 
 // TODO: reduceBlock and reduceLabel:
@@ -428,56 +431,23 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
 
     try stmts.append(ir.allocator, label_inst);
 
-    var i: u32 = start + 1;
-    const end = start + len;
-
-    while (i < end) {
-        const node_idx = ir.ast.extra_data[i];
-        const stmt_node = ir.ast.nodes.get(node_idx);
-
-        if (stmt_node.tag != .choice) {
-            const inst = try ir.reduceStmt(node_idx);
-            try stmts.append(ir.allocator, inst);
-
-            i += 1;
-            continue;
-        }
-
-        // Handle choices
-        const choice_count = ir.countChoices(i, end);
-        if (choice_count != 1) {
-            const choice_block = try ir.reduceChoiceBlock(i, choice_count);
-            try stmts.append(ir.allocator, choice_block);
-        } else {
-            const choice = try ir.reduceChoice(node);
-            try stmts.append(ir.allocator, choice);
-        }
-
-        i += choice_count;
-    }
-
-    const range_start: u32 = @intCast(ir.extra.items.len);
-    try ir.extra.appendSlice(ir.allocator, stmts.items);
-
-    const range_len: u32 = @intCast(ir.extra.items.len - range_start);
+    // Skip the label itself.
+    try ir.reduceStmtList(&stmts, start + 1, len - 1);
 
     return ir.appendInst(.label_block, node.token_pos, .{
-        .range = .{ .start = range_start, .len = range_len }
+        .range = ir.appendSpan(stmts.items),
     });
 }
 
-fn reduceCondition(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
-    const node = ir.ast.nodes.get(node_idx);
-
+fn reduceCondition(ir: *DiaIR, node: Node) Error!InstId {
     return try switch (node.tag) {
         .bool_and => ir.evalConjunction(.bool_and, node),
         .bool_or => ir.evalConjunction(.bool_or, node),
-        else => ir.evalCompare(node_idx),
+        else => ir.evalCompare(node),
     };
 }
 
-fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
-    const node = ir.ast.nodes.get(node_idx);
+fn evalValue(ir: *DiaIR, node: Node) Error!InstId {
     const token_pos = node.token_pos;
     return switch (node.tag) {
         .number => {
@@ -492,6 +462,11 @@ fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
                 .load = symbol_id
             });
         },
+        .string => {
+            const text_id = ir.nextText();
+            const span: Span = ir.lower.pool.text_spans[text_id];
+            return ir.appendInst(.text, node.token_pos, .{ .range = span });
+        },
         .plus => ir.evalBinary(.add, node),
         .minus => ir.evalBinary(.sub, node),
         .mult => ir.evalBinary(.mul, node),
@@ -502,8 +477,10 @@ fn evalExpr(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
 
 fn evalBinary(ir: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!InstId {
     const children = node.data.node_and_node;
-    const lhs = try ir.evalExpr(children.@"0");
-    const rhs = try ir.evalExpr(children.@"1");
+    const lhs_node = ir.ast.nodes.get(children.@"0");
+    const rhs_node = ir.ast.nodes.get(children.@"1");
+    const lhs = try ir.evalValue(lhs_node);
+    const rhs = try ir.evalValue(rhs_node);
 
     return ir.appendInst(tag, node.token_pos, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
@@ -512,16 +489,17 @@ fn evalBinary(ir: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!InstId {
 
 fn evalConjunction(ir: *DiaIR, comptime tag: Inst.Tag, node: Node) Error!InstId {
     const children = node.data.node_and_node;
-    const lhs = try ir.reduceCondition(children.@"0");
-    const rhs = try ir.reduceCondition(children.@"1");
+    const lhs_node = ir.ast.nodes.get(children.@"0");
+    const rhs_node = ir.ast.nodes.get(children.@"1");
+    const lhs = try ir.reduceCondition(lhs_node);
+    const rhs = try ir.reduceCondition(rhs_node);
 
     return ir.appendInst(tag, node.token_pos, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
     });
 }
 
-fn evalCompare(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
-    const node = ir.ast.nodes.get(node_idx);
+fn evalCompare(ir: *DiaIR, node: Node) Error!InstId {
     return try switch (node.tag) {
         .equal_equal => ir.evalBinary(.eql, node),
         .not_equal => ir.evalBinary(.not_eql, node),
@@ -530,17 +508,5 @@ fn evalCompare(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
         .greater => ir.evalBinary(.greater, node),
         .greater_or_equal => ir.evalBinary(.greater_or_eql, node),
         else => unreachable,
-    };
-}
-
-fn evalText(ir: *DiaIR, node_idx: NodeIndex) Error!InstId {
-    const node = ir.ast.nodes.get(node_idx);
-    return try switch (node.tag) {
-        .string => {
-            const text_id = ir.nextText();
-            const span: Span = ir.lower.pool.text_spans[text_id];
-            return ir.appendInst(.text, node.token_pos, .{ .range = span });
-        },
-        else => ir.evalExpr(node_idx),
     };
 }

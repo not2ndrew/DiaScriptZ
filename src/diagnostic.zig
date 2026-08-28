@@ -11,19 +11,21 @@ const TokenTag = tok.Tag;
 const TokenIndex = tok.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
 
-// TODO:
-// 1) Move diagnostics into AST errors
-// Rather than a single diagnostic covers all types of errors.
-// We split the errors into two different types:
-//     1. Comptime (syntax, parsing) errors
-//     2. Runtime errors.
-// 2) Add extra union field to AstError (formerly Error)
-// Since we are moving diagnostics to AST, might as well call it AstError.
-// And, create a separate diagnostics for runtime.
-//
-// The concern I had was the union field was
-// 1) Wasted space when continuing to use void as union for Semantic errors.
-// 2) More clarity.
+// TODO: Diagnostics does not work with the following
+// code:
+// ---------
+// var x = 1
+// if (x > 1) {
+//    var x = 2
+// }
+// ---------
+// Diagnostics:
+// script.txt:3:5 error: Variable 'x' already exist
+//      |
+//    2 | var x = 3
+//     |                   ^
+//                         Pointer is here for some reason.
+//  and,line number is incorrect.
 pub const Error = struct {
     token_pos: TokenIndex,
     tag: Tag,
@@ -122,22 +124,6 @@ pub const DiagRenderer = struct {
     source_file: SourceFile,
     tokens: Tokens.Slice,
 
-    // TODO: Sometimes, the spaces are not included.
-    // Maybe this is due to the zig build?
-    //
-    // Code:
-    // ---------
-    // var x = 1
-    // if (x > 1) {
-    //    var x = 2
-    // }
-    // ---------
-    // Diagnostics:
-    // script.txt:3:5 error: Variable 'x' already exist
-    //      |
-    //    3 | var x = 2
-    //      | ^
-    //
     pub fn printErrors(
         self: *const DiagRenderer,
         errors: *std.ArrayList(Error),
@@ -155,8 +141,8 @@ pub const DiagRenderer = struct {
             const line_slice = self.source_file.getLineSlice(token.start);
 
             // Caret indicator for error
-            var buf: [30]u8 = undefined;
-            const spaces = buf[0..@min(pos.col, buf.len)];
+            var buf: [20]u8 = undefined;
+            const spaces = buf[0 .. @min(pos.col, buf.len)];
             @memset(spaces, ' ');
 
             std.debug.print(

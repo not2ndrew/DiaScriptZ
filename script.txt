@@ -1,5 +1,4 @@
-A: Go here to the label name -> name
-
-~ name
-   A: Hello world
-end
+var x = 1
+if (x > 1) {
+   const y = 10
+}

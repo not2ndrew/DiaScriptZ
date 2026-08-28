@@ -1,6 +1,6 @@
 const std = @import("std");
 const tree = @import("ast.zig");
-const lower_ir = @import("lower.zig");
+const low = @import("lower.zig");
 const diag = @import("diagnostic.zig");
 
 const Io = std.Io;
@@ -24,7 +24,7 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     };
     defer parse_tree.deinit(allocator);
 
-    lower_ir.lower(allocator, parse_tree, file_name) catch |err| {
+    low.lower(allocator, parse_tree, file_name) catch |err| {
         if (err == error.SemanticError) return;
         return err;
     };

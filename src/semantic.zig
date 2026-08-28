@@ -271,7 +271,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     sem.initializing_symbol = idx;
     defer sem.initializing_symbol = null;
 
-    try sem.visitExpr(decl.@"1");
+    try sem.visitValue(decl.@"1");
 
     const scope_depth = sem.scope_stack.items.len;
     if (scope_depth != 0)
@@ -297,7 +297,7 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         else => {},
     }
 
-    try sem.visitExpr(assign.@"1");
+    try sem.visitValue(assign.@"1");
 }
 
 // if_stmt extra_data layout:
@@ -334,7 +334,7 @@ fn visitCompare(sem: *Semantic, node_idx: NodeIndex) !void {
     return switch (node.tag) {
         .equal_equal, .not_equal, .less,
         .less_or_equal, .greater,
-        .greater_or_equal => sem.visitBinary(node.data, visitExpr),
+        .greater_or_equal => sem.visitBinary(node.data, visitValue),
         else => sem.report(node.token_pos, .unexpected_token),
     };
 }
@@ -348,7 +348,7 @@ fn visitBinary(sem: *Semantic, data: Node.Data, comptime binOp: binaryOp) !void 
     try binOp(sem, rhs);
 }
 
-fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
+fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
     const name = sem.ast.tokenSlice(token_pos);
@@ -370,11 +370,15 @@ fn visitExpr(sem: *Semantic, node_idx: NodeIndex) !void {
 
             try sem.symbol_refs.append(sem.allocator, symbol_id);
         },
+        .string => {
+            const text = sem.ast.tokenSlice(node.token_pos);
+            try sem.interner.appendText(sem.allocator, text);
+        },
         // TODO: Check for math errors
         // 1) Integer overflow (0 and 256)
         // 2) Division by 0
         // Create a union field to hold uint.
-        .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitExpr),
+        .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
         else => try sem.report(token_pos, .unexpected_token),
     }
 }
@@ -438,7 +442,7 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
     const end = start + len;
     for (start + 1 .. end - 1) |idx| {
         const text_idx = sem.ast.extra_data[idx];
-        try sem.visitText(text_idx);
+        try sem.visitValue(text_idx);
     }
 
     const jump = sem.ast.extra_data[end - 1];
@@ -455,17 +459,6 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
             });
         }
     }
-}
-
-fn visitText(sem: *Semantic, node_idx: NodeIndex) !void {
-    const node = sem.ast.nodes.get(node_idx);
-    return switch (node.tag) {
-        .string => {
-            const text = sem.ast.tokenSlice(node.token_pos);
-            try sem.interner.appendText(sem.allocator, text);
-        },
-        else => sem.visitExpr(node_idx),
-    };
 }
 
 // label extra_data layout:

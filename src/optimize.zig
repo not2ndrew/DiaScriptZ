@@ -49,9 +49,6 @@ lower: *const Lower,
 instructions: []Inst,
 extra: []InstId,
 
-// TODO:
-// 1) Fix the parser such that "true" and "false" are allowed.
-//    Then, allow the KV pair to be SymbolId -> Value.
 constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 // KV pair is condition id -> block id
 branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
