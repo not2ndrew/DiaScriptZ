@@ -20,7 +20,7 @@ const Mode = enum {
 pub const Tokenizer = @This();
 
 allocator: Allocator,
-offsets: *std.ArrayList(usize),
+newline_bytes: *std.ArrayList(usize),
 buffer: []const u8,
 index: usize = 0,
 mode: Mode = .normal,
@@ -33,16 +33,27 @@ fn isIdentChar(c: u8) bool {
     return isAlphabetic(c) or isDigit(c) or c == '_';
 }
 
+fn consumeNewline(self: *Tokenizer) !void {
+    try self.newline_bytes.append(self.allocator, self.index);
+
+    self.index += 1;
+    self.line_start = true;
+    self.mode = .normal;
+}
+
 fn skipWhiteSpace(self: *Tokenizer) !void {
     while (self.index < self.buffer.len) {
         switch (self.buffer[self.index]) {
             ' ', '\r', '\t' => self.index += 1,
+
             '\n' => {
+                // If this newline represents an implicit semicolon,
+                // leave it for next() to emit as a token.
                 if (self.insert_semi) return;
-                self.index += 1;
-                self.line_start = true;
-                self.mode = .normal;
+
+                try self.consumeNewline();
             },
+
             else => return,
         }
     }
@@ -66,6 +77,7 @@ fn findStr(self: *Tokenizer) !Token {
                     self.index += 1;
                 }
             },
+            // Record the string first, then find newline afterwards.
             '\n' => {
                 self.mode = .normal;
                 self.line_start = true;
@@ -123,10 +135,11 @@ pub fn next(self: *Tokenizer) !Token {
     self.index += 1;
     switch (ch) {
         '\n' => {
-            // We only reach here if the condition is fulfilled
-            // is true
-            try self.offsets.append(self.allocator, start);
+            // Implicit semi_colon
+            try self.newline_bytes.append(self.allocator, start);
             result.tag = .semi_colon;
+            self.line_start = true;
+            self.mode = .normal;
         },
         '+' => {
             result.tag = if (self.matchNext('=')) .plus_equal else .plus;
@@ -214,9 +227,6 @@ pub fn next(self: *Tokenizer) !Token {
         },
         '_' => {
             result.tag = .underscore;
-        },
-        ';' => {
-            result.tag = .semi_colon;
         },
         'a' ... 'z', 'A' ... 'Z' => {
             while (self.index < len and isIdentChar(buffer[self.index])) {

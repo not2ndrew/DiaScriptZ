@@ -11,24 +11,11 @@ const TokenTag = tok.Tag;
 const TokenIndex = tok.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
 
-// TODO: Diagnostics does not work with the following
-// code:
-// ---------
-// var x = 1
-// if (x > 1) {
-//    var x = 2
-// }
-// ---------
-// Diagnostics:
-// script.txt:3:5 error: Variable 'x' already exist
-//      |
-//    2 | var x = 3
-//     |                   ^
-//                         Pointer is here for some reason.
-//  and,line number is incorrect.
 pub const Error = struct {
     token_pos: TokenIndex,
     tag: Tag,
+    // TODO: Use Data to insert additional info into error message.
+    // data: Data,
 
     pub const Tag = enum {
         // Parsing Errors
@@ -53,6 +40,11 @@ pub const Error = struct {
         invalid_label_scope,
         too_many_choices,
     };
+
+    pub const Data = union(enum) {
+        none,
+        expected: Tag,
+    };
 };
 
 pub fn printErrors(allocator: Allocator, errors: *std.ArrayList(Error), parse_tree: *const ParseResult, file_name: []const u8) !void {
@@ -67,18 +59,18 @@ pub fn printErrors(allocator: Allocator, errors: *std.ArrayList(Error), parse_tr
 
 pub const SourceFile = struct {
     source: []const u8,
-    offsets: []usize,
+    newline_bytes: []usize,
 
     pub fn getLineCol(self: *const SourceFile, byte_pos: usize) struct { line: usize, col: usize } {
-        const offsets = self.offsets;
+        const newline_bytes = self.newline_bytes;
         var low: usize = 0;
-        var high: usize = offsets.len;
+        var high: usize = newline_bytes.len;
 
         // Since the array of offset bytes is sorted, we can do binary search.
         while (low < high) {
             // Avoid overflow
             const mid = low + (high - low) / 2;
-            const value = offsets[mid];
+            const value = newline_bytes[mid];
 
             if (value < byte_pos) {
                 low = mid + 1;
@@ -92,7 +84,7 @@ pub const SourceFile = struct {
         const line_start_offset = if (low == 0)
             0
         else
-            offsets[low - 1] + 1;
+            newline_bytes[low - 1] + 1;
         const col = byte_pos - line_start_offset + 1;
 
         return .{ .line = line, .col = col };

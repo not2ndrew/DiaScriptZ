@@ -47,7 +47,7 @@ pub const ParseResult = struct {
     source_file: SourceFile,
 
     pub fn deinit(p: *ParseResult, allocator: Allocator) void {
-        allocator.free(p.source_file.offsets);
+        allocator.free(p.source_file.newline_bytes);
         p.ast.deinit();
     }
 };
@@ -60,13 +60,13 @@ pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !Pars
     // For error diagnostics, we store the byte positions
     // of ALL newline characters.
     // https://www.reddit.com/r/Compilers/comments/1bg5r9m/how_do_you_propagate_line_number_information_for/
-    var offsets: std.ArrayList(usize) = .empty;
-    defer offsets.deinit(allocator);
+    var newline_bytes: std.ArrayList(usize) = .empty;
+    defer newline_bytes.deinit(allocator);
 
     // lines -> tokens
     var tokenizer: Tokenizer = .{
         .allocator = allocator,
-        .offsets = &offsets,
+        .newline_bytes = &newline_bytes,
         .buffer = buf,
     };
 
@@ -77,16 +77,16 @@ pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !Pars
         if (token.tag == .EOF) break;
     }
 
-    const offset_slice = try offsets.toOwnedSlice(allocator);
+    const newline_slice = try newline_bytes.toOwnedSlice(allocator);
     var token_slice = tokens.toOwnedSlice();
 
     errdefer {
-        allocator.free(offset_slice);
+        allocator.free(newline_slice);
         token_slice.deinit(allocator);
     }
 
     const source_file: SourceFile = .{
-        .offsets = offset_slice,
+        .newline_bytes = newline_slice,
         .source = buf,
     };
 
