@@ -1,6 +1,7 @@
 const std = @import("std");
 const zig_node = @import("node.zig");
 const tok = @import("token.zig");
+const sym = @import("semantic.zig");
 const ParseResult = @import("ast.zig").ParseResult;
 
 const Allocator = std.mem.Allocator;
@@ -10,17 +11,19 @@ const Token = tok.Token;
 const TokenTag = tok.Tag;
 const TokenIndex = tok.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
+const lexeme = tok.lexeme;
+
+const Kind = sym.Symbol.Kind;
 
 pub const Error = struct {
     token_pos: TokenIndex,
     tag: Tag,
-    // TODO: Use Data to insert additional info into error message.
-    // data: Data,
+    data: Data = .{ .none = {} },
 
     pub const Tag = enum {
         // Parsing Errors
         unexpected_EOF,
-        unexpected_token,
+        expected_token,
         expected_ident,
         expected_arith_op,
         expected_compar_op,
@@ -41,9 +44,10 @@ pub const Error = struct {
         too_many_choices,
     };
 
-    pub const Data = union(enum) {
-        none,
-        expected: Tag,
+    pub const Data = union {
+        none: void,
+        expected: TokenTag,
+        initialized: Kind,
     };
 };
 
@@ -160,26 +164,27 @@ pub const DiagRenderer = struct {
     // Then use that []const u8 value and print it out.
     fn errorMessage(self: *const DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
-        const str = self.source_file.source[token.start..token.end];
+        const found = lexeme(token.tag);
         switch (err.tag) {
             // Parsing Errors
             .unexpected_EOF => {
                 return w.writeAll("Expected expression, found EOF");
             },
-            .unexpected_token => {
-                return w.print("Expected expression, found '{s}'", .{str});
+            .expected_token => {
+                const expected = lexeme(err.data.expected);
+                return w.print("Expected '{s}', found '{s}'", .{expected, found});
             },
             .expected_ident => {
-                return w.print("Expected identifier, found '{s}'", .{str});
+                return w.print("Expected identifier, found '{s}'", .{found});
             },
             .expected_arith_op => {
-                return w.print("Expected arithmetic operator, found '{s}'", .{str});
+                return w.print("Expected arithmetic operator, found '{s}'", .{found});
             },
             .expected_compar_op => {
-                return w.print("Expected comparison operator, found '{s}'", .{str});
+                return w.print("Expected comparison operator, found '{s}'", .{found});
             },
             .expected_dialogue => {
-                return w.print("Expected dialogue, found '{s}'", .{str});
+                return w.print("Expected dialogue, found '{s}'", .{found});
             },
 
             // Semantic Errors
@@ -187,28 +192,28 @@ pub const DiagRenderer = struct {
                 return w.writeAll("Integer cannot go beyond 256");
             },
             .ident_mismatch => {
-                return w.print("'{s}' is already defined as a INSERT_TYPE", .{str});
+                return w.print("'{s}' is already defined as {s}", .{found, @tagName(err.data.initialized)});
             },
             .duplicate_var => {
-                return w.print("Variable '{s}' already exist", .{str});
+                return w.print("Variable '{s}' already exist", .{found});
             },
             .undeclared_var => {
-                return w.print("Variable '{s}' not declared", .{str});
+                return w.print("Variable '{s}' not declared", .{found});
             },
             .duplicate_label => {
-                return w.print("Label '{s}' already exist", .{str});
+                return w.print("Label '{s}' already exist", .{found});
             },
             .unknown_jump => {
-                return w.print("Jump target '{s}' does not exist.", .{str});
+                return w.print("Jump target '{s}' does not exist.", .{found});
             },
             .modified_const => {
-                return w.print("Cannot modify constant '{s}'", .{str});
+                return w.print("Cannot modify constant '{s}'", .{found});
             },
             .too_many_scopes => {
                 return w.writeAll("Cannot generate more than 3 scopes");
             },
             .invalid_label_scope => {
-                return w.print("Label '{s}' must be placed in GLOBAL scope", .{str});
+                return w.print("Label '{s}' must be placed in GLOBAL scope", .{found});
             },
             .too_many_choices => {
                 return w.writeAll("Too many choices in a block");

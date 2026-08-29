@@ -230,7 +230,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
         .if_stmt => sem.visitIfStmt(node),
         .dialogue => sem.visitDialogue(node),
         .label => sem.visitLabel(node),
-        else => sem.report(node.token_pos, .unexpected_token),
+        else => sem.report(node.token_pos, .expected_token),
     };
 }
 
@@ -335,7 +335,7 @@ fn visitCompare(sem: *Semantic, node_idx: NodeIndex) !void {
         .equal_equal, .not_equal, .less,
         .less_or_equal, .greater,
         .greater_or_equal => sem.visitBinary(node.data, visitValue),
-        else => sem.report(node.token_pos, .unexpected_token),
+        else => sem.report(node.token_pos, .expected_token),
     };
 }
 
@@ -379,7 +379,7 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
         // 2) Division by 0
         // Create a union field to hold uint.
         .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
-        else => try sem.report(token_pos, .unexpected_token),
+        else => try sem.report(token_pos, .expected_token),
     }
 }
 

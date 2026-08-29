@@ -38,13 +38,6 @@ pub fn deinit(p: *Parser) void {
     p.errors.deinit(p.allocator);
 }
 
-fn reportUnexpected(p: *Parser, tag: AstError.Tag) !void {
-    try p.errors.append(p.allocator, .{
-        .token_pos = p.token_pos,
-        .tag = tag,
-    });
-}
-
 fn synchronize(p: *Parser) void {
     // Force the parser to advance to next token_pos.
     p.token_pos += 1;
@@ -82,8 +75,9 @@ fn expect(p: *Parser, expected: TokenTag) Error!TokenIndex {
 
     if (found != expected) {
         try p.errors.append(p.allocator, .{
+            .tag = .expected_token,
             .token_pos = idx,
-            .tag = .unexpected_token,
+            .data = .{ .expected = expected }
         });
 
         return Error.ParseError;
@@ -155,8 +149,9 @@ fn parseStmt(p: *Parser) Error!NodeIndex {
         .underscore => p.parseAnonymousDialogue(),
         else => {
             p.next();
+            // TODO: Expected stmt starter.
             try p.errors.append(p.allocator, .{
-                .tag = .unexpected_token,
+                .tag = .expected_token,
                 .token_pos = p.token_pos,
             });
             return Error.ParseError;
@@ -195,7 +190,10 @@ fn parseIdentStmt(p: *Parser) Error!NodeIndex {
         .assign, .plus_equal, .minus_equal,
         .asterisk_equal, .slash_equal => p.parseAssignStmt(next_tag, ident_pos),
         else => {
-            try p.reportUnexpected(.expected_arith_op);
+            try p.errors.append(p.allocator, .{
+                .token_pos = p.token_pos,
+                .tag = .expected_arith_op,
+            });
             return Error.ParseError;
         }
     };
@@ -209,7 +207,10 @@ fn parseAssignStmt(p: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error
     _ = try p.expect(.semi_colon);
 
     const node_tag = nodeTagFromArithmetic(assign_tag) orelse {
-        try p.reportUnexpected(.expected_arith_op);
+        try p.errors.append(p.allocator, .{
+            .token_pos = assign_pos,
+            .tag = .expected_arith_op,
+        });
         return ParserError.ParseError;
     };
 
@@ -297,7 +298,10 @@ fn parseCompareExpr(p: *Parser) Error!NodeIndex {
     const op_tag = p.peekTag();
 
     const compare_tag = nodeTagFromCompare(op_tag) orelse {
-        try p.reportUnexpected(.expected_compar_op);
+        try p.errors.append(p.allocator, .{
+            .token_pos = p.token_pos,
+            .tag = .expected_compar_op,
+        });
         return Error.ParseError;
     };
 
@@ -407,7 +411,10 @@ fn parseDialogueParts(p: *Parser, dialogue: *std.ArrayList(u32)) Error!void {
     // The name is already inserted.
     // So, use 1 instead of 0.
     if (dialogue.items.len == 1) {
-        try p.reportUnexpected(.expected_dialogue);
+        try p.errors.append(p.allocator, .{
+            .tag = .expected_dialogue,
+            .token_pos = p.token_pos,
+        });
         return Error.ParseError;
     }
 }
@@ -434,8 +441,6 @@ fn parseLabel(p: *Parser) Error!NodeIndex {
     try stmts.append(p.allocator, label);
 
     _ = try p.expect(.semi_colon);
-
-    // const range = try p.collectStmtUntil(.keyword_end, &stmts);
 
     // label extra_data layout:
     // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
@@ -490,7 +495,10 @@ fn parseExpr(p: *Parser) Error!NodeIndex {
         if (tag != .plus and tag != .minus) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try p.reportUnexpected(.expected_arith_op);
+            try p.errors.append(p.allocator, .{
+                .tag = .expected_arith_op,
+                .token_pos = p.token_pos,
+            });
             return ParserError.ParseError;
         };
         const op_tok = p.token_pos;
@@ -515,7 +523,10 @@ fn parseTerm(p: *Parser) Error!NodeIndex {
         if (tag != .asterisk and tag != .slash) break;
 
         const binary_tag = nodeTagFromBinary(tag) orelse {
-            try p.reportUnexpected(.expected_arith_op);
+            try p.errors.append(p.allocator, .{
+                .tag = .expected_arith_op,
+                .token_pos = p.token_pos,
+            });
             return ParserError.ParseError;
         };
         const op_tok = p.token_pos;
@@ -552,9 +563,11 @@ fn parseFactor(p: *Parser) Error!NodeIndex {
             return expr;
         },
         else => {
+            // TODO: Expected expression
+            // expr such as number, identifier, (MAYBE bool)
             try p.errors.append(p.allocator, .{
+                .tag = .expected_ident,
                 .token_pos = idx,
-                .tag = .unexpected_token,
             });
             return Error.ParseError;
         },

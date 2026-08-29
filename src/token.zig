@@ -36,7 +36,7 @@ pub const Tag = enum {
     open_brace, // {
     close_brace, // }
     tilde, // ~
-    semi_colon, // ';'
+    semi_colon, // ';' Note they are implicit
 
     // Comparison
     equal_equal, // ==
@@ -58,7 +58,6 @@ pub const Tag = enum {
 
     // Dialogue Parsing
     string, // { content }
-    dialogue,
     choice_marker, // "*" at the beginning of a newline
     goto, // ->
     inter_open, // string interpolation {
@@ -68,6 +67,55 @@ pub const Tag = enum {
     invalid, // Anything that is not in here
     EOF, // End Of File
 };
+
+pub fn lexeme(tag: Tag) []const u8 {
+    return switch(tag) {
+        .keyword_const => "const",
+        .keyword_var => "var",
+        .keyword_if => "if",
+        .keyword_else => "else",
+        .keyword_end => "end",
+        .keyword_and => "and",
+        .keyword_or => "or",
+
+        .colon => ":",
+        .assign => "=",
+        .open_paren => "(",
+        .close_paren => ")",
+        .plus => "+",
+        .minus => "-",
+        .asterisk, .choice_marker => "*",
+        .slash => "/",
+        .underscore => "_",
+        .exclamation => "!",
+        .open_brace, .inter_open => "{",
+        .close_brace, .inter_close => "}",
+        .tilde => "~",
+        // Note that semi colons are implicit.
+        .semi_colon => "newline",
+
+        .equal_equal => "==",
+        .not_equal => "!=",
+        .less => "<",
+        .greater => ">",
+        .less_or_equal => "<=",
+        .greater_or_equal => ">=",
+
+        .identifier => "identifier",
+        .number => "number",
+
+        .plus_equal => "+=",
+        .minus_equal => "-=",
+        .asterisk_equal => "*=",
+        .slash_equal => "/=",
+
+        .string => "dialogue string",
+        .goto => "->",
+
+        .invalid => "Invalid Character",
+        .EOF => "End Of File"
+    };
+}
 
 pub const keywords = std.StaticStringMap(Tag).initComptime(.{
     .{ "const", .keyword_const },
