@@ -141,6 +141,9 @@ pub const DiagRenderer = struct {
             const spaces = buf[0 .. @min(pos.col, buf.len)];
             @memset(spaces, ' ');
 
+            // TODO: Maybe consider a "helper diagnostic line"
+            // For example, if there is an ident_mismatch,
+            // we can point to where the original identifier was used.
             std.debug.print(
                 \\{s}:{d}:{d} error: {s}
                 \\     |
@@ -159,12 +162,11 @@ pub const DiagRenderer = struct {
         }
     }
 
-    // TODO: Create a lexeme function for token
-    // Many tokens can be determined entirely by their tag.
-    // Then use that []const u8 value and print it out.
     fn errorMessage(self: *const DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
+        const slice = self.source_file.source[token.start .. token.end];
         const found = lexeme(token.tag);
+
         switch (err.tag) {
             // Parsing Errors
             .unexpected_EOF => {
@@ -192,28 +194,28 @@ pub const DiagRenderer = struct {
                 return w.writeAll("Integer cannot go beyond 256");
             },
             .ident_mismatch => {
-                return w.print("'{s}' is already defined as {s}", .{found, @tagName(err.data.initialized)});
+                return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});
             },
             .duplicate_var => {
-                return w.print("Variable '{s}' already exist", .{found});
+                return w.print("Variable '{s}' already exist", .{slice});
             },
             .undeclared_var => {
-                return w.print("Variable '{s}' not declared", .{found});
+                return w.print("Variable '{s}' not declared", .{slice});
             },
             .duplicate_label => {
-                return w.print("Label '{s}' already exist", .{found});
+                return w.print("Label '{s}' already exist", .{slice});
             },
             .unknown_jump => {
-                return w.print("Jump target '{s}' does not exist.", .{found});
+                return w.print("Jump target '{s}' does not exist.", .{slice});
             },
             .modified_const => {
-                return w.print("Cannot modify constant '{s}'", .{found});
+                return w.print("Cannot modify constant '{s}'", .{slice});
             },
             .too_many_scopes => {
                 return w.writeAll("Cannot generate more than 3 scopes");
             },
             .invalid_label_scope => {
-                return w.print("Label '{s}' must be placed in GLOBAL scope", .{found});
+                return w.print("Label '{s}' must be placed in GLOBAL scope", .{slice});
             },
             .too_many_choices => {
                 return w.writeAll("Too many choices in a block");

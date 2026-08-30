@@ -44,6 +44,7 @@ pub const Symbol = struct {
         constant,
         variable,
         speaker,
+        label,
     };
 };
 
@@ -95,17 +96,23 @@ pub fn deinit(sem: *Semantic) void {
     sem.resolved_jumps.deinit(sem.allocator);
 }
 
-fn report(sem: *Semantic, token_pos: TokenIndex, tag: ErrorTag) !void {
+fn reportSymbolTaken(sem: *Semantic, symbol_id: SymbolId, token_pos: TokenIndex) !void {
+    const symbol = sem.symbols.items[symbol_id];
     try sem.errors.append(sem.allocator, .{
+        .tag = .ident_mismatch,
         .token_pos = token_pos,
-        .tag = tag,
+        .data = .{ .initialized = symbol.kind },
     });
 }
 
 fn addScope(sem: *Semantic, token_pos: TokenIndex) !void {
     if (sem.scope_stack.items.len >= MAX_NUM_SCOPES) {
-        return sem.report(token_pos, .too_many_scopes);
+        return try sem.errors.append(sem.allocator, .{
+            .tag = .too_many_scopes,
+            .token_pos = token_pos,
+        });
     }
+
     sem.scope_stack.appendAssumeCapacity(0);
 }
 
@@ -122,14 +129,6 @@ fn addSymbol(sem: *Semantic, symbol: Symbol) !SymbolId {
     const idx: u32 = @intCast(sem.symbols.items.len);
     try sem.symbols.append(sem.allocator, symbol);
     return idx;
-}
-
-fn checkSymbolLabelConflict(sem: *Semantic, ident_id: IdentId) bool {
-    if (sem.symbol_table.contains(ident_id) or sem.label_table.contains(ident_id)) {
-        return true;
-    }
-
-    return false;
 }
 
 // The last node of a post-traversal list
@@ -155,12 +154,17 @@ pub fn analyze(allocator: Allocator, tree: *const ParseResult, file_name: []cons
         const ident_id = jump.ident_id;
         const token_pos = jump.token_pos;
         sem.label_table.get(jump.ident_id) orelse {
-            try sem.report(token_pos, .unknown_jump);
+            try sem.errors.append(allocator, .{
+                .tag = .unknown_jump,
+                .token_pos = token_pos,
+            });
             continue;
         };
 
-        if (sem.symbol_table.contains(ident_id))
-            try sem.report(token_pos, .ident_mismatch);
+        if (sem.symbol_table.get(ident_id)) |symbol_id| {
+            try sem.reportSymbolTaken(symbol_id, token_pos);
+            continue;
+        }
 
         sem.resolved_jumps.appendAssumeCapacity(ident_id);
     }
@@ -215,8 +219,12 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
             try sem.visitChoice(choice_node);
         }
 
-        if (count > MAX_NUM_CHOICES)
-            try sem.report(last_choice_pos, .too_many_choices);
+        if (count > MAX_NUM_CHOICES) {
+            try sem.errors.append(sem.allocator, .{
+                .tag = .too_many_choices,
+                .token_pos = last_choice_pos,
+            });
+        }
     }
 }
 
@@ -230,7 +238,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
         .if_stmt => sem.visitIfStmt(node),
         .dialogue => sem.visitDialogue(node),
         .label => sem.visitLabel(node),
-        else => sem.report(node.token_pos, .expected_token),
+        else => unreachable,
     };
 }
 
@@ -248,15 +256,32 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const name = sem.ast.tokenSlice(pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
 
-    if (sem.checkSymbolLabelConflict(ident_id))
-        return sem.report(pos, .ident_mismatch);
+    if (sem.label_table.contains(ident_id)) {
+        return sem.errors.append(sem.allocator, .{
+            .tag = .ident_mismatch,
+            .token_pos = pos,
+            .data = .{ .initialized = .label }
+        });
+    }
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         return switch (found.kind) {
-            .speaker => sem.report(pos, .ident_mismatch),
-            .variable, .constant => sem.report(pos, .duplicate_var),
+            .speaker => {
+                try sem.errors.append(sem.allocator, .{
+                    .tag = .ident_mismatch,
+                    .token_pos = pos,
+                    .data = .{ .initialized = .speaker }
+                });
+            },
+            .variable, .constant => {
+                try sem.errors.append(sem.allocator, .{
+                    .tag = .duplicate_var,
+                    .token_pos = pos,
+                });
+            },
+            else => unreachable,
         };
     }
 
@@ -285,15 +310,30 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const ident_name = sem.ast.tokenSlice(pos);
 
     const ident_id = try sem.interner.intern(sem.allocator, ident_name);
-    const symbol_id = sem.symbol_table.get(ident_id) orelse
-        return sem.report(pos, .undeclared_var);
+    const symbol_id = sem.symbol_table.get(ident_id) orelse {
+        return sem.errors.append(sem.allocator, .{
+            .tag = .undeclared_var,
+            .token_pos = pos,
+        });
+    };
 
     try sem.symbol_refs.append(sem.allocator, symbol_id);
     const symbol = sem.symbols.items[symbol_id];
 
     switch (symbol.kind) {
-        .speaker => return sem.report(pos, .ident_mismatch),
-        .constant => return sem.report(pos, .modified_const),
+        .speaker => {
+            return sem.errors.append(sem.allocator, .{
+                .tag = .ident_mismatch,
+                .token_pos = pos,
+                .data = .{ .initialized = .speaker }
+            });
+        },
+        .constant => {
+            return sem.errors.append(sem.allocator, .{
+                .tag = .modified_const,
+                .token_pos = pos,
+            });
+        },
         else => {},
     }
 
@@ -335,7 +375,7 @@ fn visitCompare(sem: *Semantic, node_idx: NodeIndex) !void {
         .equal_equal, .not_equal, .less,
         .less_or_equal, .greater,
         .greater_or_equal => sem.visitBinary(node.data, visitValue),
-        else => sem.report(node.token_pos, .expected_token),
+        else => unreachable,
     };
 }
 
@@ -357,16 +397,28 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
         .number => {
             // Base 10
             _ = std.fmt.parseInt(u8, name, 10) catch |err| {
-                if (err == std.fmt.ParseIntError.Overflow)
-                    return sem.report(token_pos, .int_overflow);
+                if (err == std.fmt.ParseIntError.Overflow) {
+                    return sem.errors.append(sem.allocator, .{
+                        .tag = .int_overflow,
+                        .token_pos = token_pos,
+                    });
+                }
             };
         },
         .var_ident => {
-            const symbol_id = sem.symbol_table.get(ident_id) orelse
-                return sem.report(token_pos, .undeclared_var);
+            const symbol_id = sem.symbol_table.get(ident_id) orelse {
+                return sem.errors.append(sem.allocator, .{
+                    .tag = .undeclared_var,
+                    .token_pos = token_pos,
+                });
+            };
 
-            if (symbol_id == sem.initializing_symbol)
-                return sem.report(token_pos, .undeclared_var);
+            if (symbol_id == sem.initializing_symbol) {
+                return sem.errors.append(sem.allocator, .{
+                    .tag = .undeclared_var,
+                    .token_pos = token_pos,
+                });
+            }
 
             try sem.symbol_refs.append(sem.allocator, symbol_id);
         },
@@ -379,7 +431,7 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
         // 2) Division by 0
         // Create a union field to hold uint.
         .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
-        else => try sem.report(token_pos, .expected_token),
+        else => unreachable,
     }
 }
 
@@ -404,8 +456,13 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     }
 
     const ident_id = try sem.interner.intern(sem.allocator, name);
-    if (sem.label_table.contains(ident_id))
-        return sem.report(token_pos, .ident_mismatch);
+    if (sem.label_table.contains(ident_id)) {
+        return sem.errors.append(sem.allocator, .{
+            .tag = .ident_mismatch,
+            .token_pos = token_pos,
+            .data = .{ .initialized = .label },
+        });
+    }
 
     var symbol_id: SymbolId = undefined;
 
@@ -415,7 +472,13 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
         const found = sem.symbols.items[symbol_id];
         switch (found.kind) {
             .speaker => {},
-            else => return sem.report(token_pos, .ident_mismatch),
+            else => |symbol_kind| {
+                return sem.errors.append(sem.allocator, .{
+                    .tag = .ident_mismatch,
+                    .token_pos = token_pos,
+                    .data = .{ .initialized = symbol_kind },
+                });
+            }
         }
     } else {
         symbol_id = try sem.addSymbol(.{
@@ -453,7 +516,7 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
         const ident_id = try sem.interner.intern(sem.allocator, jump_name);
 
         if (!sem.label_table.contains(ident_id)) {
-            try sem.unresolved_jumps.append(sem.allocator, .{
+            return sem.unresolved_jumps.append(sem.allocator, .{
                 .ident_id = ident_id,
                 .token_pos = token_pos,
             });
@@ -476,15 +539,24 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const label_name = sem.ast.tokenSlice(token_pos);
     const ident_id = try sem.interner.intern(sem.allocator, label_name);
 
-    if (sem.scope_stack.items.len != 0)
-        return sem.report(token_pos, .invalid_label_scope);
+    if (sem.scope_stack.items.len != 0) {
+        return sem.errors.append(sem.allocator, .{
+            .tag = .invalid_label_scope,
+            .token_pos = token_pos,
+        });
+    }
 
-    if (sem.checkSymbolLabelConflict(ident_id))
-        return sem.report(token_pos, .ident_mismatch);
+    if (sem.symbol_table.get(ident_id)) |symbol_id| {
+        return sem.reportSymbolTaken(symbol_id, token_pos);
+    }
 
     const entity = try sem.label_table.getOrPut(sem.allocator, ident_id);
-    if (entity.found_existing)
-        return sem.report(token_pos, .duplicate_label);
+    if (entity.found_existing) {
+        return sem.errors.append(sem.allocator, .{
+            .tag = .duplicate_label,
+            .token_pos = token_pos,
+        });
+    }
 
     try sem.labels.append(sem.allocator, ident_id);
 
