@@ -1,5 +1,5 @@
 const std = @import("std");
-const tok = @import("token.zig");
+const frontend = @import("frontend");
 const zig_node = @import("node.zig");
 const AstError = @import("diagnostic.zig").Error;
 
@@ -10,9 +10,8 @@ const Tag = zig_node.NodeTag;
 const NodeIndex = zig_node.NodeIndex;
 const invalid_node = zig_node.invalid_node;
 
-const Token = tok.Token;
-const TokenTag = tok.Tag;
-const TokenIndex = tok.TokenIndex;
+const Token = frontend.Token;
+const TokenIndex = frontend.TokenIndex;
 
 const nodeTagFromArithmetic = zig_node.nodeTagFromArithmetic;
 const nodeTagFromCompare = zig_node.nodeTagFromCompare;
@@ -61,7 +60,7 @@ fn peekToken(p: *Parser) Token {
     return p.tokens.get(p.token_pos);
 }
 
-fn peekTag(p: *Parser) TokenTag {
+fn peekTag(p: *Parser) Token.Tag {
     return p.tokens.get(p.token_pos).tag;
 }
 
@@ -69,7 +68,7 @@ fn next(p: *Parser) void {
     p.token_pos += 1;
 }
 
-fn expect(p: *Parser, expected: TokenTag) Error!TokenIndex {
+fn expect(p: *Parser, expected: Token.Tag) Error!TokenIndex {
     const idx = p.token_pos;
     const found = p.peekTag();
 
@@ -200,7 +199,7 @@ fn parseIdentStmt(p: *Parser) Error!NodeIndex {
 }
 
 // compound_stmt = ident ( "=" | "+=" | "-=" | "*=" | "/=" ) expr ;
-fn parseAssignStmt(p: *Parser, assign_tag: TokenTag, ident_pos: NodeIndex) Error!NodeIndex {
+fn parseAssignStmt(p: *Parser, assign_tag: Token.Tag, ident_pos: NodeIndex) Error!NodeIndex {
     const assign_pos = try p.expect(assign_tag);
     const expr = try p.parseExpr();
 
@@ -316,7 +315,7 @@ fn parseCompareExpr(p: *Parser) Error!NodeIndex {
 }
 
 // stmt_block = "{" { stmt } "}" ;
-fn parseStmtBlock(p: *Parser, comptime start_tag: TokenTag, comptime end_tag: TokenTag) Error!NodeIndex {
+fn parseStmtBlock(p: *Parser, comptime start_tag: Token.Tag, comptime end_tag: Token.Tag) Error!NodeIndex {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(p.allocator);
 
@@ -453,7 +452,7 @@ fn parseLabel(p: *Parser) Error!NodeIndex {
 //           EXPRESSIONS
 // ───────────────────────────────
 
-fn collectStmtUntil(p: *Parser, end_tag: TokenTag, stmts: *std.ArrayList(u32)) !Node.Range {
+fn collectStmtUntil(p: *Parser, end_tag: Token.Tag, stmts: *std.ArrayList(u32)) !Node.Range {
     while (p.peekTag() != end_tag and p.peekTag() != .EOF) {
         const stmt_index = p.parseStmt() catch {
             p.synchronize();

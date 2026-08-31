@@ -4,8 +4,6 @@ const token = @import("token.zig");
 const Allocator = std.mem.Allocator;
 
 const Token = token.Token;
-const Tag = token.Tag;
-const TokenError = token.TokenError;
 const keywords = token.keywords;
 
 const isAlphabetic = std.ascii.isAlphabetic;

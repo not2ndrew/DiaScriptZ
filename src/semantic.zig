@@ -1,5 +1,6 @@
 const std = @import("std");
-const tok = @import("token.zig");
+const frontend = @import("frontend");
+// const tok = @import("token.zig");
 const zig_node = @import("node.zig");
 const as = @import("ast.zig");
 const inter = @import("interner.zig");
@@ -8,9 +9,9 @@ const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
-const Token = tok.Token;
+const Token = frontend.Token;
+const TokenIndex = frontend.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
-const TokenIndex = tok.TokenIndex;
 
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);

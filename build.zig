@@ -3,8 +3,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const mod = b.addModule("DiaScriptZ", .{
-        .root_source_file = b.path("src/root.zig"),
+    const frontend = b.addModule("frontend", .{
+        .root_source_file = b.path("src/frontend.zig"),
         .target = target,
     });
 
@@ -15,7 +15,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .imports = &.{
-                .{ .name = "DiaScriptZ", .module = mod },
+                .{ .name = "frontend", .module = frontend },
             },
         }),
     });

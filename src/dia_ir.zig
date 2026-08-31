@@ -1,12 +1,14 @@
 const std = @import("std");
+const frontend = @import("frontend");
 const zig_node = @import("node.zig");
 const sym = @import("semantic.zig");
 const in = @import("interner.zig");
 const Ast = @import("ast.zig").Ast;
-const TokenIndex = @import("token.zig").TokenIndex;
 const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
+
+const TokenIndex = frontend.TokenIndex;
 
 const Node = zig_node.Node;
 const NodeIndex = zig_node.NodeIndex;

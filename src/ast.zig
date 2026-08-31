@@ -1,21 +1,22 @@
 const std = @import("std");
+const frontend = @import("frontend");
 const zig_node = @import("node.zig");
-const tok = @import("token.zig");
-const Tokenizer = @import("tokenizer.zig").Tokenizer;
+// const tok = @import("token.zig");
 const Parser = @import("parser.zig").Parser;
 const diag = @import("diagnostic.zig");
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
+const Tokenizer = frontend.Tokenizer;
+const Token = frontend.Token;
+const TokenIndex = frontend.TokenIndex;
+
+const Tokens = std.MultiArrayList(Token);
+
 const Node = zig_node.Node;
 const Nodes = std.MultiArrayList(Node);
 const NodeIndex = zig_node.NodeIndex;
-
-const Token = tok.Token;
-const Tokens = std.MultiArrayList(Token);
-const TokenIndex = tok.TokenIndex;
-const TokenTag = tok.Tag;
 
 const SourceFile = diag.SourceFile;
 const Error = diag.Error;
@@ -23,8 +24,8 @@ const Error = diag.Error;
 pub const Ast = struct {
     source: []const u8,
     allocator: Allocator,
-    tokens: std.MultiArrayList(Token).Slice,
-    nodes: std.MultiArrayList(Node).Slice,
+    tokens: Tokens.Slice,
+    nodes: Nodes.Slice,
     // extra_data holds:
     // 1) Variable-length AST payload storage
     // 2) Stores continuous ranges of NodeIndex values referenced by nodes.

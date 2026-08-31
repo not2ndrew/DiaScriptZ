@@ -1,17 +1,17 @@
 const std = @import("std");
+const frontend = @import("frontend");
 const zig_node = @import("node.zig");
-const tok = @import("token.zig");
 const sym = @import("semantic.zig");
 const ParseResult = @import("ast.zig").ParseResult;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
-const Token = tok.Token;
-const TokenTag = tok.Tag;
-const TokenIndex = tok.TokenIndex;
+const Token = frontend.Token;
+const TokenIndex = frontend.TokenIndex;
+const lexeme = frontend.lexeme;
+
 const Tokens = std.MultiArrayList(Token);
-const lexeme = tok.lexeme;
 
 const Kind = sym.Symbol.Kind;
 
@@ -46,7 +46,7 @@ pub const Error = struct {
 
     pub const Data = union {
         none: void,
-        expected: TokenTag,
+        expected: Token.Tag,
         initialized: Kind,
     };
 };

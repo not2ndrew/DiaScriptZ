@@ -1,5 +1,6 @@
 const std = @import("std");
-const token = @import("token.zig");
+// const token = @import("token.zig");
+const frontend = @import("frontend");
 
 pub const NodeIndex = u32;
 
@@ -7,8 +8,8 @@ pub const NodeIndex = u32;
 // AST consumer must handle it explicitly.
 pub const invalid_node = std.math.maxInt(NodeIndex);
 
-const Tag = token.Tag;
-const TokenIndex = token.TokenIndex;
+const Token = frontend.Token;
+const TokenIndex = frontend.TokenIndex;
 
 pub const NodeTag = enum {
     // Stmts
@@ -58,7 +59,7 @@ pub const NodeTag = enum {
     anonymous,
 };
 
-pub fn nodeTagFromArithmetic(token_tag: Tag) ?NodeTag {
+pub fn nodeTagFromArithmetic(token_tag: Token.Tag) ?NodeTag {
     return switch (token_tag) {
         .assign => .assign,
         .plus_equal => .plus_equal,
@@ -69,7 +70,7 @@ pub fn nodeTagFromArithmetic(token_tag: Tag) ?NodeTag {
     };
 }
 
-pub fn nodeTagFromCompare(token_tag: Tag) ?NodeTag {
+pub fn nodeTagFromCompare(token_tag: Token.Tag) ?NodeTag {
     return switch (token_tag) {
         .equal_equal => .equal_equal,
         .not_equal => .not_equal,
@@ -81,7 +82,7 @@ pub fn nodeTagFromCompare(token_tag: Tag) ?NodeTag {
     };
 }
 
-pub fn nodeTagFromBinary(token_tag: Tag) ?NodeTag {
+pub fn nodeTagFromBinary(token_tag: Token.Tag) ?NodeTag {
     return switch (token_tag) {
         .plus => .plus,
         .minus => .minus,
