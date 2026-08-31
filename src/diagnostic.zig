@@ -1,6 +1,5 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const zig_node = @import("node.zig");
 const sym = @import("semantic.zig");
 const ParseResult = @import("ast.zig").ParseResult;
 

@@ -1,7 +1,5 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const zig_node = @import("node.zig");
-// const tok = @import("token.zig");
 const Parser = @import("parser.zig").Parser;
 const diag = @import("diagnostic.zig");
 
@@ -14,9 +12,9 @@ const TokenIndex = frontend.TokenIndex;
 
 const Tokens = std.MultiArrayList(Token);
 
-const Node = zig_node.Node;
+const Node = frontend.Node;
 const Nodes = std.MultiArrayList(Node);
-const NodeIndex = zig_node.NodeIndex;
+const NodeIndex = frontend.NodeIndex;
 
 const SourceFile = diag.SourceFile;
 const Error = diag.Error;

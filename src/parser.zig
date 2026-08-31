@@ -1,21 +1,19 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const zig_node = @import("node.zig");
 const AstError = @import("diagnostic.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
-const Node = zig_node.Node;
-const Tag = zig_node.NodeTag;
-const NodeIndex = zig_node.NodeIndex;
-const invalid_node = zig_node.invalid_node;
+const Node = frontend.Node;
+const NodeIndex = frontend.NodeIndex;
+const invalid_node = frontend.invalid_node;
 
 const Token = frontend.Token;
 const TokenIndex = frontend.TokenIndex;
 
-const nodeTagFromArithmetic = zig_node.nodeTagFromArithmetic;
-const nodeTagFromCompare = zig_node.nodeTagFromCompare;
-const nodeTagFromBinary = zig_node.nodeTagFromBinary;
+const nodeTagFromArithmetic = frontend.nodeTagFromArithmetic;
+const nodeTagFromCompare = frontend.nodeTagFromCompare;
+const nodeTagFromBinary = frontend.nodeTagFromBinary;
 
 const Tokens = std.MultiArrayList(Token);
 
@@ -94,7 +92,7 @@ fn addNodeRange(p: *Parser, parts: []const u32) Error!Node.Range {
 }
 
 
-fn addNode(p: *Parser, tag: Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
+fn addNode(p: *Parser, tag: Node.Tag, token_pos: TokenIndex, data: Node.Data) !NodeIndex {
     try p.nodes.append(p.allocator, .{
         .tag = tag,
         .token_pos = token_pos,
@@ -366,7 +364,7 @@ fn parseChoice(p: *Parser) Error!NodeIndex {
 }
 
 // string = string_part { string_part } [ goto ] ;
-fn parseDialogueBody(p: *Parser, comptime tag: Tag,
+fn parseDialogueBody(p: *Parser, comptime tag: Node.Tag,
 token_pos: TokenIndex, speaker: NodeIndex) Error!NodeIndex {
     var dia_parts: std.ArrayList(u32) = .empty;
     defer dia_parts.deinit(p.allocator);
@@ -470,7 +468,7 @@ fn collectStmtUntil(p: *Parser, end_tag: Token.Tag, stmts: *std.ArrayList(u32)) 
     return try p.addNodeRange(stmts.items);
 }
 
-fn parseGenericIdent(p: *Parser, comptime tag: Tag) Error!NodeIndex {
+fn parseGenericIdent(p: *Parser, comptime tag: Node.Tag) Error!NodeIndex {
     const ident_pos = try p.expect(.identifier);
 
     return switch (tag) {
