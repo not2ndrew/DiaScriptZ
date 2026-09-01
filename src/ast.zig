@@ -92,7 +92,7 @@ pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !Pars
     return parseFromTokens(allocator, source_file, token_slice, file_name);
 }
 
-fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice, file_name: []const u8) !ParseResult {
+fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
     var parser: Parser = .{
         .allocator = allocator,
         .tokens = tokens,
@@ -103,7 +103,6 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
     try parser.parseAll();
 
     if (parser.errors.items.len > 0) {
-        try diag.reportErrors(allocator, &parser.errors, source_file, tokens, file_name);
         return error.ParseError;
     }
 

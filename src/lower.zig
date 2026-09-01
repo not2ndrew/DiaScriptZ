@@ -45,8 +45,8 @@ pub fn deinit(low: *Lower, allocator: Allocator) void {
     low.pool.deinit(allocator);
 }
 
-pub fn lower(allocator: Allocator, parse_tree: ParseResult, file_name: []const u8) !void {
-    var low = try sem.analyze(allocator, &parse_tree, file_name);
+pub fn lower(allocator: Allocator, parse_tree: ParseResult) !void {
+    var low = try sem.analyze(allocator, &parse_tree);
     defer low.deinit(allocator);
 
     // The AST -> IR lowering process assumes an AST

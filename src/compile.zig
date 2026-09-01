@@ -1,7 +1,6 @@
 const std = @import("std");
 const tree = @import("ast.zig");
 const low = @import("lower.zig");
-const diag = @import("diagnostic.zig");
 
 const Io = std.Io;
 const Init = std.process.Init;
@@ -10,7 +9,6 @@ const Arena = std.heap.ArenaAllocator;
 const DelimiterError = std.Io.Reader.DelimiterError;
 
 const ParseResult = tree.ParseResult;
-const DiagRenderer = diag.DiagRenderer;
 
 pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
     const source = try readFile(init, allocator, file_name);
@@ -18,13 +16,13 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
 
     // Generate AST from source
     // TODO: Make sure to free parse_tree AFTER code optimization is complete.
-    var parse_tree = tree.parse(allocator, source, file_name) catch |err| {
+    var parse_tree = tree.parse(allocator, source) catch |err| {
         if (err == error.ParseError) return;
         return err;
     };
     defer parse_tree.deinit(allocator);
 
-    low.lower(allocator, parse_tree, file_name) catch |err| {
+    low.lower(allocator, parse_tree) catch |err| {
         if (err == error.SemanticError) return;
         return err;
     };

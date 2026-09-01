@@ -137,7 +137,7 @@ fn addSymbol(sem: *Semantic, symbol: Symbol) !SymbolId {
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(allocator: Allocator, tree: *const ParseResult, file_name: []const u8) !Lower {
+pub fn analyze(allocator: Allocator, tree: *const ParseResult) !Lower {
     var sem: Semantic = .{
         .allocator = allocator,
         .ast = &tree.ast,
@@ -174,7 +174,6 @@ pub fn analyze(allocator: Allocator, tree: *const ParseResult, file_name: []cons
     }
 
     if (sem.errors.items.len > 0) {
-        try diag.reportErrors(allocator, &sem.errors, tree.source_file, tree.ast.tokens, file_name);
         return error.SemanticError;
     }
 
