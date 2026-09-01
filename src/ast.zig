@@ -103,13 +103,7 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
     try parser.parseAll();
 
     if (parser.errors.items.len > 0) {
-        const renderer: diag.DiagRenderer = .{
-            .source_file = source_file,
-            .tokens = tokens,
-        };
-
-        // Diagnostics
-        try renderer.printErrors(&parser.errors, allocator, file_name);
+        try diag.reportErrors(allocator, &parser.errors, source_file, tokens, file_name);
         return error.ParseError;
     }
 

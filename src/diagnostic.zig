@@ -1,7 +1,5 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sym = @import("semantic.zig");
-const ParseResult = @import("ast.zig").ParseResult;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -11,8 +9,6 @@ const TokenIndex = frontend.token.TokenIndex;
 const lexeme = frontend.token.lexeme;
 
 const Tokens = std.MultiArrayList(Token);
-
-const Kind = sym.Symbol.Kind;
 
 pub const Error = struct {
     token_pos: TokenIndex,
@@ -43,6 +39,13 @@ pub const Error = struct {
         too_many_choices,
     };
 
+    pub const Kind = enum {
+        constant,
+        variable,
+        speaker,
+        label,
+    };
+
     pub const Data = union {
         none: void,
         expected: Token.Tag,
@@ -50,10 +53,10 @@ pub const Error = struct {
     };
 };
 
-pub fn printErrors(allocator: Allocator, errors: *std.ArrayList(Error), parse_tree: *const ParseResult, file_name: []const u8) !void {
+pub fn reportErrors(allocator: Allocator, errors: *std.ArrayList(Error), source_file: SourceFile, tokens: Tokens.Slice, file_name: []const u8) !void {
     const renderer: DiagRenderer = .{
-        .source_file = parse_tree.source_file,
-        .tokens = parse_tree.ast.tokens,
+        .source_file = source_file,
+        .tokens = tokens,
     };
 
     // Diagnostics

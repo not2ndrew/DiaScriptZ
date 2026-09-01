@@ -42,7 +42,6 @@ pub const Symbol = struct {
         constant,
         variable,
         speaker,
-        label,
     };
 };
 
@@ -94,12 +93,19 @@ pub fn deinit(sem: *Semantic) void {
     sem.resolved_jumps.deinit(sem.allocator);
 }
 
+// TODO: Conversion from Symbol Kind to Error Kind feels
+// uncomfortable, this is done because diagnostic.zig should
+// NOT be dependent on the import of semantic.zig.
+// We can guarantee that it is NOT speaker based on the switch case.
+// Therefore, it is either constant or variable.
 fn reportSymbolTaken(sem: *Semantic, symbol_id: SymbolId, token_pos: TokenIndex) !void {
     const symbol = sem.symbols.items[symbol_id];
+    const num = @intFromEnum(symbol.kind);
+    const kind: diag.Error.Kind = @enumFromInt(num);
     try sem.errors.append(sem.allocator, .{
         .tag = .ident_mismatch,
         .token_pos = token_pos,
-        .data = .{ .initialized = symbol.kind },
+        .data = .{ .initialized = kind },
     });
 }
 
@@ -168,7 +174,7 @@ pub fn analyze(allocator: Allocator, tree: *const ParseResult, file_name: []cons
     }
 
     if (sem.errors.items.len > 0) {
-        try diag.printErrors(allocator, &sem.errors, tree, file_name);
+        try diag.reportErrors(allocator, &sem.errors, tree.source_file, tree.ast.tokens, file_name);
         return error.SemanticError;
     }
 
@@ -279,7 +285,6 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
                     .token_pos = pos,
                 });
             },
-            else => unreachable,
         };
     }
 
@@ -471,10 +476,12 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
         switch (found.kind) {
             .speaker => {},
             else => |symbol_kind| {
+                const num = @intFromEnum(symbol_kind);
+                const kind: diag.Error.Kind = @enumFromInt(num);
                 return sem.errors.append(sem.allocator, .{
                     .tag = .ident_mismatch,
                     .token_pos = token_pos,
-                    .data = .{ .initialized = symbol_kind },
+                    .data = .{ .initialized = kind },
                 });
             }
         }
