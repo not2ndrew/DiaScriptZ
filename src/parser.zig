@@ -4,16 +4,16 @@ const AstError = @import("diagnostic.zig").Error;
 
 const Allocator = std.mem.Allocator;
 
-const Node = frontend.Node;
-const NodeIndex = frontend.NodeIndex;
-const invalid_node = frontend.invalid_node;
+const Node = frontend.node.Node;
+const NodeIndex = frontend.node.NodeIndex;
+const invalid_node = frontend.node.invalid_node;
 
-const Token = frontend.Token;
-const TokenIndex = frontend.TokenIndex;
+const Token = frontend.token.Token;
+const TokenIndex = frontend.token.TokenIndex;
 
-const nodeTagFromArithmetic = frontend.nodeTagFromArithmetic;
-const nodeTagFromCompare = frontend.nodeTagFromCompare;
-const nodeTagFromBinary = frontend.nodeTagFromBinary;
+const nodeTagFromArithmetic = frontend.node.nodeTagFromArithmetic;
+const nodeTagFromCompare = frontend.node.nodeTagFromCompare;
+const nodeTagFromBinary = frontend.node.nodeTagFromBinary;
 
 const Tokens = std.MultiArrayList(Token);
 

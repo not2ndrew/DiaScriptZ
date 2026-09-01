@@ -7,14 +7,14 @@ const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
 const Tokenizer = frontend.Tokenizer;
-const Token = frontend.Token;
-const TokenIndex = frontend.TokenIndex;
+const Token = frontend.token.Token;
+const TokenIndex = frontend.token.TokenIndex;
 
 const Tokens = std.MultiArrayList(Token);
 
-const Node = frontend.Node;
+const Node = frontend.node.Node;
 const Nodes = std.MultiArrayList(Node);
-const NodeIndex = frontend.NodeIndex;
+const NodeIndex = frontend.node.NodeIndex;
 
 const SourceFile = diag.SourceFile;
 const Error = diag.Error;

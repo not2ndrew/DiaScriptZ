@@ -7,11 +7,11 @@ const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
-const TokenIndex = frontend.TokenIndex;
+const TokenIndex = frontend.token.TokenIndex;
 
-const Node = frontend.Node;
-const NodeIndex = frontend.NodeIndex;
-const invalid_node = frontend.invalid_node;
+const Node = frontend.node.Node;
+const NodeIndex = frontend.node.NodeIndex;
+const invalid_node = frontend.node.invalid_node;
 
 const Symbol = sym.Symbol;
 const SymbolId = sym.SymbolId;

@@ -7,13 +7,13 @@ const Lower = @import("lower.zig").Lower;
 
 const Allocator = std.mem.Allocator;
 
-const Token = frontend.Token;
-const TokenIndex = frontend.TokenIndex;
+const Token = frontend.token.Token;
+const TokenIndex = frontend.token.TokenIndex;
 const Tokens = std.MultiArrayList(Token);
 
-const Node = frontend.Node;
-const invalid_node = frontend.invalid_node;
-const NodeIndex = frontend.NodeIndex;
+const Node = frontend.node.Node;
+const invalid_node = frontend.node.invalid_node;
+const NodeIndex = frontend.node.NodeIndex;
 const Nodes = std.MultiArrayList(Node);
 
 const Ast = as.Ast;

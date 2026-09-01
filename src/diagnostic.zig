@@ -6,9 +6,9 @@ const ParseResult = @import("ast.zig").ParseResult;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
-const Token = frontend.Token;
-const TokenIndex = frontend.TokenIndex;
-const lexeme = frontend.lexeme;
+const Token = frontend.token.Token;
+const TokenIndex = frontend.token.TokenIndex;
+const lexeme = frontend.token.lexeme;
 
 const Tokens = std.MultiArrayList(Token);
 

@@ -3,7 +3,7 @@ const frontend = @import("frontend");
 const ir = @import("dia_ir.zig");
 const Optimize = @import("optimize.zig").Optimize;
 
-const TokenIndex = frontend.TokenIndex;
+const TokenIndex = frontend.token.TokenIndex;
 
 const Inst = ir.Inst;
 const InstId = ir.InstId;
