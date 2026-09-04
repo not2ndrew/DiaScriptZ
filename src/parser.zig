@@ -1,6 +1,6 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const AstError = @import("diagnostic.zig").Error;
+const ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,6 +14,8 @@ const TokenIndex = frontend.token.TokenIndex;
 const nodeTagFromArithmetic = frontend.node.nodeTagFromArithmetic;
 const nodeTagFromCompare = frontend.node.nodeTagFromCompare;
 const nodeTagFromBinary = frontend.node.nodeTagFromBinary;
+
+const AstError = ast.Error;
 
 const Tokens = std.MultiArrayList(Token);
 
@@ -71,9 +73,14 @@ fn expect(p: *Parser, expected: Token.Tag) Error!TokenIndex {
     const found = p.peekTag();
 
     if (found != expected) {
+        const pos = if (found == .EOF)
+            idx - 1
+        else
+            idx;
+
         try p.errors.append(p.allocator, .{
             .tag = .expected_token,
-            .token_pos = idx,
+            .token_pos = pos,
             .data = .{ .expected = expected }
         });
 
@@ -560,12 +567,15 @@ fn parseFactor(p: *Parser) Error!NodeIndex {
             return expr;
         },
         else => {
-            // TODO: Expected expression
-            // expr such as number, identifier, (MAYBE bool)
-            try p.errors.append(p.allocator, .{
-                .tag = .expected_ident,
-                .token_pos = idx,
-            });
+            // TODO: This should point at the current token. Not the previous.
+            // If I were to do p.token_pos instead of p.token_pos - 1,
+            // error bundle would not show the entire source line.
+            // try p.errors.append(p.allocator, .{
+            //     .tag = .expected_expr,
+            //     .token_pos = p.token_pos,
+            // });
+            _ = try p.expect(.identifier);
+
             return Error.ParseError;
         },
     }

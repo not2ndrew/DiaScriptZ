@@ -65,8 +65,10 @@ pub const Token = struct {
 
 };
 
-pub fn lexeme(tag: Token.Tag) []const u8 {
+pub fn lexeme(tag: Token.Tag) ?[]const u8 {
     return switch(tag) {
+        .string, .invalid => null,
+
         .keyword_const => "const",
         .keyword_var => "var",
         .keyword_if => "if",
@@ -106,10 +108,10 @@ pub fn lexeme(tag: Token.Tag) []const u8 {
         .asterisk_equal => "*=",
         .slash_equal => "/=",
 
-        .string => "dialogue string",
+        // .string => "dialogue string",
         .goto => "->",
 
-        .invalid => "Invalid Character",
+        // .invalid => "Invalid Character",
         .EOF => "End Of File"
     };
 }

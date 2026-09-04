@@ -1,6 +1,7 @@
 const std = @import("std");
 const tree = @import("ast.zig");
 const low = @import("lower.zig");
+const bundle = @import("error_bundle.zig");
 
 const Io = std.Io;
 const Init = std.process.Init;
@@ -9,7 +10,11 @@ const Arena = std.heap.ArenaAllocator;
 const DelimiterError = std.Io.Reader.DelimiterError;
 
 const ParseResult = tree.ParseResult;
+const Ast = tree.Ast;
 
+const ErrorBundle = bundle.ErrorBundle;
+
+// TODO: Get file_path instead of file_name.
 pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
     const source = try readFile(init, allocator, file_name);
     defer allocator.free(source);
@@ -22,10 +27,13 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     };
     defer parse_tree.deinit(allocator);
 
-    low.lower(allocator, parse_tree) catch |err| {
-        if (err == error.SemanticError) return;
-        return err;
-    };
+    if (parse_tree.errors.len > 0)
+        try printAstErrorsToStderr(allocator, init.io, parse_tree, file_name);
+
+    // low.lower(allocator, parse_tree) catch |err| {
+    //     if (err == error.SemanticError) return;
+    //     return err;
+    // };
 }
 
 /// Make sure to free the []const u8 result!!!
@@ -52,4 +60,16 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     }
 
     return source;
+}
+
+fn printAstErrorsToStderr(allocator: Allocator, io: Io, parse_tree: ParseResult, file_path: []const u8) !void {
+    var error_bundle: ErrorBundle = .{
+        .allocator = allocator,
+        .source = parse_tree.ast.source,
+    };
+    defer error_bundle.deinit();
+
+    try error_bundle.addAstErrorMessages(parse_tree.ast, parse_tree.errors);
+
+    return error_bundle.renderToStderr(io, file_path);
 }

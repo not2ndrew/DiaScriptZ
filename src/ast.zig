@@ -1,7 +1,6 @@
 const std = @import("std");
 const frontend = @import("frontend");
 const Parser = @import("parser.zig").Parser;
-const diag = @import("diagnostic.zig");
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -9,6 +8,7 @@ const Writer = std.Io.Writer;
 const Tokenizer = frontend.Tokenizer;
 const Token = frontend.token.Token;
 const TokenIndex = frontend.token.TokenIndex;
+const lexeme = frontend.token.lexeme;
 
 const Tokens = std.MultiArrayList(Token);
 
@@ -16,56 +16,72 @@ const Node = frontend.node.Node;
 const Nodes = std.MultiArrayList(Node);
 const NodeIndex = frontend.node.NodeIndex;
 
-const SourceFile = diag.SourceFile;
-const Error = diag.Error;
+pub const Error = struct {
+    token_pos: TokenIndex,
+    tag: Tag,
+    data: Data = .{ .none = {} },
 
-pub const Ast = struct {
-    source: []const u8,
-    allocator: Allocator,
-    tokens: Tokens.Slice,
-    nodes: Nodes.Slice,
-    // extra_data holds:
-    // 1) Variable-length AST payload storage
-    // 2) Stores continuous ranges of NodeIndex values referenced by nodes.
-    extra_data: []u32,
+    pub const Tag = enum {
+        // Parsing Errors
+        unexpected_EOF,
+        expected_token,
+        expected_ident,
+        expected_expr,
+        expected_arith_op,
+        expected_compar_op,
+        expected_dialogue,
+    };
 
-    pub fn deinit(ast: *Ast) void {
-        ast.nodes.deinit(ast.allocator);
-        ast.tokens.deinit(ast.allocator);
-        ast.allocator.free(ast.extra_data);
-    }
-
-    pub fn tokenSlice(ast: *const Ast, token_pos: TokenIndex) []const u8 {
-        const token = ast.tokens.get(token_pos);
-        return ast.source[token.start..token.end];
-    }
+    pub const Data = union {
+        none: void,
+        expected: Token.Tag,
+    };
 };
+
+pub const Ast = @This();
+
+source: []const u8,
+allocator: Allocator,
+tokens: Tokens.Slice,
+nodes: Nodes.Slice,
+// extra_data holds:
+// 1) Variable-length AST payload storage
+// 2) Stores continuous ranges of NodeIndex values referenced by nodes.
+extra_data: []u32,
+
+pub fn deinit(ast: *Ast) void {
+    ast.nodes.deinit(ast.allocator);
+    ast.tokens.deinit(ast.allocator);
+    ast.allocator.free(ast.extra_data);
+}
+
+fn tokenSlice(ast: Ast, token_pos: TokenIndex) []const u8 {
+    const token = ast.tokens.get(token_pos);
+    if (lexeme(token.tag)) |slice| {
+        return slice;
+    }
+
+    return ast.source[token.start .. token.end];
+}
 
 pub const ParseResult = struct {
     ast: Ast,
-    source_file: SourceFile,
+    errors: []Error,
 
     pub fn deinit(p: *ParseResult, allocator: Allocator) void {
-        allocator.free(p.source_file.newline_bytes);
+        allocator.free(p.errors);
         p.ast.deinit();
     }
 };
 
 /// Make sure to deinit() nodes, stmts, and tokens
-pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !ParseResult {
+pub fn parse(allocator: Allocator, buf: []const u8) !ParseResult {
     var tokens: Tokens = .empty;
     defer tokens.deinit(allocator);
-
-    // For error diagnostics, we store the byte positions
-    // of ALL newline characters.
-    // https://www.reddit.com/r/Compilers/comments/1bg5r9m/how_do_you_propagate_line_number_information_for/
-    var newline_bytes: std.ArrayList(usize) = .empty;
-    defer newline_bytes.deinit(allocator);
 
     // lines -> tokens
     var tokenizer: Tokenizer = .{
         .allocator = allocator,
-        .newline_bytes = &newline_bytes,
         .buffer = buf,
     };
 
@@ -76,23 +92,14 @@ pub fn parse(allocator: Allocator, buf: []const u8, file_name: []const u8) !Pars
         if (token.tag == .EOF) break;
     }
 
-    const newline_slice = try newline_bytes.toOwnedSlice(allocator);
     var token_slice = tokens.toOwnedSlice();
 
-    errdefer {
-        allocator.free(newline_slice);
-        token_slice.deinit(allocator);
-    }
+    errdefer token_slice.deinit(allocator);
 
-    const source_file: SourceFile = .{
-        .newline_bytes = newline_slice,
-        .source = buf,
-    };
-
-    return parseFromTokens(allocator, source_file, token_slice, file_name);
+    return parseFromTokens(allocator, buf, token_slice);
 }
 
-fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens.Slice) !ParseResult {
+fn parseFromTokens(allocator: Allocator, source: []const u8, tokens: Tokens.Slice) !ParseResult {
     var parser: Parser = .{
         .allocator = allocator,
         .tokens = tokens,
@@ -102,14 +109,10 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
     // tokens -> AST
     try parser.parseAll();
 
-    if (parser.errors.items.len > 0) {
-        return error.ParseError;
-    }
-
     // Converting to slice removes all excess memory in nodes and stmts.
     // This also means you own the memory. So call deinit on ast when finished.
     const ast: Ast = .{
-        .source = source_file.source,
+        .source = source,
         .allocator = allocator,
         .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
@@ -118,6 +121,39 @@ fn parseFromTokens(allocator: Allocator, source_file: SourceFile, tokens: Tokens
 
     return .{
         .ast = ast,
-        .source_file = source_file,
+        .errors = try parser.errors.toOwnedSlice(allocator),
     };
+}
+
+// DIAGNOSTICS
+pub fn errorMessage(ast: Ast, w: *std.Io.Writer, err: Error) std.Io.Writer.Error!void {
+    const found = ast.tokenSlice(err.token_pos);
+
+    switch (err.tag) {
+        // Parsing Errors
+        .unexpected_EOF => {
+            return w.writeAll("Expected expression, found EOF");
+        },
+        .expected_token => {
+            const expected_token = ast.tokens.get(err.token_pos);
+            const expected = lexeme(err.data.expected)
+                orelse ast.source[expected_token.start .. expected_token.end];
+            return w.print("Expected '{s}', found '{s}'", .{expected, found});
+        },
+        .expected_ident => {
+            return w.print("Expected identifier, found '{s}'", .{found});
+        },
+        .expected_expr => {
+            return w.writeAll("Expected number or identifier");
+        },
+        .expected_arith_op => {
+            return w.print("Expected arithmetic operator, found '{s}'", .{found});
+        },
+        .expected_compar_op => {
+            return w.print("Expected comparison operator, found '{s}'", .{found});
+        },
+        .expected_dialogue => {
+            return w.print("Expected dialogue, found '{s}'", .{found});
+        },
+    }
 }

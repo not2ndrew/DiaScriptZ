@@ -1,6 +1,2 @@
-x: There are 10 apples avaliable.
-
-~ x
-end
-var y = 10
-
+var x = !
+const y = ?

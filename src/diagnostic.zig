@@ -164,6 +164,8 @@ pub const DiagRenderer = struct {
         }
     }
 
+    // TODO: Split parsing and semantic errors into two different functions.
+    // Only parsing requires lexeme and semantic uses slice.
     fn errorMessage(self: *const DiagRenderer, w: *Writer, err: Error) Writer.Error!void {
         const token = self.tokens.get(err.token_pos);
         const slice = self.source_file.source[token.start .. token.end];

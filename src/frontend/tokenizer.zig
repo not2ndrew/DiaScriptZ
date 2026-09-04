@@ -18,7 +18,6 @@ const Mode = enum {
 pub const Tokenizer = @This();
 
 allocator: Allocator,
-newline_bytes: *std.ArrayList(usize),
 buffer: []const u8,
 index: usize = 0,
 mode: Mode = .normal,
@@ -32,8 +31,6 @@ fn isIdentChar(c: u8) bool {
 }
 
 fn consumeNewline(self: *Tokenizer) !void {
-    try self.newline_bytes.append(self.allocator, self.index);
-
     self.index += 1;
     self.line_start = true;
     self.mode = .normal;
@@ -118,7 +115,7 @@ pub fn next(self: *Tokenizer) !Token {
         .end = self.index,
     };
 
-    if (self.index >= len) {
+    if (self.index == len) {
         return .{
             .tag = .EOF,
             .start = self.index,
@@ -134,7 +131,6 @@ pub fn next(self: *Tokenizer) !Token {
     switch (ch) {
         '\n' => {
             // Implicit semi_colon
-            try self.newline_bytes.append(self.allocator, start);
             result.tag = .semi_colon;
             self.line_start = true;
             self.mode = .normal;
