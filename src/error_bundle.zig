@@ -20,6 +20,7 @@ pub const String = u32;
 pub const ErrorMessage = struct {
     source_idx: String,
     error_idx: String,
+    span_len: u32,
     line: u32,
     col: u32,
 };
@@ -30,6 +31,8 @@ pub const LineInfo = struct {
     slice: []const u8,
 };
 
+// TODO: Unless necessary, find a way to remove duplicate code
+// from Ast and Semantic errors functions.
 pub const ErrorBundle = @This();
 
 allocator: Allocator,
@@ -178,6 +181,7 @@ pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
         try eb.errors.append(eb.allocator, .{
             .source_idx = source_idx,
             .error_idx = err_idx,
+            .span_len = @intCast(token.end - token.start),
             .line = line_info.line,
             .col = line_info.col,
         });
@@ -203,6 +207,7 @@ pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !voi
         try eb.errors.append(eb.allocator, .{
             .source_idx = source_idx,
             .error_idx = err_idx,
+            .span_len = @intCast(token.end - token.start),
             .line = line_info.line,
             .col = line_info.col,
         });
@@ -211,10 +216,6 @@ pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !voi
     }
 }
 
-// This is where I actually print errors.
-// Note that Parsing and Semantic Errors are handled separately.
-// So we need two different functions to handle both of them.
-// Use this function to converge both of them.
 pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void {
     var diagnostic = try eb.toOwnDiagnostic();
     defer diagnostic.deinit(eb.allocator);
@@ -238,8 +239,8 @@ pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void
         try writer.splatByteAll(' ', before_caret);
         try writer.writeByte('^');
 
-        // TODO: Insert '~' to highlight error of length 2 or more.
-        // However, I need token span to get the exact start and len.
+        // Use -1 since '^' already takes up 1 space.
+        try writer.splatByteAll('~', err.span_len - 1);
         try writer.writeByte('\n');
     }
 

@@ -1,2 +1,4 @@
 var abc = 1
 abc += 1
+
+const abc = 10
