@@ -1,4 +1,5 @@
 const std = @import("std");
+const Lower = @import("lower.zig").Lower;
 const frontend = @import("frontend");
 const inter = @import("interner.zig");
 
@@ -77,21 +78,25 @@ pub const Error = struct {
 };
 
 pub const DecoratedAst = struct {
-    symbols: []Symbol,
-    labels: []IdentId,
-    symbol_refs: []SymbolId,
-    jumps: []IdentId,
-    pool: InternPool,
+    decorated: Decorated,
     errors: []Error,
 
     pub fn deinit(ast: *DecoratedAst, allocator: Allocator) void {
-        allocator.free(ast.symbols);
-        allocator.free(ast.labels);
-        allocator.free(ast.symbol_refs);
-        allocator.free(ast.jumps);
-        ast.pool.deinit(allocator);
+        allocator.free(ast.decorated.symbols);
+        allocator.free(ast.decorated.labels);
+        allocator.free(ast.decorated.symbol_refs);
+        allocator.free(ast.decorated.jumps);
+        ast.decorated.pool.deinit(allocator);
         allocator.free(ast.errors);
     }
+
+    pub const Decorated = struct {
+        symbols: []Symbol,
+        labels: []IdentId,
+        symbol_refs: []SymbolId,
+        jumps: []IdentId,
+        pool: InternPool,
+    };
 };
 
 // Program variables and jump variables are handled differently.
@@ -218,11 +223,13 @@ pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     }
 
     return .{
-        .symbols = try sem.symbols.toOwnedSlice(allocator),
-        .labels = try sem.labels.toOwnedSlice(allocator),
-        .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
-        .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
-        .pool = try sem.interner.finalize(allocator),
+        .decorated = .{
+            .symbols = try sem.symbols.toOwnedSlice(allocator),
+            .labels = try sem.labels.toOwnedSlice(allocator),
+            .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
+            .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
+            .pool = try sem.interner.finalize(allocator),
+        },
         .errors = try sem.errors.toOwnedSlice(allocator),
     };
 }

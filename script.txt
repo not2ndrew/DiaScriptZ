@@ -1,2 +1,2 @@
 var abc = 1
-var abc = 2
+abc += 1
