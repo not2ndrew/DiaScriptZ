@@ -1,7 +1,6 @@
 const std = @import("std");
 const frontend = @import("frontend");
 const inter = @import("interner.zig");
-const LowerResult = @import("lower.zig").LowerResult;
 
 const Allocator = std.mem.Allocator;
 
@@ -15,7 +14,6 @@ const NodeIndex = frontend.node.NodeIndex;
 const Nodes = std.MultiArrayList(Node);
 
 const Ast = frontend.ast.Ast;
-const ParseResult = frontend.ast.ParseResult;
 
 const InternPool = inter.InternPool;
 const Interner = inter.Interner;
@@ -24,6 +22,7 @@ const Span = inter.Span;
 
 const MAX_NUM_SCOPES = 3;
 pub const MAX_NUM_CHOICES = 4;
+
 const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
 const LabelTable = std.array_hash_map.Auto(IdentId, void);
 
@@ -94,44 +93,6 @@ pub const DecoratedAst = struct {
         allocator.free(ast.errors);
     }
 };
-
-pub fn errorMessage(tokens: *std.MultiArrayList(Token).Slice, w: *std.Io.Writer, err: Error) std.Io.Writer.Error!void {
-    const slice = tokens.get(err.token_pos);
-
-    switch (err.tag) {
-        .int_overflow => {
-            return w.writeAll("Integer cannot go beyond 256");
-        },
-        // TODO: This requires additional note to show where it is already initialized at.
-        .ident_mismatch => {
-            return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});
-        },
-        .duplicate_var => {
-            return w.print("Variable '{s}' already exist", .{slice});
-        },
-        .undeclared_var => {
-            return w.print("Variable '{s}' not declared", .{slice});
-        },
-        .duplicate_label => {
-            return w.print("Label '{s}' already exist", .{slice});
-        },
-        .unknown_jump => {
-            return w.print("Jump target '{s}' does not exist.", .{slice});
-        },
-        .modified_const => {
-            return w.print("Cannot modify constant '{s}'", .{slice});
-        },
-        .too_many_scopes => {
-            return w.writeAll("Cannot generate more than 3 scopes");
-        },
-        .invalid_label_scope => {
-            return w.print("Label '{s}' must be placed in GLOBAL scope", .{slice});
-        },
-        .too_many_choices => {
-            return w.writeAll("Too many choices in a block");
-        },
-    }
-}
 
 // Program variables and jump variables are handled differently.
 // Program variables must be declared first before using it.
@@ -330,13 +291,13 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const ident_node = sem.ast.nodes.get(decl.@"0");
     const pos = ident_node.token_pos;
 
-    const mut_type = sem.ast.tokens.get(node.token_pos).tag;
+    const mut_type = sem.ast.source_file.tokens.get(node.token_pos).tag;
     var mutability: Symbol.Kind = .variable;
 
     if (mut_type == .keyword_const)
         mutability = .constant;
 
-    const name = sem.ast.tokenSlice(pos);
+    const name = sem.ast.source_file.tokenSlice(pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
 
     if (sem.label_table.contains(ident_id)) {
@@ -390,7 +351,7 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
     const assign = node.data.node_and_node;
     const ident_node = sem.ast.nodes.get(assign.@"0");
     const pos = ident_node.token_pos;
-    const ident_name = sem.ast.tokenSlice(pos);
+    const ident_name = sem.ast.source_file.tokenSlice(pos);
 
     const ident_id = try sem.interner.intern(sem.allocator, ident_name);
     const symbol_id = sem.symbol_table.get(ident_id) orelse {
@@ -474,7 +435,7 @@ fn visitBinary(sem: *Semantic, data: Node.Data, comptime binOp: binaryOp) !void 
 fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     const token_pos = node.token_pos;
-    const name = sem.ast.tokenSlice(token_pos);
+    const name = sem.ast.source_file.tokenSlice(token_pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
     switch (node.tag) {
         .number => {
@@ -506,7 +467,7 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
             try sem.symbol_refs.append(sem.allocator, symbol_id);
         },
         .string => {
-            const text = sem.ast.tokenSlice(node.token_pos);
+            const text = sem.ast.source_file.tokenSlice(node.token_pos);
             try sem.interner.appendText(sem.allocator, text);
         },
         // TODO: Check for math errors
@@ -531,7 +492,7 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     const speaker_idx = sem.ast.extra_data[start];
     const speaker = sem.ast.nodes.get(speaker_idx);
     const token_pos = speaker.token_pos;
-    const name = sem.ast.tokenSlice(token_pos);
+    const name = sem.ast.source_file.tokenSlice(token_pos);
 
     if (speaker.tag == .anonymous) {
         try sem.visitDialogueParts(start, range.len);
@@ -597,7 +558,7 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
     if (jump != invalid_node) {
         const jump_node = sem.ast.nodes.get(jump);
         const token_pos = jump_node.token_pos;
-        const jump_name = sem.ast.tokenSlice(token_pos);
+        const jump_name = sem.ast.source_file.tokenSlice(token_pos);
         const ident_id = try sem.interner.intern(sem.allocator, jump_name);
 
         if (!sem.label_table.contains(ident_id)) {
@@ -621,7 +582,7 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     const label = sem.ast.nodes.get(label_idx);
     const token_pos = label.token_pos;
 
-    const label_name = sem.ast.tokenSlice(token_pos);
+    const label_name = sem.ast.source_file.tokenSlice(token_pos);
     const ident_id = try sem.interner.intern(sem.allocator, label_name);
 
     if (sem.scope_stack.items.len != 0) {

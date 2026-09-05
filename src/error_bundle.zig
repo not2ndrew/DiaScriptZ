@@ -1,4 +1,5 @@
 const std = @import("std");
+const Semantic = @import("semantic.zig").Semantic;
 const frontend = @import("frontend");
 
 const SourceFile = frontend.source_file.SourceFile;
@@ -13,15 +14,9 @@ const Ast = frontend.ast.Ast;
 const Tokens = std.MultiArrayList(Token).Slice;
 
 const Allocator = std.mem.Allocator;
+const Writer = std.Io.Writer;
 
 pub const String = u32;
-// TESTING ERROR DIAGNOSTICS HERE.
-// We can't rely on TokenIndex for diagnostic. So handle the token span and
-// error message in AST. Then take those values and convert them to SourceLocation.
-// SourceLocation should be stored independently. Therefore, it must be a module.
-//
-// Instead of using std.debug.print() to create my format,
-// I could simply build my format using std.Io.Writer.
 pub const ErrorMessage = struct {
     source_idx: String,
     error_idx: String,
@@ -53,8 +48,77 @@ pub fn deinit(eb: *ErrorBundle) void {
     eb.errors.deinit(eb.allocator);
 }
 
+pub fn writeAstErrorMessage(sf: *SourceFile, w: *Writer, err: Ast.Error) Writer.Error!void {
+    const found = sf.tokenSlice(err.token_pos);
+    switch (err.tag) {
+        .unexpected_EOF => {
+            return w.writeAll("Expected expression, found EOF");
+        },
+        .expected_token => {
+            const expected_token = sf.tokens.get(err.token_pos);
+            const expected = lexeme(err.data.expected)
+                orelse sf.source[expected_token.start .. expected_token.end];
+            return w.print("Expected '{s}', found '{s}'", .{expected, found});
+        },
+        .expected_ident => {
+            return w.print("Expected identifier, found '{s}'", .{found});
+        },
+        .expected_expr => {
+            return w.writeAll("Expected number or identifier");
+        },
+        .expected_arith_op => {
+            return w.print("Expected arithmetic operator, found '{s}'", .{found});
+        },
+        .expected_compar_op => {
+            return w.print("Expected comparison operator, found '{s}'", .{found});
+        },
+        .expected_dialogue => {
+            return w.print("Expected dialogue, found '{s}'", .{found});
+        },
+    }
+}
+
+pub fn writeSemanticErrorMessage(sf: *SourceFile, w: *Writer, err: Semantic.Error) Writer.Error!void {
+    const slice = sf.tokenSlice(err.token_pos);
+
+    switch (err.tag) {
+        .int_overflow => {
+            return w.writeAll("Integer cannot go beyond 256");
+        },
+        // TODO: This requires additional note to show where it is already initialized at.
+        .ident_mismatch => {
+            return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});
+        },
+        .duplicate_var => {
+            return w.print("Variable '{s}' already exist", .{slice});
+        },
+        .undeclared_var => {
+            return w.print("Variable '{s}' not declared", .{slice});
+        },
+        .duplicate_label => {
+            return w.print("Label '{s}' already exist", .{slice});
+        },
+        .unknown_jump => {
+            return w.print("Jump target '{s}' does not exist.", .{slice});
+        },
+        .modified_const => {
+            return w.print("Cannot modify constant '{s}'", .{slice});
+        },
+        .too_many_scopes => {
+            return w.writeAll("Cannot generate more than 3 scopes");
+        },
+        .invalid_label_scope => {
+            return w.print("Label '{s}' must be placed in GLOBAL scope", .{slice});
+        },
+        .too_many_choices => {
+            return w.writeAll("Too many choices in a block");
+        },
+    }
+}
+
 fn addSourceString(eb: *ErrorBundle, slice: []const u8) !String {
     const len: String = @intCast(eb.string_bytes.items.len);
+
     // Use len + 1 to ensure 0 is added to the end of every slice.
     try eb.string_bytes.ensureUnusedCapacity(eb.allocator, len + 1);
     eb.string_bytes.appendSliceAssumeCapacity(slice);
@@ -98,13 +162,38 @@ fn getLineInfo(eb: *ErrorBundle, byte_pos: usize) LineInfo {
 }
 
 pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
-    var msg: std.Io.Writer.Allocating = .init(eb.allocator);
+    var msg: Writer.Allocating = .init(eb.allocator);
     defer msg.deinit();
 
     const msg_w = &msg.writer;
 
     for (errors) |err| {
-        try astErrorMessage(&eb.source_file, msg_w, err);
+        try writeAstErrorMessage(&eb.source_file, msg_w, err);
+        const err_idx = try eb.addErrorString(msg.written());
+
+        const token = eb.source_file.tokens.get(err.token_pos);
+        const line_info = eb.getLineInfo(token.start);
+
+        const source_idx = try eb.addSourceString(line_info.slice);
+        try eb.errors.append(eb.allocator, .{
+            .source_idx = source_idx,
+            .error_idx = err_idx,
+            .line = line_info.line,
+            .col = line_info.col,
+        });
+
+        msg.clearRetainingCapacity();
+    }
+}
+
+pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !void {
+    var msg: Writer.Allocating = .init(eb.allocator);
+    defer msg.deinit();
+
+    const msg_w = &msg.writer;
+
+    for (errors) |err| {
+        try writeSemanticErrorMessage(&eb.source_file, msg_w, err);
         const err_idx = try eb.addErrorString(msg.written());
 
         const token = eb.source_file.tokens.get(err.token_pos);
@@ -148,6 +237,9 @@ pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void
         try writer.writeAll("    |");
         try writer.splatByteAll(' ', before_caret);
         try writer.writeByte('^');
+
+        // TODO: Insert '~' to highlight error of length 2 or more.
+        // However, I need token span to get the exact start and len.
         try writer.writeByte('\n');
     }
 
@@ -196,33 +288,3 @@ pub const Diagnostic = struct {
         return dia.err_bytes[start .. end];
     }
 };
-
-pub fn astErrorMessage(sf: *SourceFile, w: *std.Io.Writer, err: Ast.Error) std.Io.Writer.Error!void {
-    const found = sf.tokenSlice(err.token_pos);
-    switch (err.tag) {
-        .unexpected_EOF => {
-            return w.writeAll("Expected expression, found EOF");
-        },
-        .expected_token => {
-            const expected_token = sf.tokens.get(err.token_pos);
-            const expected = lexeme(err.data.expected)
-                orelse sf.source[expected_token.start .. expected_token.end];
-            return w.print("Expected '{s}', found '{s}'", .{expected, found});
-        },
-        .expected_ident => {
-            return w.print("Expected identifier, found '{s}'", .{found});
-        },
-        .expected_expr => {
-            return w.writeAll("Expected number or identifier");
-        },
-        .expected_arith_op => {
-            return w.print("Expected arithmetic operator, found '{s}'", .{found});
-        },
-        .expected_compar_op => {
-            return w.print("Expected comparison operator, found '{s}'", .{found});
-        },
-        .expected_dialogue => {
-            return w.print("Expected dialogue, found '{s}'", .{found});
-        },
-    }
-}

@@ -1,6 +1,5 @@
 const std = @import("std");
 const frontend = @import("frontend");
-// const tree = @import("frontend").ast;
 const sem = @import("semantic.zig");
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
@@ -35,14 +34,14 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     if (parse_tree.errors.len > 0)
         try printAstErrorsToStderr(init.io, allocator, parse_tree.ast.source_file, parse_tree.errors, file_name);
 
-    // const decorated_ast = sem.analyze(allocator, &parse_tree.ast) catch |err| {
-    //     if (err == error.SemanticError) return;
-    //     return err;
-    // };
-    // defer decorated_ast.deinit(allocator);
-    //
-    // if (decorated_ast.errors.len > 0)
-    //     try printSemanticErrorsToStderr(init.io, allocator, parse_tree, file_name);
+    var decorated_ast = sem.analyze(allocator, &parse_tree.ast) catch |err| {
+        if (err == error.SemanticError) return;
+        return err;
+    };
+    defer decorated_ast.deinit(allocator);
+
+    if (decorated_ast.errors.len > 0)
+        try printSemanticErrorsToStderr(init.io, allocator, parse_tree.ast.source_file, decorated_ast.errors, file_name);
 }
 
 /// Make sure to free the []const u8 result!!!

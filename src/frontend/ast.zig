@@ -11,7 +11,6 @@ const Writer = std.Io.Writer;
 
 const Token = tok.Token;
 const TokenIndex = tok.TokenIndex;
-const lexeme = tok.lexeme;
 
 const Tokens = std.MultiArrayList(Token);
 
