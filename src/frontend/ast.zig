@@ -1,20 +1,23 @@
 const std = @import("std");
-const frontend = @import("frontend");
+const tok = @import("token.zig");
+const nod = @import("node.zig");
+const Tokenizer = @import("tokenizer.zig").Tokenizer;
 const Parser = @import("parser.zig").Parser;
+
+const SourceFile = @import("source_file.zig").SourceFile;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
-const Tokenizer = frontend.Tokenizer;
-const Token = frontend.token.Token;
-const TokenIndex = frontend.token.TokenIndex;
-const lexeme = frontend.token.lexeme;
+const Token = tok.Token;
+const TokenIndex = tok.TokenIndex;
+const lexeme = tok.lexeme;
 
 const Tokens = std.MultiArrayList(Token);
 
-const Node = frontend.node.Node;
+const Node = nod.Node;
 const Nodes = std.MultiArrayList(Node);
-const NodeIndex = frontend.node.NodeIndex;
+const NodeIndex = nod.NodeIndex;
 
 pub const Error = struct {
     token_pos: TokenIndex,
@@ -40,9 +43,10 @@ pub const Error = struct {
 
 pub const Ast = @This();
 
-source: []const u8,
+// source: []const u8,
 allocator: Allocator,
-tokens: Tokens.Slice,
+// tokens: Tokens.Slice,
+source_file: SourceFile,
 nodes: Nodes.Slice,
 // extra_data holds:
 // 1) Variable-length AST payload storage
@@ -51,17 +55,8 @@ extra_data: []u32,
 
 pub fn deinit(ast: *Ast) void {
     ast.nodes.deinit(ast.allocator);
-    ast.tokens.deinit(ast.allocator);
+    ast.source_file.tokens.deinit(ast.allocator);
     ast.allocator.free(ast.extra_data);
-}
-
-fn tokenSlice(ast: Ast, token_pos: TokenIndex) []const u8 {
-    const token = ast.tokens.get(token_pos);
-    if (lexeme(token.tag)) |slice| {
-        return slice;
-    }
-
-    return ast.source[token.start .. token.end];
 }
 
 pub const ParseResult = struct {
@@ -112,9 +107,11 @@ fn parseFromTokens(allocator: Allocator, source: []const u8, tokens: Tokens.Slic
     // Converting to slice removes all excess memory in nodes and stmts.
     // This also means you own the memory. So call deinit on ast when finished.
     const ast: Ast = .{
-        .source = source,
+        .source_file = .{
+            .source = source,
+            .tokens = tokens,
+        },
         .allocator = allocator,
-        .tokens = tokens,
         .nodes = parser.nodes.toOwnedSlice(),
         .extra_data = try parser.extra_data.toOwnedSlice(allocator),
     };
@@ -123,37 +120,4 @@ fn parseFromTokens(allocator: Allocator, source: []const u8, tokens: Tokens.Slic
         .ast = ast,
         .errors = try parser.errors.toOwnedSlice(allocator),
     };
-}
-
-// DIAGNOSTICS
-pub fn errorMessage(ast: Ast, w: *std.Io.Writer, err: Error) std.Io.Writer.Error!void {
-    const found = ast.tokenSlice(err.token_pos);
-
-    switch (err.tag) {
-        // Parsing Errors
-        .unexpected_EOF => {
-            return w.writeAll("Expected expression, found EOF");
-        },
-        .expected_token => {
-            const expected_token = ast.tokens.get(err.token_pos);
-            const expected = lexeme(err.data.expected)
-                orelse ast.source[expected_token.start .. expected_token.end];
-            return w.print("Expected '{s}', found '{s}'", .{expected, found});
-        },
-        .expected_ident => {
-            return w.print("Expected identifier, found '{s}'", .{found});
-        },
-        .expected_expr => {
-            return w.writeAll("Expected number or identifier");
-        },
-        .expected_arith_op => {
-            return w.print("Expected arithmetic operator, found '{s}'", .{found});
-        },
-        .expected_compar_op => {
-            return w.print("Expected comparison operator, found '{s}'", .{found});
-        },
-        .expected_dialogue => {
-            return w.print("Expected dialogue, found '{s}'", .{found});
-        },
-    }
 }

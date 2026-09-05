@@ -1,9 +1,7 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const as = @import("ast.zig");
 const inter = @import("interner.zig");
-const diag = @import("diagnostic.zig");
-const Lower = @import("lower.zig").Lower;
+const LowerResult = @import("lower.zig").LowerResult;
 
 const Allocator = std.mem.Allocator;
 
@@ -16,15 +14,13 @@ const invalid_node = frontend.node.invalid_node;
 const NodeIndex = frontend.node.NodeIndex;
 const Nodes = std.MultiArrayList(Node);
 
-const Ast = as.Ast;
-const ParseResult = as.ParseResult;
+const Ast = frontend.ast.Ast;
+const ParseResult = frontend.ast.ParseResult;
 
+const InternPool = inter.InternPool;
 const Interner = inter.Interner;
 const IdentId = inter.IdentId;
 const Span = inter.Span;
-
-const AstError = diag.Error;
-const ErrorTag = diag.Error.Tag;
 
 const MAX_NUM_SCOPES = 3;
 pub const MAX_NUM_CHOICES = 4;
@@ -38,10 +34,13 @@ pub const Symbol = struct {
     ident_id: IdentId,
     kind: Kind,
 
+    // TODO: Label is rarely used. It is only there because
+    // error diagnostics.
     pub const Kind = enum {
         constant,
         variable,
         speaker,
+        label,
     };
 };
 
@@ -49,6 +48,90 @@ pub const UnresolvedJump = struct {
     ident_id: IdentId,
     token_pos: TokenIndex,
 };
+
+pub const Error = struct {
+    token_pos: TokenIndex,
+    tag: Tag,
+    data: Data = .{ .none = {} },
+
+    pub const Tag = enum {
+        // Semantic Errors
+        int_overflow,
+        // TODO: Create a note to where the ident is used
+        // Note: Previous declaration here:
+        ident_mismatch,
+        duplicate_var,
+        duplicate_label,
+        undeclared_var,
+        unknown_jump,
+        modified_const,
+        too_many_scopes,
+        invalid_label_scope,
+        too_many_choices,
+    };
+
+    pub const Data = union {
+        none: void,
+        note: u32,
+        initialized: Symbol.Kind,
+    };
+};
+
+pub const DecoratedAst = struct {
+    symbols: []Symbol,
+    labels: []IdentId,
+    symbol_refs: []SymbolId,
+    jumps: []IdentId,
+    pool: InternPool,
+    errors: []Error,
+
+    pub fn deinit(ast: *DecoratedAst, allocator: Allocator) void {
+        allocator.free(ast.symbols);
+        allocator.free(ast.labels);
+        allocator.free(ast.symbol_refs);
+        allocator.free(ast.jumps);
+        ast.pool.deinit(allocator);
+        allocator.free(ast.errors);
+    }
+};
+
+pub fn errorMessage(tokens: *std.MultiArrayList(Token).Slice, w: *std.Io.Writer, err: Error) std.Io.Writer.Error!void {
+    const slice = tokens.get(err.token_pos);
+
+    switch (err.tag) {
+        .int_overflow => {
+            return w.writeAll("Integer cannot go beyond 256");
+        },
+        // TODO: This requires additional note to show where it is already initialized at.
+        .ident_mismatch => {
+            return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});
+        },
+        .duplicate_var => {
+            return w.print("Variable '{s}' already exist", .{slice});
+        },
+        .undeclared_var => {
+            return w.print("Variable '{s}' not declared", .{slice});
+        },
+        .duplicate_label => {
+            return w.print("Label '{s}' already exist", .{slice});
+        },
+        .unknown_jump => {
+            return w.print("Jump target '{s}' does not exist.", .{slice});
+        },
+        .modified_const => {
+            return w.print("Cannot modify constant '{s}'", .{slice});
+        },
+        .too_many_scopes => {
+            return w.writeAll("Cannot generate more than 3 scopes");
+        },
+        .invalid_label_scope => {
+            return w.print("Label '{s}' must be placed in GLOBAL scope", .{slice});
+        },
+        .too_many_choices => {
+            return w.writeAll("Too many choices in a block");
+        },
+    }
+}
 
 // Program variables and jump variables are handled differently.
 // Program variables must be declared first before using it.
@@ -60,7 +143,7 @@ pub const Semantic = @This();
 
 allocator: Allocator,
 ast: *const Ast,
-errors: std.ArrayList(AstError) = .empty,
+errors: std.ArrayList(Error) = .empty,
 
 // symbol_table is local hashmap for declaration variables and dialogue speakers.
 symbol_table: SymbolTable = .empty,
@@ -100,12 +183,12 @@ pub fn deinit(sem: *Semantic) void {
 // Therefore, it is either constant or variable.
 fn reportSymbolTaken(sem: *Semantic, symbol_id: SymbolId, token_pos: TokenIndex) !void {
     const symbol = sem.symbols.items[symbol_id];
-    const num = @intFromEnum(symbol.kind);
-    const kind: diag.Error.Kind = @enumFromInt(num);
+    // const num = @intFromEnum(symbol.kind);
+    // const kind: diag.Error.Kind = @enumFromInt(num);
     try sem.errors.append(sem.allocator, .{
         .tag = .ident_mismatch,
         .token_pos = token_pos,
-        .data = .{ .initialized = kind },
+        .data = .{ .initialized = symbol.kind },
     });
 }
 
@@ -137,14 +220,14 @@ fn addSymbol(sem: *Semantic, symbol: Symbol) !SymbolId {
 
 // The last node of a post-traversal list
 // is the root node.
-pub fn analyze(allocator: Allocator, tree: *const ParseResult) !Lower {
+pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     var sem: Semantic = .{
         .allocator = allocator,
-        .ast = &tree.ast,
+        .ast = ast,
     };
     defer sem.deinit();
 
-    const root_node = tree.ast.nodes.get(tree.ast.nodes.len - 1);
+    const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
 
     // Put a limit to how many scopes can be generated
@@ -173,16 +256,13 @@ pub fn analyze(allocator: Allocator, tree: *const ParseResult) !Lower {
         sem.resolved_jumps.appendAssumeCapacity(ident_id);
     }
 
-    if (sem.errors.items.len > 0) {
-        return error.SemanticError;
-    }
-
     return .{
         .symbols = try sem.symbols.toOwnedSlice(allocator),
         .labels = try sem.labels.toOwnedSlice(allocator),
         .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
         .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
         .pool = try sem.interner.finalize(allocator),
+        .errors = try sem.errors.toOwnedSlice(allocator),
     };
 }
 
@@ -284,6 +364,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
                     .token_pos = pos,
                 });
             },
+            else => unreachable,
         };
     }
 
@@ -475,12 +556,12 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
         switch (found.kind) {
             .speaker => {},
             else => |symbol_kind| {
-                const num = @intFromEnum(symbol_kind);
-                const kind: diag.Error.Kind = @enumFromInt(num);
+                // const num = @intFromEnum(symbol_kind);
+                // const kind: diag.Error.Kind = @enumFromInt(num);
                 return sem.errors.append(sem.allocator, .{
                     .tag = .ident_mismatch,
                     .token_pos = token_pos,
-                    .data = .{ .initialized = kind },
+                    .data = .{ .initialized = symbol_kind },
                 });
             }
         }

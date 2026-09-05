@@ -1,19 +1,20 @@
 const std = @import("std");
-const frontend = @import("frontend");
+const tok = @import("token.zig");
+const nod = @import("node.zig");
 const ast = @import("ast.zig");
 
 const Allocator = std.mem.Allocator;
 
-const Node = frontend.node.Node;
-const NodeIndex = frontend.node.NodeIndex;
-const invalid_node = frontend.node.invalid_node;
+const Node = nod.Node;
+const NodeIndex = nod.NodeIndex;
+const invalid_node = nod.invalid_node;
 
-const Token = frontend.token.Token;
-const TokenIndex = frontend.token.TokenIndex;
+const Token = tok.Token;
+const TokenIndex = tok.TokenIndex;
 
-const nodeTagFromArithmetic = frontend.node.nodeTagFromArithmetic;
-const nodeTagFromCompare = frontend.node.nodeTagFromCompare;
-const nodeTagFromBinary = frontend.node.nodeTagFromBinary;
+const nodeTagFromArithmetic = nod.nodeTagFromArithmetic;
+const nodeTagFromCompare = nod.nodeTagFromCompare;
+const nodeTagFromBinary = nod.nodeTagFromBinary;
 
 const AstError = ast.Error;
 

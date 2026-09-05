@@ -1,10 +1,16 @@
 const std = @import("std");
-const tok = @import("frontend").token;
-const tree = @import("ast.zig");
+const frontend = @import("frontend");
+
+const SourceFile = frontend.source_file.SourceFile;
+
+const tok = frontend.token;
 
 const Token = tok.Token;
+const TokenIndex = tok.Token;
+const lexeme = tok.lexeme;
+const Ast = frontend.ast.Ast;
 
-const Ast = tree.Ast;
+const Tokens = std.MultiArrayList(Token).Slice;
 
 const Allocator = std.mem.Allocator;
 
@@ -32,7 +38,7 @@ pub const LineInfo = struct {
 pub const ErrorBundle = @This();
 
 allocator: Allocator,
-source: []const u8,
+source_file: SourceFile,
 // String bytes store the source string line.
 string_bytes: std.ArrayList(u8) = .empty,
 // err bytes store the error message
@@ -68,43 +74,40 @@ fn addErrorString(eb: *ErrorBundle, slice: []const u8) !String {
     return len;
 }
 
-// TODO: Slice's start and end position are both at index 9
-// var x =
-//
-// This is because token.start is EOF. Which the start and end are both 9.
 fn getLineInfo(eb: *ErrorBundle, byte_pos: usize) LineInfo {
+    const source = eb.source_file.source;
     var line: u32 = 1;
     var line_start: u32 = 0;
 
     var i: u32 = 0;
-    while (i < byte_pos and i < eb.source.len) : (i += 1) {
-        if (eb.source[i] == '\n') {
+    while (i < byte_pos and i < source.len) : (i += 1) {
+        if (source[i] == '\n') {
             line += 1;
             line_start = i + 1;
         }
     }
 
-    const line_end = std.mem.findScalarPos(u8, eb.source, line_start, '\n')
-        orelse eb.source.len;
+    const line_end = std.mem.findScalarPos(u8, source, line_start, '\n')
+        orelse source.len;
 
     return .{
         .line = @intCast(line),
         .col = @intCast(byte_pos - line_start + 1),
-        .slice = eb.source[line_start .. line_end],
+        .slice = source[line_start .. line_end],
     };
 }
 
-pub fn addAstErrorMessages(eb: *ErrorBundle, ast: Ast, errors: []Ast.Error) !void {
+pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
     var msg: std.Io.Writer.Allocating = .init(eb.allocator);
     defer msg.deinit();
 
     const msg_w = &msg.writer;
 
     for (errors) |err| {
-        try ast.errorMessage(msg_w, err);
+        try astErrorMessage(&eb.source_file, msg_w, err);
         const err_idx = try eb.addErrorString(msg.written());
 
-        const token = ast.tokens.get(err.token_pos);
+        const token = eb.source_file.tokens.get(err.token_pos);
         const line_info = eb.getLineInfo(token.start);
 
         const source_idx = try eb.addSourceString(line_info.slice);
@@ -127,7 +130,7 @@ pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void
     var diagnostic = try eb.toOwnDiagnostic();
     defer diagnostic.deinit(eb.allocator);
 
-    var buffer: [256]u8 = undefined;
+    var buffer: [100]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
     defer io.unlockStderr();
 
@@ -193,3 +196,33 @@ pub const Diagnostic = struct {
         return dia.err_bytes[start .. end];
     }
 };
+
+pub fn astErrorMessage(sf: *SourceFile, w: *std.Io.Writer, err: Ast.Error) std.Io.Writer.Error!void {
+    const found = sf.tokenSlice(err.token_pos);
+    switch (err.tag) {
+        .unexpected_EOF => {
+            return w.writeAll("Expected expression, found EOF");
+        },
+        .expected_token => {
+            const expected_token = sf.tokens.get(err.token_pos);
+            const expected = lexeme(err.data.expected)
+                orelse sf.source[expected_token.start .. expected_token.end];
+            return w.print("Expected '{s}', found '{s}'", .{expected, found});
+        },
+        .expected_ident => {
+            return w.print("Expected identifier, found '{s}'", .{found});
+        },
+        .expected_expr => {
+            return w.writeAll("Expected number or identifier");
+        },
+        .expected_arith_op => {
+            return w.print("Expected arithmetic operator, found '{s}'", .{found});
+        },
+        .expected_compar_op => {
+            return w.print("Expected comparison operator, found '{s}'", .{found});
+        },
+        .expected_dialogue => {
+            return w.print("Expected dialogue, found '{s}'", .{found});
+        },
+    }
+}
