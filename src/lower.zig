@@ -1,31 +1,23 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sem = @import("semantic.zig");
+const util = @import("util");
 const ir = @import("dia_ir.zig");
 const op = @import("optimize.zig");
-const in = @import("interner.zig");
 
 const Allocator = std.mem.Allocator;
 
 const Ast = frontend.ast.Ast;
-const ParseResult = frontend.ast.ParseResult;
 
+const sem = util.semantic;
 const Semantic = sem.Semantic;
-
 const Symbol = sem.Symbol;
 const Symbols = std.MultiArrayList(Symbol);
 const SymbolId = sem.SymbolId;
 const DecoratedAst = sem.DecoratedAst;
 
-const Errors = std.ArrayList(frontend.ast.Ast.Error);
-
 const DiaIR = ir.DiaIR;
-const Inst = ir.Inst;
 
 const Optimize = op.Optimize;
-
-const IdentId = in.IdentId;
-const InternPool = in.InternPool;
 
 pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !void {
     // The AST -> IR lowering process assumes an AST

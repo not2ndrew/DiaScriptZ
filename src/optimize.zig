@@ -1,7 +1,8 @@
 const std = @import("std");
 const ir = @import("dia_ir.zig");
-const in = @import("interner.zig");
-const sem = @import("semantic.zig");
+const util = @import("util");
+// const in = @import("interner.zig");
+// const sem = @import("semantic.zig");
 const rebuildBlocksAndExtra = @import("remap.zig").rebuildBlocksAndExtra;
 
 const Allocator = std.mem.Allocator;
@@ -11,9 +12,11 @@ const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 const Insts = std.ArrayList(Inst);
 
+const in = util.interner;
 const IdentId = in.IdentId;
 const invalid_inst = ir.invalid_inst;
 
+const sem = util.semantic;
 const Decorated = sem.DecoratedAst.Decorated;
 const Symbol = sem.Symbol;
 const SymbolId = sem.SymbolId;

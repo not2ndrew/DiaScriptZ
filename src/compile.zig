@@ -1,6 +1,7 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sem = @import("semantic.zig");
+const sem = @import("util").semantic;
+// const sem = @import("semantic.zig");
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
 

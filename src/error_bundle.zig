@@ -1,5 +1,5 @@
 const std = @import("std");
-const Semantic = @import("semantic.zig").Semantic;
+const Semantic = @import("util").semantic.Semantic;
 const frontend = @import("frontend");
 
 const SourceFile = frontend.source_file.SourceFile;

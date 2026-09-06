@@ -1,7 +1,8 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sem = @import("semantic.zig");
-const in = @import("interner.zig");
+const util = @import("util");
+// const sem = @import("semantic.zig");
+// const in = @import("interner.zig");
 
 const Allocator = std.mem.Allocator;
 
@@ -14,10 +15,12 @@ const invalid_node = nod.invalid_node;
 
 const Ast = frontend.ast.Ast;
 
+const sem = util.semantic;
 const Symbol = sem.Symbol;
 const SymbolId = sem.SymbolId;
 const Decorated = sem.DecoratedAst.Decorated;
 
+const in = util.interner;
 const IdentId = in.IdentId;
 const InternPool = in.InternPool;
 const Span = in.Span;

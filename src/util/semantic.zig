@@ -1,5 +1,4 @@
 const std = @import("std");
-const Lower = @import("lower.zig").Lower;
 const frontend = @import("frontend");
 const inter = @import("interner.zig");
 
@@ -21,8 +20,8 @@ const Interner = inter.Interner;
 const IdentId = inter.IdentId;
 const Span = inter.Span;
 
-const MAX_NUM_SCOPES = 3;
 pub const MAX_NUM_CHOICES = 4;
+const MAX_NUM_SCOPES = 3;
 
 const SymbolTable = std.array_hash_map.Auto(IdentId, SymbolId);
 const LabelTable = std.array_hash_map.Auto(IdentId, void);
@@ -142,15 +141,8 @@ pub fn deinit(sem: *Semantic) void {
     sem.resolved_jumps.deinit(sem.allocator);
 }
 
-// TODO: Conversion from Symbol Kind to Error Kind feels
-// uncomfortable, this is done because diagnostic.zig should
-// NOT be dependent on the import of semantic.zig.
-// We can guarantee that it is NOT speaker based on the switch case.
-// Therefore, it is either constant or variable.
 fn reportSymbolTaken(sem: *Semantic, symbol_id: SymbolId, token_pos: TokenIndex) !void {
     const symbol = sem.symbols.items[symbol_id];
-    // const num = @intFromEnum(symbol.kind);
-    // const kind: diag.Error.Kind = @enumFromInt(num);
     try sem.errors.append(sem.allocator, .{
         .tag = .ident_mismatch,
         .token_pos = token_pos,
@@ -524,8 +516,6 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
         switch (found.kind) {
             .speaker => {},
             else => |symbol_kind| {
-                // const num = @intFromEnum(symbol_kind);
-                // const kind: diag.Error.Kind = @enumFromInt(num);
                 return sem.errors.append(sem.allocator, .{
                     .tag = .ident_mismatch,
                     .token_pos = token_pos,
