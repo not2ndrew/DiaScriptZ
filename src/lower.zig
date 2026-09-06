@@ -1,6 +1,6 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const util = @import("util");
+const middle = @import("middle");
 const ir = @import("dia_ir.zig");
 const op = @import("optimize.zig");
 
@@ -8,7 +8,7 @@ const Allocator = std.mem.Allocator;
 
 const Ast = frontend.ast.Ast;
 
-const sem = util.semantic;
+const sem = middle.semantic;
 const Semantic = sem.Semantic;
 const Symbol = sem.Symbol;
 const Symbols = std.MultiArrayList(Symbol);

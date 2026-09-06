@@ -8,8 +8,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
 
-    const util = b.addModule("util", .{
-        .root_source_file = b.path("src/util.zig"),
+    const middle = b.addModule("middle", .{
+        .root_source_file = b.path("src/middle.zig"),
         .target = target,
         .imports = &.{
             .{ .name = "frontend", .module = frontend },
@@ -24,7 +24,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
             .imports = &.{
                 .{ .name = "frontend", .module = frontend },
-                .{ .name = "util", .module = util },
+                .{ .name = "middle", .module = middle },
             },
         }),
     });

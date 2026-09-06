@@ -1,5 +1,5 @@
 const std = @import("std");
-const Semantic = @import("util").semantic.Semantic;
+const Semantic = @import("middle").semantic.Semantic;
 const frontend = @import("frontend");
 
 const SourceFile = frontend.source_file.SourceFile;
