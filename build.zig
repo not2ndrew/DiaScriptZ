@@ -16,6 +16,15 @@ pub fn build(b: *std.Build) void {
         },
     });
 
+    const backend = b.addModule("backend", .{
+        .root_source_file = b.path("src/backend.zig"),
+        .target = target,
+        .imports = &.{
+            .{ .name = "frontend", .module = frontend },
+            .{ .name = "middle", .module = middle },
+        },
+    });
+
     const exe = b.addExecutable(.{
         .name = "DiaScriptZ",
         .root_module = b.createModule(.{
@@ -25,6 +34,7 @@ pub fn build(b: *std.Build) void {
             .imports = &.{
                 .{ .name = "frontend", .module = frontend },
                 .{ .name = "middle", .module = middle },
+                .{ .name = "backend", .module = backend },
             },
         }),
     });

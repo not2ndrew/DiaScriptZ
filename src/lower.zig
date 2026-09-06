@@ -1,8 +1,7 @@
 const std = @import("std");
 const frontend = @import("frontend");
 const middle = @import("middle");
-const ir = @import("dia_ir.zig");
-const op = @import("optimize.zig");
+const backend = @import("backend");
 
 const Allocator = std.mem.Allocator;
 
@@ -15,8 +14,10 @@ const Symbols = std.MultiArrayList(Symbol);
 const SymbolId = sem.SymbolId;
 const DecoratedAst = sem.DecoratedAst;
 
+const ir = backend.ir;
 const DiaIR = ir.DiaIR;
 
+const op = backend.optimize;
 const Optimize = op.Optimize;
 
 pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !void {

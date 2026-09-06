@@ -1,8 +1,6 @@
 const std = @import("std");
-const ir = @import("dia_ir.zig");
 const middle = @import("middle");
-// const in = @import("interner.zig");
-// const sem = @import("semantic.zig");
+const ir = @import("dia_ir.zig");
 const rebuildBlocksAndExtra = @import("remap.zig").rebuildBlocksAndExtra;
 
 const Allocator = std.mem.Allocator;
