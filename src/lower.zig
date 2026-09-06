@@ -2,7 +2,7 @@ const std = @import("std");
 const frontend = @import("frontend");
 const sem = @import("semantic.zig");
 const ir = @import("dia_ir.zig");
-// const op = @import("optimize.zig");
+const op = @import("optimize.zig");
 const in = @import("interner.zig");
 
 const Allocator = std.mem.Allocator;
@@ -22,7 +22,7 @@ const Errors = std.ArrayList(frontend.ast.Ast.Error);
 const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 
-// const Optimize = op.Optimize;
+const Optimize = op.Optimize;
 
 const IdentId = in.IdentId;
 const InternPool = in.InternPool;
@@ -43,14 +43,13 @@ pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedA
     // AST -> IR
     try diaIR.generate();
 
-    // // Optimization IR here
-    // // TODO: Decide whether I should use toOwnSlice() on extra.
-    // var opt: Optimize = .{
-    //     .allocator = allocator,
-    //     .instructions = try diaIR.instructions.toOwnedSlice(allocator),
-    //     .extra = try diaIR.extra.toOwnedSlice(allocator),
-    //     .lower = &low,
-    // };
-    // defer opt.deinit();
-    // try opt.optimizeRoot();
+    // Optimization IR here
+    var opt: Optimize = .{
+        .allocator = allocator,
+        .instructions = try diaIR.instructions.toOwnedSlice(allocator),
+        .extra = try diaIR.extra.toOwnedSlice(allocator),
+        .decorated = decorated,
+    };
+    defer opt.deinit();
+    try opt.optimizeRoot();
 }

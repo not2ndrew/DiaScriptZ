@@ -80,7 +80,6 @@ fn printAstErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile,
     defer error_bundle.deinit();
 
     try error_bundle.addAstErrorMessages(errors);
-
     return error_bundle.renderToStderr(io, file_path);
 }
 
