@@ -23,7 +23,13 @@ pub const NewIR = struct {
 
 pub const Remap = @This();
 
-opt: *Optimize,
+allocator: std.mem.Allocator,
+instructions: []Inst,
+extra: []InstId,
+// KV pair is condition id -> block id
+branch_result: *std.array_hash_map.Auto(InstId, InstId),
+
+live: *std.array_hash_map.Auto(InstId, void),
 
 new_instructions: std.ArrayList(Inst) = .empty,
 new_extra: std.ArrayList(InstId) = .empty,
@@ -31,14 +37,18 @@ new_extra: std.ArrayList(InstId) = .empty,
 old_to_new_inst: std.ArrayList(InstId) = .empty,
 
 fn deinit(re: *Remap) void {
-    re.new_instructions.deinit(re.opt.allocator);
-    re.new_extra.deinit(re.opt.allocator);
-    re.old_to_new_inst.deinit(re.opt.allocator);
+    re.new_instructions.deinit(re.allocator);
+    re.new_extra.deinit(re.allocator);
+    re.old_to_new_inst.deinit(re.allocator);
 }
 
-pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewIR {
+pub fn remapInsts(opt: *Optimize, root_idx: InstId) !NewIR {
     var remap: Remap = .{
-        .opt = opt,
+        .allocator = opt.allocator,
+        .instructions = opt.instructions,
+        .extra = opt.extra,
+        .branch_result = &opt.branch_result,
+        .live = &opt.live,
     };
     defer remap.deinit();
 
@@ -83,9 +93,9 @@ fn rebuildBlock(re: *Remap, old_id: InstId, comptime tag: Inst.Tag, token_pos: T
     const new_start: InstId = @intCast(re.new_extra.items.len);
 
     for (old_start .. old_end) |idx| {
-        const stmt_idx = re.opt.extra[idx];
+        const stmt_idx = re.extra[idx];
 
-        if (!re.opt.live.contains(stmt_idx))
+        if (!re.live.contains(stmt_idx))
             continue;
 
         const new_stmt = re.rebuildStmt(stmt_idx);
@@ -115,7 +125,7 @@ fn rebuildBlock(re: *Remap, old_id: InstId, comptime tag: Inst.Tag, token_pos: T
 fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
     const new_id: InstId = @intCast(re.new_instructions.items.len);
 
-    const inst = re.opt.instructions[old_id];
+    const inst = re.instructions[old_id];
 
     switch (inst.tag) {
         .store => re.rebuildStore(old_id),
@@ -131,33 +141,33 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
 
 // No need to remap symbol since Symbols is stored separately
 fn rebuildStore(re: *Remap, old_id: InstId) void {
-    const inst = re.opt.instructions[old_id];
-    re.opt.instructions[old_id].data.store.value = re.rebuildExpr(inst.data.store.value);
+    const inst = re.instructions[old_id];
+    re.instructions[old_id].data.store.value = re.rebuildExpr(inst.data.store.value);
 
-    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+    re.new_instructions.appendAssumeCapacity(re.instructions[old_id]);
 }
 
 fn rebuildExpr(re: *Remap, expr: InstId) InstId {
-    const old_expr = re.opt.instructions[expr];
+    const old_expr = re.instructions[expr];
     const new_expr: InstId = @intCast(re.new_instructions.items.len);
 
     switch (old_expr.tag) {
-        .load => re.opt.instructions[expr].data.load = new_expr,
+        .load => re.instructions[expr].data.load = new_expr,
         .add, .sub, .mul, .div,
         .eql, .not_eql,
         .less, .less_or_eql,
         .greater, .greater_or_eql,
         .bool_and, .bool_or => {
             const binary = old_expr.data.binary;
-            re.opt.instructions[expr].data.binary.lhs = re.rebuildExpr(binary.lhs);
-            re.opt.instructions[expr].data.binary.rhs = re.rebuildExpr(binary.rhs);
+            re.instructions[expr].data.binary.lhs = re.rebuildExpr(binary.lhs);
+            re.instructions[expr].data.binary.rhs = re.rebuildExpr(binary.rhs);
         },
         .constant, .text, .label => {},
         else => unreachable,
     }
 
     re.old_to_new_inst.items[expr] = new_expr;
-    re.new_instructions.appendAssumeCapacity(re.opt.instructions[expr]);
+    re.new_instructions.appendAssumeCapacity(re.instructions[expr]);
     return new_expr;
 }
 
@@ -165,16 +175,16 @@ fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
     const new_expr: InstId = @intCast(re.new_instructions.items.len);
 
     if (extra_inst != invalid_inst) {
-        const old_expr = re.opt.instructions[extra_inst];
+        const old_expr = re.instructions[extra_inst];
 
         switch (old_expr.tag) {
-            .speaker => re.opt.instructions[extra_inst].data.load = new_expr,
+            .speaker => re.instructions[extra_inst].data.load = new_expr,
             .jump => {},
             else => unreachable,
         }
 
         re.new_extra.appendAssumeCapacity(new_expr);
-        re.new_instructions.appendAssumeCapacity(re.opt.instructions[extra_inst]);
+        re.new_instructions.appendAssumeCapacity(re.instructions[extra_inst]);
     } else {
         re.new_extra.appendAssumeCapacity(invalid_inst);
     }
@@ -182,24 +192,24 @@ fn rebuildOptionalExpr(re: *Remap, extra_inst: InstId) void {
 
 fn rebuildBranch(re: *Remap, old_id: InstId) void {
     // This is for compile time branch.
-    if (re.opt.branch_result.get(old_id)) |block_id| {
+    if (re.branch_result.get(old_id)) |block_id| {
         re.rebuildBlockContents(block_id);
         return;
     }
 
     // This is for runtime branch.
-    const old = re.opt.instructions[old_id];
+    const old = re.instructions[old_id];
     const range = old.data.range;
     const old_start = range.start;
 
     const new_start: InstId = @intCast(re.new_extra.items.len);
-    const cond_id = re.opt.extra[old_start];
-    const then_id = re.opt.extra[old_start + 1];
-    const else_id = re.opt.extra[old_start + 2];
+    const cond_id = re.extra[old_start];
+    const then_id = re.extra[old_start + 1];
+    const else_id = re.extra[old_start + 2];
 
     const new_cond = re.rebuildExpr(cond_id);
 
-    const then_block = re.opt.instructions[then_id];
+    const then_block = re.instructions[then_id];
     const t_range = then_block.data.range;
     const new_then = re.rebuildBlock(
         then_id,
@@ -211,7 +221,7 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
 
     var new_else: InstId = invalid_inst;
     if (else_id != invalid_inst) {
-        const else_block = re.opt.instructions[else_id];
+        const else_block = re.instructions[else_id];
         const e_range = else_block.data.range;
         new_else = re.rebuildBlock(
             else_id,
@@ -227,59 +237,59 @@ fn rebuildBranch(re: *Remap, old_id: InstId) void {
     });
 
     // A branch's length is always 3. No need to get a new len.
-    re.opt.instructions[old_id].data.range.start = new_start;
+    re.instructions[old_id].data.range.start = new_start;
 
     const new_id: InstId = @intCast(re.new_instructions.items.len);
 
     re.old_to_new_inst.items[old_id] = new_id;
-    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+    re.new_instructions.appendAssumeCapacity(re.instructions[old_id]);
 }
 
 fn rebuildDialogue(re: *Remap, old_id: InstId) void {
-    const old = re.opt.instructions[old_id];
+    const old = re.instructions[old_id];
     const range = old.data.range;
     const old_start = range.start;
     const old_end = old_start + range.len;
     const new_start: InstId = @intCast(re.new_extra.items.len);
 
-    const old_speaker = re.opt.extra[range.start];
+    const old_speaker = re.extra[range.start];
     re.rebuildOptionalExpr(old_speaker);
 
     for (old_start + 1 .. old_end - 1) |idx| {
-        const stmt_idx = re.opt.extra[idx];
+        const stmt_idx = re.extra[idx];
 
         const new_stmt = re.rebuildExpr(stmt_idx);
         re.new_extra.appendAssumeCapacity(new_stmt);
     }
 
-    const old_jump = re.opt.extra[old_end - 1];
+    const old_jump = re.extra[old_end - 1];
     re.rebuildOptionalExpr(old_jump);
 
     const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
     const new_id: InstId = @intCast(re.new_instructions.items.len);
 
-    re.opt.instructions[old_id].data.range.start = new_start;
-    re.opt.instructions[old_id].data.range.len = new_len;
+    re.instructions[old_id].data.range.start = new_start;
+    re.instructions[old_id].data.range.len = new_len;
 
     re.old_to_new_inst.items[old_id] = new_id;
-    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+    re.new_instructions.appendAssumeCapacity(re.instructions[old_id]);
 }
 
 fn rebuildLabel(re: *Remap, old_id: InstId) void {
-    const old = re.opt.instructions[old_id];
+    const old = re.instructions[old_id];
     const range = old.data.range;
     const new_start: InstId = @intCast(re.new_extra.items.len);
 
-    const label_id = re.opt.extra[range.start];
+    const label_id = re.extra[range.start];
     const label = re.rebuildExpr(label_id);
 
     re.new_extra.appendAssumeCapacity(label);
 
     // Skip the first
     for (range.start + 1 .. range.start + range.len) |i| {
-        const stmt_id = re.opt.extra[i];
+        const stmt_id = re.extra[i];
 
-        if (!re.opt.live.contains(stmt_id))
+        if (!re.live.contains(stmt_id))
             continue;
 
         const new_stmt = re.rebuildStmt(stmt_id);
@@ -289,21 +299,21 @@ fn rebuildLabel(re: *Remap, old_id: InstId) void {
     const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
     const new_id: InstId = @intCast(re.new_instructions.items.len);
 
-    re.opt.instructions[old_id].data.range.start = new_start;
-    re.opt.instructions[old_id].data.range.len = new_len;
+    re.instructions[old_id].data.range.start = new_start;
+    re.instructions[old_id].data.range.len = new_len;
 
     re.old_to_new_inst.items[old_id] = new_id;
-    re.new_instructions.appendAssumeCapacity(re.opt.instructions[old_id]);
+    re.new_instructions.appendAssumeCapacity(re.instructions[old_id]);
 }
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) void {
-    const block_inst = re.opt.instructions[block_id];
+    const block_inst = re.instructions[block_id];
     const range = block_inst.data.range;
 
     for (range.start..range.start + range.len) |i| {
-        const stmt_id = re.opt.extra[i];
+        const stmt_id = re.extra[i];
 
-        if (!re.opt.live.contains(stmt_id))
+        if (!re.live.contains(stmt_id))
             continue;
 
         const new_stmt = re.rebuildStmt(stmt_id);

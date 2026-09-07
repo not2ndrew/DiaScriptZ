@@ -19,7 +19,7 @@ const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 const Insts = std.ArrayList(Inst);
 
-const rebuildBlocksAndExtra = remap.rebuildBlocksAndExtra;
+const remapInsts = remap.remapInsts;
 const NewIR = remap.NewIR;
 
 const IntError = error {
@@ -152,11 +152,11 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     // Remap struct does not need the entire Optimize fields.
     // Only needs:
     // Instructions, Extra, branch_result hashmap, and live hashmap
-    // const new_set = try opt.rebuildBlocksAndExtra(root_idx);
-    //
-    // // leave this for now.
-    // opt.allocator.free(new_set.instructions);
-    // opt.allocator.free(new_set.extra);
+    const new_set = try opt.remapInsts(root_idx);
+
+    // leave this for now.
+    opt.allocator.free(new_set.instructions);
+    opt.allocator.free(new_set.extra);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
