@@ -16,7 +16,7 @@ const invalid_inst = ir.invalid_inst;
 // Remapping is a section of the optimizer that takes in the modified instructions from DCE
 // and maps them to a new instruction and extra arraylist.
 
-pub const NewInsts = struct {
+pub const NewIR = struct {
     instructions: []Inst,
     extra: []InstId,
 };
@@ -36,7 +36,7 @@ fn deinit(re: *Remap) void {
     re.old_to_new_inst.deinit(re.opt.allocator);
 }
 
-pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewInsts {
+pub fn rebuildBlocksAndExtra(opt: *Optimize, root_idx: InstId) !NewIR {
     var remap: Remap = .{
         .opt = opt,
     };

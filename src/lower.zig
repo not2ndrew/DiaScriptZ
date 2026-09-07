@@ -7,10 +7,26 @@ const Allocator = std.mem.Allocator;
 
 const Ast = frontend.ast.Ast;
 
+const Semantic = middle.semantic.Semantic;
 const DecoratedAst = middle.semantic.DecoratedAst;
 
 const DiaIR = backend.ir.DiaIR;
 const Optimize = backend.optimize.Optimize;
+
+// pub const Lower = @This();
+//
+// allocator: Allocator,
+//
+// instructions: []Inst,
+// extra: []InstId,
+//
+// constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+// // KV pair is condition id -> block id
+// branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
+//
+// live: std.array_hash_map.Auto(InstId, void) = .empty,
+//
+// errors: std.ArrayList(Semantic.Error) = .empty,
 
 pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !void {
     // The AST -> IR lowering process assumes an AST

@@ -1,14 +1,9 @@
 const std = @import("std");
 const middle = @import("middle");
 const ir = @import("dia_ir.zig");
-const rebuildBlocksAndExtra = @import("remap.zig").rebuildBlocksAndExtra;
+const remap = @import("remap.zig");
 
 const Allocator = std.mem.Allocator;
-
-const InstId = ir.InstId;
-const DiaIR = ir.DiaIR;
-const Inst = ir.Inst;
-const Insts = std.ArrayList(Inst);
 
 const in = middle.interner;
 const IdentId = in.IdentId;
@@ -19,12 +14,24 @@ const Decorated = sem.DecoratedAst.Decorated;
 const Symbol = sem.Symbol;
 const SymbolId = sem.SymbolId;
 
+const InstId = ir.InstId;
+const DiaIR = ir.DiaIR;
+const Inst = ir.Inst;
+const Insts = std.ArrayList(Inst);
+
+const rebuildBlocksAndExtra = remap.rebuildBlocksAndExtra;
+const NewIR = remap.NewIR;
+
 const IntError = error {
     Overflow,
     DivisionByZero,
 };
 
-const Error = Allocator.Error || IntError;
+const OptimizeError = error {
+    OptimizeError,
+};
+
+const Error = Allocator.Error || OptimizeError;
 
 pub const Value = union(enum) {
     unknown,
@@ -56,15 +63,17 @@ branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
 
 live: std.array_hash_map.Auto(InstId, void) = .empty,
 
+errors: std.ArrayList(sem.Semantic.Error) = .empty,
+
 pub fn deinit(opt: *Optimize) void {
     opt.allocator.free(opt.instructions);
     opt.allocator.free(opt.extra);
     opt.constants.deinit(opt.allocator);
     opt.branch_result.deinit(opt.allocator);
     opt.live.deinit(opt.allocator);
+    opt.errors.deinit(opt.allocator);
 }
 
-// TODO: Optimizer needs diagnostics.
 fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) IntError!u8 {
     return switch (tag) {
         .add => std.math.add(u8, lhs, rhs) catch IntError.Overflow,
@@ -120,6 +129,7 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     }
 }
 
+// TODO: Errors should be returned BEFORE DCE.
 pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_idx: u32 = @intCast(opt.instructions.len - 1);
     const root_inst = opt.instructions[root_idx];
@@ -128,6 +138,9 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     // Pass 1: Constant fold and propagate.
     try opt.block(range.start, range.len);
 
+    if (opt.errors.items.len > 0)
+        return Error.OptimizeError;
+
     // Pass 2: Dead Code elimination
     var dce: DCE = .{ .opt = opt };
     defer dce.deinit();
@@ -135,11 +148,15 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     try dce.run(root_idx);
 
     // Pass 3: Recreate Instructions.
-    const new_set = try opt.rebuildBlocksAndExtra(root_idx);
-
-    // leave this for now.
-    opt.allocator.free(new_set.instructions);
-    opt.allocator.free(new_set.extra);
+    // TODO: Move this to compile.zig
+    // Remap struct does not need the entire Optimize fields.
+    // Only needs:
+    // Instructions, Extra, branch_result hashmap, and live hashmap
+    // const new_set = try opt.rebuildBlocksAndExtra(root_idx);
+    //
+    // // leave this for now.
+    // opt.allocator.free(new_set.instructions);
+    // opt.allocator.free(new_set.extra);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {
@@ -180,7 +197,7 @@ fn storeVar(opt: *Optimize, inst_idx: InstId) Error!void {
         try opt.constants.put(opt.allocator, symbol_id, value.uint);
 }
 
-fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
+fn eval(opt: *Optimize, inst_idx: InstId) Error!Value {
     const inst = opt.instructions[inst_idx];
 
     return switch (inst.tag) {
@@ -200,7 +217,16 @@ fn eval(opt: *Optimize, inst_idx: InstId) IntError!Value {
             const rhs = try opt.eval(b.rhs);
 
             if (lhs == .uint and rhs == .uint) {
-                const result = try fold(inst.tag, lhs.uint, rhs.uint);
+                const result = fold(inst.tag, lhs.uint, rhs.uint) catch |err| {
+                    try opt.errors.append(opt.allocator, .{
+                        .tag = switch (err) {
+                            IntError.Overflow => .int_overflow,
+                            IntError.DivisionByZero => .division_by_zero,
+                        },
+                        .token_pos = inst.token_pos,
+                    });
+                    return .unknown;
+                };
                 const value: Value = .{ .uint = result };
                 opt.rewriteValue(inst_idx, value);
 
@@ -480,7 +506,7 @@ const DCE = struct {
                 if (dce.used_symbols.contains(store.symbol_id))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
-            .branch, .choice_block => {
+            .branch => {
                 const range = inst.data.range;
                 const condition = dce.opt.extra[range.start];
                 const then_block = dce.opt.extra[range.start + 1];
@@ -514,6 +540,12 @@ const DCE = struct {
                     const stmt_idx = dce.opt.extra[idx];
                     try dce.markInst(stmt_idx);
                 }
+            },
+            .choice_block => {
+                const range = inst.data.range;
+
+                try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
+                try dce.markBlock(range.start, range.len);
             },
             else => {},
         }
