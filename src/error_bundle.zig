@@ -7,7 +7,7 @@ const SourceFile = frontend.source_file.SourceFile;
 const tok = frontend.token;
 
 const Token = tok.Token;
-const TokenIndex = tok.Token;
+const TokenIndex = tok.TokenIndex;
 const lexeme = tok.lexeme;
 const Ast = frontend.ast.Ast;
 
@@ -16,10 +16,9 @@ const Tokens = std.MultiArrayList(Token).Slice;
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
 
-pub const String = u32;
 pub const ErrorMessage = struct {
-    source_idx: String,
-    error_idx: String,
+    source_idx: u32,
+    error_idx: u32,
     span_len: u32,
     line: u32,
     col: u32,
@@ -31,8 +30,6 @@ pub const LineInfo = struct {
     slice: []const u8,
 };
 
-// TODO: Unless necessary, find a way to remove duplicate code
-// from Ast and Semantic errors functions.
 pub const ErrorBundle = @This();
 
 allocator: Allocator,
@@ -51,7 +48,7 @@ pub fn deinit(eb: *ErrorBundle) void {
     eb.errors.deinit(eb.allocator);
 }
 
-pub fn writeAstErrorMessage(sf: *SourceFile, w: *Writer, err: Ast.Error) Writer.Error!void {
+pub fn writeAstErrorMessage(sf: *const SourceFile, w: *Writer, err: Ast.Error) Writer.Error!void {
     const found = sf.tokenSlice(err.token_pos);
     switch (err.tag) {
         .unexpected_EOF => {
@@ -81,28 +78,31 @@ pub fn writeAstErrorMessage(sf: *SourceFile, w: *Writer, err: Ast.Error) Writer.
     }
 }
 
-pub fn writeSemanticErrorMessage(sf: *SourceFile, w: *Writer, err: Semantic.Error) Writer.Error!void {
+pub fn writeSemanticErrorMessage(sf: *const SourceFile, w: *Writer, err: Semantic.Error) Writer.Error!void {
     const slice = sf.tokenSlice(err.token_pos);
 
     switch (err.tag) {
         .int_overflow => {
             return w.writeAll("Integer cannot go beyond 256");
         },
+        .division_by_zero => {
+            return w.writeAll("Cannot divide by 0");
+        },
         // TODO: This requires additional note to show where it is already initialized at.
         .ident_mismatch => {
             return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});
         },
         .duplicate_var => {
-            return w.print("Variable '{s}' already exist", .{slice});
+            return w.print("Variable '{s}' already exists", .{slice});
         },
         .undeclared_var => {
             return w.print("Variable '{s}' not declared", .{slice});
         },
         .duplicate_label => {
-            return w.print("Label '{s}' already exist", .{slice});
+            return w.print("Label '{s}' already exists", .{slice});
         },
         .unknown_jump => {
-            return w.print("Jump target '{s}' does not exist.", .{slice});
+            return w.print("Jump target '{s}' does not exist", .{slice});
         },
         .modified_const => {
             return w.print("Cannot modify constant '{s}'", .{slice});
@@ -119,19 +119,19 @@ pub fn writeSemanticErrorMessage(sf: *SourceFile, w: *Writer, err: Semantic.Erro
     }
 }
 
-fn addSourceString(eb: *ErrorBundle, slice: []const u8) !String {
-    const len: String = @intCast(eb.string_bytes.items.len);
+fn addSourceString(eb: *ErrorBundle, slice: []const u8) !u32 {
+    const len: u32 = @intCast(eb.string_bytes.items.len);
 
     // Use len + 1 to ensure 0 is added to the end of every slice.
-    try eb.string_bytes.ensureUnusedCapacity(eb.allocator, len + 1);
+    try eb.string_bytes.ensureUnusedCapacity(eb.allocator, slice.len + 1);
     eb.string_bytes.appendSliceAssumeCapacity(slice);
     eb.string_bytes.appendAssumeCapacity(0);
 
     return len;
 }
 
-fn addErrorString(eb: *ErrorBundle, slice: []const u8) !String {
-    const len: String = @intCast(eb.err_bytes.items.len);
+fn addErrorString(eb: *ErrorBundle, slice: []const u8) !u32 {
+    const len: u32 = @intCast(eb.err_bytes.items.len);
 
     // Use len + 1 to ensure 0 is added to the end of every slice.
     try eb.err_bytes.ensureUnusedCapacity(eb.allocator, slice.len + 1);
@@ -172,19 +172,7 @@ pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
 
     for (errors) |err| {
         try writeAstErrorMessage(&eb.source_file, msg_w, err);
-        const err_idx = try eb.addErrorString(msg.written());
-
-        const token = eb.source_file.tokens.get(err.token_pos);
-        const line_info = eb.getLineInfo(token.start);
-
-        const source_idx = try eb.addSourceString(line_info.slice);
-        try eb.errors.append(eb.allocator, .{
-            .source_idx = source_idx,
-            .error_idx = err_idx,
-            .span_len = @intCast(token.end - token.start),
-            .line = line_info.line,
-            .col = line_info.col,
-        });
+        try eb.addDiagnostic(err.token_pos, msg.written());
 
         msg.clearRetainingCapacity();
     }
@@ -198,9 +186,16 @@ pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !voi
 
     for (errors) |err| {
         try writeSemanticErrorMessage(&eb.source_file, msg_w, err);
-        const err_idx = try eb.addErrorString(msg.written());
+        try eb.addDiagnostic(err.token_pos, msg.written());
 
-        const token = eb.source_file.tokens.get(err.token_pos);
+        msg.clearRetainingCapacity();
+    }
+}
+
+fn addDiagnostic(eb: *ErrorBundle, token_pos: TokenIndex, message: []const u8) !void {
+        const err_idx = try eb.addErrorString(message);
+
+        const token = eb.source_file.tokens.get(token_pos);
         const line_info = eb.getLineInfo(token.start);
 
         const source_idx = try eb.addSourceString(line_info.slice);
@@ -211,9 +206,6 @@ pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !voi
             .line = line_info.line,
             .col = line_info.col,
         });
-
-        msg.clearRetainingCapacity();
-    }
 }
 
 pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void {
@@ -234,13 +226,13 @@ pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void
         const source_line = diagnostic.getSourceString(err.source_idx);
         try writer.print("{d: >3} | {s}\n", .{ err.line, source_line });
 
-        const before_caret = err.col;
         try writer.writeAll("    |");
-        try writer.splatByteAll(' ', before_caret);
+        try writer.splatByteAll(' ', err.col);
         try writer.writeByte('^');
 
         // Use -1 since '^' already takes up 1 space.
-        try writer.splatByteAll('~', err.span_len - 1);
+        if (err.span_len > 1)
+            try writer.splatByteAll('~', err.span_len - 1);
         try writer.writeByte('\n');
     }
 
@@ -267,9 +259,9 @@ pub const Diagnostic = struct {
         allocator.free(dia.errors);
     }
 
-    fn getSourceString(dia: *Diagnostic, start: String) []const u8 {
+    fn getSourceString(dia: *Diagnostic, start: u32) []const u8 {
         const string_bytes = dia.string_bytes;
-        var end: String = start;
+        var end: u32 = start;
 
         while (end < string_bytes.len and string_bytes[end] != 0) {
             end += 1;
@@ -278,9 +270,9 @@ pub const Diagnostic = struct {
         return dia.string_bytes[start .. end];
     }
 
-    fn getErrorString(dia: *Diagnostic, start: String) []const u8 {
+    fn getErrorString(dia: *Diagnostic, start: u32) []const u8 {
         const err_bytes = dia.err_bytes;
-        var end: String = start;
+        var end: u32 = start;
 
         while (end < err_bytes.len and err_bytes[end] != 0) {
             end += 1;

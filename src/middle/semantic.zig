@@ -56,6 +56,7 @@ pub const Error = struct {
     pub const Tag = enum {
         // Semantic Errors
         int_overflow,
+        division_by_zero,
         // TODO: Create a note to where the ident is used
         // Note: Previous declaration here:
         ident_mismatch,
@@ -473,7 +474,7 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
         // 1) Integer overflow (0 and 256)
         // 2) Division by 0
         // Create a union field to hold uint.
-        .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
+       .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
         else => unreachable,
     }
 }

@@ -42,9 +42,7 @@ pub const Error = struct {
 
 pub const Ast = @This();
 
-// source: []const u8,
 allocator: Allocator,
-// tokens: Tokens.Slice,
 source_file: SourceFile,
 nodes: Nodes.Slice,
 // extra_data holds:
