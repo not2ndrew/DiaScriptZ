@@ -10,11 +10,22 @@ const Ast = frontend.ast.Ast;
 const Semantic = middle.semantic.Semantic;
 const DecoratedAst = middle.semantic.DecoratedAst;
 
-const DiaIR = backend.ir.DiaIR;
+const dir = backend.ir;
+const DiaIR = dir.DiaIR;
+const InstId = dir.InstId;
+
 const Optimize = backend.optimize.Optimize;
 
-// TODO: I need to return an array of errors incase constant folding or allocation fails.
-pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !void {
+const remap = backend.remap;
+const NewIR = remap.NewIR;
+const remapOldToNewInsts = remap.remapOldToNewInsts;
+
+pub const Lower = @This();
+
+ir: NewIR,
+errors: []Semantic.Error,
+
+pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !Lower {
     // The AST -> IR lowering process assumes an AST
     // does not have any parse or syntax errors.
     // If there is exist an error,
@@ -38,4 +49,18 @@ pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedA
     };
     defer opt.deinit();
     try opt.optimizeRoot();
+
+    const root_idx: InstId = @intCast(opt.instructions.len - 1);
+    const new_ir = try remapOldToNewInsts(&opt, root_idx);
+
+    return .{
+        .ir = new_ir,
+        .errors = try opt.errors.toOwnedSlice(allocator),
+    };
+}
+
+pub fn deinit(low: *Lower, allocator: Allocator) void {
+    allocator.free(low.ir.instructions);
+    allocator.free(low.ir.extra);
+    allocator.free(low.errors);
 }

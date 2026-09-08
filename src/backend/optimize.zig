@@ -19,7 +19,7 @@ const DiaIR = ir.DiaIR;
 const Inst = ir.Inst;
 const Insts = std.ArrayList(Inst);
 
-const remapInsts = remap.remapInsts;
+const remapOldToNewInsts = remap.remapOldToNewInsts;
 const NewIR = remap.NewIR;
 
 const IntError = error {
@@ -27,11 +27,7 @@ const IntError = error {
     DivisionByZero,
 };
 
-const OptimizeError = error {
-    OptimizeError,
-};
-
-const Error = Allocator.Error || OptimizeError;
+const Error = Allocator.Error;
 
 pub const Value = union(enum) {
     unknown,
@@ -129,7 +125,6 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     }
 }
 
-// TODO: Errors should be returned BEFORE DCE.
 pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_idx: u32 = @intCast(opt.instructions.len - 1);
     const root_inst = opt.instructions[root_idx];
@@ -138,25 +133,11 @@ pub fn optimizeRoot(opt: *Optimize) Error!void {
     // Pass 1: Constant fold and propagate.
     try opt.block(range.start, range.len);
 
-    if (opt.errors.items.len > 0)
-        return Error.OptimizeError;
-
     // Pass 2: Dead Code elimination
     var dce: DCE = .{ .opt = opt };
     defer dce.deinit();
 
     try dce.run(root_idx);
-
-    // Pass 3: Recreate Instructions.
-    // TODO: Move this to compile.zig
-    // Remap struct does not need the entire Optimize fields.
-    // Only needs:
-    // Instructions, Extra, branch_result hashmap, and live hashmap
-    const new_set = try opt.remapInsts(root_idx);
-
-    // leave this for now.
-    opt.allocator.free(new_set.instructions);
-    opt.allocator.free(new_set.extra);
 }
 
 fn block(opt: *Optimize, start: u32, len: u32) Error!void {

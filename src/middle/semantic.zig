@@ -470,10 +470,6 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
             const text = sem.ast.source_file.tokenSlice(node.token_pos);
             try sem.interner.appendText(sem.allocator, text);
         },
-        // TODO: Check for math errors
-        // 1) Integer overflow (0 and 256)
-        // 2) Division by 0
-        // Create a union field to hold uint.
        .plus, .minus, .mult, .div => try sem.visitBinary(node.data, visitValue),
         else => unreachable,
     }

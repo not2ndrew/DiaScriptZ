@@ -42,7 +42,7 @@ fn deinit(re: *Remap) void {
     re.old_to_new_inst.deinit(re.allocator);
 }
 
-pub fn remapInsts(opt: *Optimize, root_idx: InstId) !NewIR {
+pub fn remapOldToNewInsts(opt: *Optimize, root_idx: InstId) !NewIR {
     var remap: Remap = .{
         .allocator = opt.allocator,
         .instructions = opt.instructions,

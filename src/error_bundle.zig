@@ -83,7 +83,7 @@ pub fn writeSemanticErrorMessage(sf: *const SourceFile, w: *Writer, err: Semanti
 
     switch (err.tag) {
         .int_overflow => {
-            return w.writeAll("Integer cannot go beyond 256");
+            return w.writeAll("Result range must be in between 0 and 256");
         },
         .division_by_zero => {
             return w.writeAll("Cannot divide by 0");

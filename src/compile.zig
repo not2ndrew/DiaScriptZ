@@ -45,13 +45,14 @@ pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !voi
     if (decorated_ast.errors.len > 0)
         return try printSemanticErrorsToStderr(init.io, allocator, source_file, decorated_ast.errors, file_name);
 
-    low.lower(allocator, &parse_tree.ast, &decorated_ast.decorated) catch |err| {
-        // if (err == error.OptimizeError) {
-        //     return try printSemanticErrorsToStderr(init.io, allocator, source_file, low.errors, file_name);
-        // }
+    var new_ir = low.lower(allocator, &parse_tree.ast, &decorated_ast.decorated) catch |err| {
         if (err == error.OptimizeError) return;
         return err;
     };
+    defer new_ir.deinit(allocator);
+
+    if (new_ir.errors.len > 0)
+        return try printSemanticErrorsToStderr(init.io, allocator, source_file, new_ir.errors, file_name);
 }
 
 /// Make sure to free the []const u8 result!!!
