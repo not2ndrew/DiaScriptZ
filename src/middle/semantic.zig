@@ -33,8 +33,6 @@ pub const Symbol = struct {
     ident_id: IdentId,
     kind: Kind,
 
-    // TODO: Label is rarely used. It is only there because
-    // error diagnostics.
     pub const Kind = enum {
         constant,
         variable,
@@ -83,7 +81,6 @@ pub const DecoratedAst = struct {
 
     pub fn deinit(ast: *DecoratedAst, allocator: Allocator) void {
         allocator.free(ast.decorated.symbols);
-        allocator.free(ast.decorated.labels);
         allocator.free(ast.decorated.symbol_refs);
         allocator.free(ast.decorated.jumps);
         ast.decorated.pool.deinit(allocator);
@@ -92,7 +89,6 @@ pub const DecoratedAst = struct {
 
     pub const Decorated = struct {
         symbols: []Symbol,
-        labels: []IdentId,
         symbol_refs: []SymbolId,
         jumps: []IdentId,
         pool: InternPool,
@@ -111,15 +107,11 @@ allocator: Allocator,
 ast: *const Ast,
 errors: std.ArrayList(Error) = .empty,
 
-// symbol_table is local hashmap for declaration variables and dialogue speakers.
-symbol_table: SymbolTable = .empty,
-// label_table is global hashmap for label names.
-label_table: LabelTable = .empty,
-
 interner: Interner = .{},
 
+// symbol_table is local hashmap for declaration variables and dialogue speakers.
+symbol_table: SymbolTable = .empty,
 symbols: std.ArrayList(Symbol) = .empty,
-labels: std.ArrayList(IdentId) = .empty,
 
 // For any symbol declared, insert a symbolId associated with the symbol.
 symbol_refs: std.ArrayList(SymbolId) = .empty,
@@ -131,24 +123,13 @@ initializing_symbol: ?SymbolId = null,
 
 pub fn deinit(sem: *Semantic) void {
     sem.errors.deinit(sem.allocator);
-    sem.symbol_table.deinit(sem.allocator);
-    sem.label_table.deinit(sem.allocator);
     sem.interner.deinit(sem.allocator);
+    sem.symbol_table.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
-    sem.labels.deinit(sem.allocator);
     sem.symbol_refs.deinit(sem.allocator);
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
     sem.resolved_jumps.deinit(sem.allocator);
-}
-
-fn reportSymbolTaken(sem: *Semantic, symbol_id: SymbolId, token_pos: TokenIndex) !void {
-    const symbol = sem.symbols.items[symbol_id];
-    try sem.errors.append(sem.allocator, .{
-        .tag = .ident_mismatch,
-        .token_pos = token_pos,
-        .data = .{ .initialized = symbol.kind },
-    });
 }
 
 fn addScope(sem: *Semantic, token_pos: TokenIndex) !void {
@@ -189,7 +170,6 @@ pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     const root_node = ast.nodes.get(ast.nodes.len - 1);
     const range = root_node.data.range;
 
-    // Put a limit to how many scopes can be generated
     try sem.scope_stack.ensureTotalCapacityPrecise(allocator, MAX_NUM_SCOPES);
 
     try sem.visitStmtList(range.start, range.len);
@@ -199,16 +179,21 @@ pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     for (sem.unresolved_jumps.items) |jump| {
         const ident_id = jump.ident_id;
         const token_pos = jump.token_pos;
-        sem.label_table.get(jump.ident_id) orelse {
+        if (!sem.symbol_table.contains(jump.ident_id)) {
             try sem.errors.append(allocator, .{
                 .tag = .unknown_jump,
                 .token_pos = token_pos,
             });
             continue;
-        };
+        }
 
         if (sem.symbol_table.get(ident_id)) |symbol_id| {
-            try sem.reportSymbolTaken(symbol_id, token_pos);
+            const symbol = sem.symbols.items[symbol_id];
+            try sem.errors.append(sem.allocator, .{
+                .tag = .ident_mismatch,
+                .token_pos = token_pos,
+                .data = .{ .initialized = symbol.kind },
+            });
             continue;
         }
 
@@ -218,7 +203,6 @@ pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     return .{
         .decorated = .{
             .symbols = try sem.symbols.toOwnedSlice(allocator),
-            .labels = try sem.labels.toOwnedSlice(allocator),
             .symbol_refs = try sem.symbol_refs.toOwnedSlice(allocator),
             .jumps = try sem.resolved_jumps.toOwnedSlice(allocator),
             .pool = try sem.interner.finalize(allocator),
@@ -300,23 +284,15 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
     const name = sem.ast.source_file.tokenSlice(pos);
     const ident_id = try sem.interner.intern(sem.allocator, name);
 
-    if (sem.label_table.contains(ident_id)) {
-        return sem.errors.append(sem.allocator, .{
-            .tag = .ident_mismatch,
-            .token_pos = pos,
-            .data = .{ .initialized = .label }
-        });
-    }
-
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
         const found = sem.symbols.items[entity.value_ptr.*];
         return switch (found.kind) {
-            .speaker => {
+            .speaker, .label => {
                 try sem.errors.append(sem.allocator, .{
                     .tag = .ident_mismatch,
                     .token_pos = pos,
-                    .data = .{ .initialized = .speaker }
+                    .data = .{ .initialized = found.kind }
                 });
             },
             .variable, .constant => {
@@ -325,7 +301,6 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
                     .token_pos = pos,
                 });
             },
-            else => unreachable,
         };
     }
 
@@ -496,13 +471,6 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     }
 
     const ident_id = try sem.interner.intern(sem.allocator, name);
-    if (sem.label_table.contains(ident_id)) {
-        return sem.errors.append(sem.allocator, .{
-            .tag = .ident_mismatch,
-            .token_pos = token_pos,
-            .data = .{ .initialized = .label },
-        });
-    }
 
     var symbol_id: SymbolId = undefined;
 
@@ -512,11 +480,11 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
         const found = sem.symbols.items[symbol_id];
         switch (found.kind) {
             .speaker => {},
-            else => |symbol_kind| {
+            else => {
                 return sem.errors.append(sem.allocator, .{
                     .tag = .ident_mismatch,
                     .token_pos = token_pos,
-                    .data = .{ .initialized = symbol_kind },
+                    .data = .{ .initialized = found.kind },
                 });
             }
         }
@@ -533,7 +501,6 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
     try sem.visitDialogueParts(start, range.len);
 }
 
-// TODO: Choices can exist by themselves. You can group up choices to a maximum of 4.
 fn visitChoice(sem: *Semantic, node: Node) !void {
     const range = node.data.range;
     const start = range.start;
@@ -555,12 +522,13 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
         const jump_name = sem.ast.source_file.tokenSlice(token_pos);
         const ident_id = try sem.interner.intern(sem.allocator, jump_name);
 
-        if (!sem.label_table.contains(ident_id)) {
-            return sem.unresolved_jumps.append(sem.allocator, .{
-                .ident_id = ident_id,
-                .token_pos = token_pos,
-            });
-        }
+        if (sem.symbol_table.contains(ident_id))
+            return sem.resolved_jumps.append(sem.allocator, ident_id);
+
+        try sem.unresolved_jumps.append(sem.allocator, .{
+            .ident_id = ident_id,
+            .token_pos = token_pos,
+        });
     }
 }
 
@@ -587,10 +555,15 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     }
 
     if (sem.symbol_table.get(ident_id)) |symbol_id| {
-        return sem.reportSymbolTaken(symbol_id, token_pos);
+        const symbol = sem.symbols.items[symbol_id];
+        return sem.errors.append(sem.allocator, .{
+            .tag = .ident_mismatch,
+            .token_pos = token_pos,
+            .data = .{ .initialized = symbol.kind },
+        });
     }
 
-    const entity = try sem.label_table.getOrPut(sem.allocator, ident_id);
+    const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
     if (entity.found_existing) {
         return sem.errors.append(sem.allocator, .{
             .tag = .duplicate_label,
@@ -598,7 +571,13 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
         });
     }
 
-    try sem.labels.append(sem.allocator, ident_id);
+    const idx = try sem.addSymbol(.{
+        .ident_id = ident_id,
+        .kind = .label,
+    });
+    entity.value_ptr.* = idx;
+
+    try sem.symbol_refs.append(sem.allocator, idx);
 
     // We have already scanned the first idx.
     // So skip the first idx and reduce len by 1.

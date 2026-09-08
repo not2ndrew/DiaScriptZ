@@ -103,7 +103,6 @@ decorated: *const Decorated,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(InstId) = .empty,
 symbol_ref: SymbolId = 0,
-label_ref: IdentId = 0,
 jump_ref: IdentId = 0,
 text_id_ref: u32 = 0,
 
@@ -149,12 +148,6 @@ fn appendSpan(ir: *DiaIR, items: []const InstId) Span {
 fn nextSymbol(ir: *DiaIR) SymbolId {
     const id = ir.decorated.symbol_refs[ir.symbol_ref];
     ir.symbol_ref += 1;
-    return id;
-}
-
-fn nextLabel(ir: *DiaIR) IdentId {
-    const id = ir.decorated.labels[ir.label_ref];
-    ir.label_ref += 1;
     return id;
 }
 
@@ -424,7 +417,7 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
 
-    const ident_id = ir.nextLabel();
+    const ident_id = ir.nextSymbol();
     const label_inst = ir.appendInst(.label, label_node.token_pos, .{
         .label = ident_id,
     });
