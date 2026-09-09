@@ -164,7 +164,7 @@ fn getLineInfo(eb: *ErrorBundle, byte_pos: usize) LineInfo {
     };
 }
 
-pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
+pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []const Ast.Error) !void {
     var msg: Writer.Allocating = .init(eb.allocator);
     defer msg.deinit();
 
@@ -178,7 +178,7 @@ pub fn addAstErrorMessages(eb: *ErrorBundle, errors: []Ast.Error) !void {
     }
 }
 
-pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []Semantic.Error) !void {
+pub fn addSemanticErrorMessages(eb: *ErrorBundle, errors: []const Semantic.Error) !void {
     var msg: Writer.Allocating = .init(eb.allocator);
     defer msg.deinit();
 
@@ -212,6 +212,7 @@ pub fn renderToStderr(eb: *ErrorBundle, io: std.Io, file_path: []const u8) !void
     var diagnostic = try eb.toOwnDiagnostic();
     defer diagnostic.deinit(eb.allocator);
 
+    // Using some arbitrary number to represent buffer size.
     var buffer: [100]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
     defer io.unlockStderr();

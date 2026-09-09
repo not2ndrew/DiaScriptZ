@@ -48,7 +48,7 @@ nodes: Nodes.Slice,
 // extra_data holds:
 // 1) Variable-length AST payload storage
 // 2) Stores continuous ranges of NodeIndex values referenced by nodes.
-extra_data: []u32,
+extra_data: []const u32,
 
 pub fn deinit(ast: *Ast) void {
     ast.nodes.deinit(ast.allocator);
@@ -58,7 +58,7 @@ pub fn deinit(ast: *Ast) void {
 
 pub const ParseResult = struct {
     ast: Ast,
-    errors: []Error,
+    errors: []const Error,
 
     pub fn deinit(p: *ParseResult, allocator: Allocator) void {
         allocator.free(p.errors);

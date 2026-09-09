@@ -70,15 +70,12 @@ pub fn deinit(opt: *Optimize) void {
     opt.errors.deinit(opt.allocator);
 }
 
-fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) IntError!u8 {
+fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
     return switch (tag) {
-        .add => std.math.add(u8, lhs, rhs) catch IntError.Overflow,
-        .sub => std.math.sub(u8, lhs, rhs) catch IntError.Overflow,
-        .mul => std.math.mul(u8, lhs, rhs) catch IntError.Overflow,
-        .div => {
-            if (rhs == 0) return IntError.DivisionByZero;
-            return std.math.divTrunc(u8, lhs, rhs) catch IntError.Overflow;
-        },
+        .add => std.math.add(u8, lhs, rhs),
+        .sub => std.math.sub(u8, lhs, rhs),
+        .mul => std.math.mul(u8, lhs, rhs),
+        .div => std.math.divTrunc(u8, lhs, rhs),
         else => unreachable,
     };
 }
@@ -151,7 +148,8 @@ fn block(opt: *Optimize, start: u32, len: u32) Error!void {
 fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     return switch (inst.tag) {
-        .store => opt.storeVar(inst_idx),
+        .store => {},
+        .declaration => opt.declaration(inst_idx),
         .branch => opt.foldBranch(inst_idx),
         .dialogue, .choice => opt.foldDialogue(inst),
         .label_block => opt.foldLabel(inst),
@@ -167,7 +165,7 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
 // 1) Variable must be "const"
 // 2) Variable must be assigned a number.
 // Anything else is a runtime variable.
-fn storeVar(opt: *Optimize, inst_idx: InstId) Error!void {
+fn declaration(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     const store = inst.data.store;
     const symbol_id = store.symbol_id;
@@ -201,8 +199,8 @@ fn eval(opt: *Optimize, inst_idx: InstId) Error!Value {
                 const result = fold(inst.tag, lhs.uint, rhs.uint) catch |err| {
                     try opt.errors.append(opt.allocator, .{
                         .tag = switch (err) {
-                            IntError.Overflow => .int_overflow,
-                            IntError.DivisionByZero => .division_by_zero,
+                            error.Overflow => .int_overflow,
+                            error.DivisionByZero => .division_by_zero,
                         },
                         .token_pos = inst.token_pos,
                     });
@@ -388,7 +386,7 @@ const DCE = struct {
         const inst = dce.opt.instructions[inst_idx];
 
         switch (inst.tag) {
-            .store => try dce.collectUses(inst.data.store.value),
+            .declaration, .store => try dce.collectUses(inst.data.store.value),
             .branch => {
                 // Comptime branch: Only 1 block needs to be marked.
                 if (dce.opt.branch_result.get(inst_idx)) |block_id| {
@@ -482,11 +480,12 @@ const DCE = struct {
     fn markInst(dce: *DCE, inst_idx: InstId) Allocator.Error!void {
         const inst = dce.opt.instructions[inst_idx];
         switch (inst.tag) {
-            .store => {
+            .declaration => {
                 const store = inst.data.store;
                 if (dce.used_symbols.contains(store.symbol_id))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
+            .store => try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {}),
             .branch => {
                 const range = inst.data.range;
                 const condition = dce.opt.extra[range.start];

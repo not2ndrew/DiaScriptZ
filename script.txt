@@ -1,4 +1,2 @@
-~ Forest
-end
-
-A: Jump to forest -> Forest
+var i = 255
+i += 1

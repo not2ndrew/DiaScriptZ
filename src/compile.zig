@@ -81,7 +81,7 @@ fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8
     return source;
 }
 
-fn printAstErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []Ast.Error, file_path: []const u8) !void {
+fn printAstErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
     var error_bundle: ErrorBundle = .{
         .allocator = allocator,
         .source_file = source_file,
@@ -92,7 +92,7 @@ fn printAstErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile,
     return error_bundle.renderToStderr(io, file_path);
 }
 
-fn printSemanticErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []sem.Error, file_path: []const u8) !void {
+fn printSemanticErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []const sem.Error, file_path: []const u8) !void {
     var error_bundle: ErrorBundle = .{
         .allocator = allocator,
         .source_file = source_file,

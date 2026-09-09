@@ -42,6 +42,7 @@ pub const Inst = struct {
         // Store
         // declaration statements such as "const" and "var"
         // are handled in Semantic.
+        declaration,
         store,
         block,
         label_block,
@@ -241,7 +242,10 @@ fn reduceChoiceBlock(ir: *DiaIR, start: u32, len: u32) !InstId {
 fn reduceStmt(ir: *DiaIR, node: Node) Error!InstId {
     return switch (node.tag) {
         // Arithmetic IR
-        .declar_stmt, .assign => ir.reduceDecl(node),
+        // .declar_stmt, .assign => ir.reduceDecl(node),
+        .declar_stmt => ir.reduceAssign(node, .declaration),
+        .assign => ir.reduceAssign(node, .store),
+
         .plus_equal => ir.reduceArith(node, .add),
         .minus_equal => ir.reduceArith(node, .sub),
         .mult_equal => ir.reduceArith(node, .mul),
@@ -259,7 +263,7 @@ fn reduceStmt(ir: *DiaIR, node: Node) Error!InstId {
     };
 }
 
-fn reduceDecl(ir: *DiaIR, node: Node) Error!InstId {
+fn reduceAssign(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
     const assign = node.data.node_and_node;
     const value_idx = assign.@"1";
     const value_node = ir.ast.nodes.get(value_idx);
@@ -268,7 +272,7 @@ fn reduceDecl(ir: *DiaIR, node: Node) Error!InstId {
 
     const value = try ir.evalValue(value_node);
 
-    return ir.appendInst(.store, node.token_pos, .{
+    return ir.appendInst(tag, node.token_pos, .{
         .store = .{ .symbol_id = symbol_id, .value = value }
     });
 }

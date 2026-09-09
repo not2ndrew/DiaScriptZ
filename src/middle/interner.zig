@@ -13,9 +13,9 @@ pub const Span = struct {
 // To get the id, we need the Interner table.
 pub const InternPool = struct {
     bytes: []const u8,
-    ident_spans: []Span,
+    ident_spans: []const Span,
     texts: []const u8,
-    text_spans: []Span,
+    text_spans: []const Span,
 
     pub fn deinit(self: *InternPool, allocator: Allocator) void {
         allocator.free(self.bytes);

@@ -17,8 +17,8 @@ const invalid_inst = ir.invalid_inst;
 // and maps them to a new instruction and extra arraylist.
 
 pub const NewIR = struct {
-    instructions: []Inst,
-    extra: []InstId,
+    instructions: []const Inst,
+    extra: []const InstId,
 };
 
 pub const Remap = @This();
@@ -128,7 +128,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
     const inst = re.instructions[old_id];
 
     switch (inst.tag) {
-        .store => re.rebuildStore(old_id),
+        .declaration, .store => re.rebuildStore(old_id),
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         .label_block => re.rebuildLabel(old_id),

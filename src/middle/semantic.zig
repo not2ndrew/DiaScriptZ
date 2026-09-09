@@ -77,7 +77,7 @@ pub const Error = struct {
 
 pub const DecoratedAst = struct {
     decorated: Decorated,
-    errors: []Error,
+    errors: []const Error,
 
     pub fn deinit(ast: *DecoratedAst, allocator: Allocator) void {
         allocator.free(ast.decorated.symbols);
@@ -88,9 +88,9 @@ pub const DecoratedAst = struct {
     }
 
     pub const Decorated = struct {
-        symbols: []Symbol,
-        symbol_refs: []SymbolId,
-        jumps: []IdentId,
+        symbols: []const Symbol,
+        symbol_refs: []const SymbolId,
+        jumps: []const IdentId,
         pool: InternPool,
     };
 };

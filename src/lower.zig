@@ -23,7 +23,7 @@ const remapOldToNewInsts = remap.remapOldToNewInsts;
 pub const Lower = @This();
 
 ir: NewIR,
-errors: []Semantic.Error,
+errors: []const Semantic.Error,
 
 pub fn lower(allocator: Allocator, ast: *const Ast, decorated: *const DecoratedAst.Decorated) !Lower {
     // The AST -> IR lowering process assumes an AST
