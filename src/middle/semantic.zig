@@ -522,13 +522,23 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
         const jump_name = sem.ast.source_file.tokenSlice(token_pos);
         const ident_id = try sem.interner.intern(sem.allocator, jump_name);
 
-        if (sem.symbol_table.contains(ident_id))
-            return sem.resolved_jumps.append(sem.allocator, ident_id);
 
-        try sem.unresolved_jumps.append(sem.allocator, .{
-            .ident_id = ident_id,
-            .token_pos = token_pos,
-        });
+        const symbol_id = sem.symbol_table.get(ident_id) orelse {
+            return try sem.unresolved_jumps.append(sem.allocator, .{
+                .ident_id = ident_id,
+                .token_pos = token_pos,
+            });
+        };
+
+        const symbol = sem.symbols.items[symbol_id];
+        return switch (symbol.kind) {
+            .label => sem.resolved_jumps.append(sem.allocator, ident_id),
+            else => sem.errors.append(sem.allocator, .{
+                .tag = .ident_mismatch,
+                .token_pos = token_pos,
+                .data = .{ .initialized = symbol.kind },
+            })
+        };
     }
 }
 
