@@ -46,18 +46,20 @@ allocator: Allocator,
 instructions: []Inst,
 extra: []InstId,
 
-variables: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 
 // TODO: Determine if I should insert Io in the struct or as a fn parameter.
-pub fn run(io: Io, allocator: Allocator, ir: NewIR) !void {
+pub fn runProgram(io: Io, allocator: Allocator, ir: NewIR) !void {
     _ = io;
-    _ = allocator;
-    _ = ir;
-    // var runtime: Runtime = .{
-    //     .allocator = allocator,
-    //     .instructions = ir.instructions,
-    //     .extra = ir.extra,
-    // };
+    var runtime: Runtime = .{
+        .allocator = allocator,
+        .instructions = ir.instructions,
+        .extra = ir.extra,
+    };
+
+    try runtime.declarations.ensureTotalCapacity(allocator, ir.num_of_declar);
 }
 
-// pub fn deinit(run: *Runtime) void {}
+pub fn deinit(ru: *Runtime) void {
+    ru.declarations.deinit(ru.allocator);
+}

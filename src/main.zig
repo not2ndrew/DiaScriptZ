@@ -1,5 +1,6 @@
 const std = @import("std");
 const compileFile = @import("compile.zig").compileFile;
+const runProgram = @import("runtime.zig").runProgram;
 
 const Allocator = std.mem.Allocator;
 const Init = std.process.Init;
@@ -13,10 +14,16 @@ pub fn main(init: Init) !void {
     const source = try readFile(init, FILE_NAME);
     defer init.gpa.free(source);
 
-    compileFile(init, source, FILE_NAME) catch |err| switch (err) {
+    var ir = compileFile(init, source, FILE_NAME) catch |err| switch (err) {
         error.ParseError, error.SemanticError => return,
         else => return err,
     };
+    defer ir.deinit(init.gpa);
+
+    // Based on ir, we can assume there are no compile time errors.
+    // However, there can exist runtime errors. If we do encounter
+    // a single runtime error, then we must abort the program immediately.
+    // runProgram(init.io, init.gpa, ir);
 }
 
 /// Make sure to free the []const u8 result!!!
