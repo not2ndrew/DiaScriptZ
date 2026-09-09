@@ -406,8 +406,6 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     return .{ .range = ir.appendSpan(parts.items)};
 }
 
-// TODO: reduceBlock and reduceLabel:
-// Try to find a helper function to prevent duplicate code.
 // label extra_data layout:
 // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
 fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {

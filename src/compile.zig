@@ -19,86 +19,56 @@ const SourceFile = frontend.source_file.SourceFile;
 const ErrorBundle = bundle.ErrorBundle;
 
 // TODO: Get file_path instead of file_name.
-pub fn compileFile(init: Init, allocator: Allocator, file_name: []const u8) !void {
-    const source = try readFile(init, allocator, file_name);
-    defer allocator.free(source);
-
+pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void {
     // Generate AST from source
-    // TODO: Make sure to free parse_tree AFTER code optimization is complete.
-    var parse_tree = tree.parse(allocator, source) catch |err| {
+    var parse_tree = tree.parse(init.gpa, source) catch |err| {
         if (err == error.ParseError) return;
         return err;
     };
-    defer parse_tree.deinit(allocator);
+    defer parse_tree.deinit(init.gpa);
 
     const source_file = parse_tree.ast.source_file;
 
     if (parse_tree.errors.len > 0)
-        return try printAstErrorsToStderr(init.io, allocator, source_file, parse_tree.errors, file_name);
+        return try printAstErrorsToStderr(init, source_file, parse_tree.errors, file_name);
 
-    var decorated_ast = sem.analyze(allocator, &parse_tree.ast) catch |err| {
+    var decorated_ast = sem.analyze(init.gpa, &parse_tree.ast) catch |err| {
         if (err == error.SemanticError) return;
         return err;
     };
-    defer decorated_ast.deinit(allocator);
+    defer decorated_ast.deinit(init.gpa);
 
     if (decorated_ast.errors.len > 0)
-        return try printSemanticErrorsToStderr(init.io, allocator, source_file, decorated_ast.errors, file_name);
+        return try printSemanticErrorsToStderr(init, source_file, decorated_ast.errors, file_name);
 
-    var new_ir = low.lower(allocator, &parse_tree.ast, &decorated_ast.decorated) catch |err| {
+    var new_ir = low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated) catch |err| {
         if (err == error.OptimizeError) return;
         return err;
     };
-    defer new_ir.deinit(allocator);
+    defer new_ir.deinit(init.gpa);
 
     if (new_ir.errors.len > 0)
-        return try printSemanticErrorsToStderr(init.io, allocator, source_file, new_ir.errors, file_name);
+        return try printSemanticErrorsToStderr(init, source_file, new_ir.errors, file_name);
 }
 
-/// Make sure to free the []const u8 result!!!
-fn readFile(init: Init, allocator: Allocator, file_name: []const u8) ![]const u8 {
-    const io = init.io;
-    var source: []u8 = undefined;
-
-    const file = try Io.Dir.cwd().openFile(io, file_name, .{});
-    defer file.close(io);
-
-    const length = try file.length(io);
-    if (length == 0) return DelimiterError.ReadFailed;
-
-    source = try allocator.alloc(u8, length);
-
-    var reader = Io.File.Reader.init(file, io, source);
-    const reader_inter: *Io.Reader = &reader.interface;
-    const EndOfStream = DelimiterError.EndOfStream;
-
-    while (reader_inter.takeDelimiterInclusive('\n')) |_| {} else |err| {
-        if (err != EndOfStream) {
-            std.debug.print("An Error has occurred {}", .{err});
-        }
-    }
-
-    return source;
-}
-
-fn printAstErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
+fn printAstErrorsToStderr(init: Init, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
     var error_bundle: ErrorBundle = .{
-        .allocator = allocator,
+        .allocator = init.gpa,
         .source_file = source_file,
     };
     defer error_bundle.deinit();
 
     try error_bundle.addAstErrorMessages(errors);
-    return error_bundle.renderToStderr(io, file_path);
+    return error_bundle.renderToStderr(init.io, file_path);
 }
 
-fn printSemanticErrorsToStderr(io: Io, allocator: Allocator, source_file: SourceFile, errors: []const sem.Error, file_path: []const u8) !void {
+fn printSemanticErrorsToStderr(init: Init, source_file: SourceFile, errors: []const sem.Error, file_path: []const u8) !void {
     var error_bundle: ErrorBundle = .{
-        .allocator = allocator,
+        .allocator = init.gpa,
         .source_file = source_file,
     };
     defer error_bundle.deinit();
 
     try error_bundle.addSemanticErrorMessages(errors);
-    return error_bundle.renderToStderr(io, file_path);
+    return error_bundle.renderToStderr(init.io, file_path);
 }

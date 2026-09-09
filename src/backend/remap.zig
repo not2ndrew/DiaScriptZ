@@ -19,6 +19,7 @@ const invalid_inst = ir.invalid_inst;
 pub const NewIR = struct {
     instructions: []const Inst,
     extra: []const InstId,
+    num_of_declar: u32,
 };
 
 pub const Remap = @This();
@@ -35,6 +36,9 @@ new_instructions: std.ArrayList(Inst) = .empty,
 new_extra: std.ArrayList(InstId) = .empty,
 
 old_to_new_inst: std.ArrayList(InstId) = .empty,
+
+/// Number of variable or label declarations.
+num_of_declar: u32 = 0,
 
 fn deinit(re: *Remap) void {
     re.new_instructions.deinit(re.allocator);
@@ -86,6 +90,7 @@ pub fn remapOldToNewInsts(opt: *Optimize, root_idx: InstId) !NewIR {
     return .{
         .instructions = try remap.new_instructions.toOwnedSlice(opt.allocator),
         .extra = try remap.new_extra.toOwnedSlice(opt.allocator),
+        .num_of_declar = remap.num_of_declar,
     };
 }
 
@@ -128,7 +133,8 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
     const inst = re.instructions[old_id];
 
     switch (inst.tag) {
-        .declaration, .store => re.rebuildStore(old_id),
+        .declaration => re.rebuildDeclar(old_id),
+        .store => re.rebuildStore(old_id),
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
         .label_block => re.rebuildLabel(old_id),
@@ -137,6 +143,11 @@ fn rebuildStmt(re: *Remap, old_id: InstId) InstId {
 
     re.old_to_new_inst.items[old_id] = new_id;
     return new_id;
+}
+
+fn rebuildDeclar(re: *Remap, old_id: InstId) void {
+    re.num_of_declar += 1;
+    re.rebuildStore(old_id);
 }
 
 // No need to remap symbol since Symbols is stored separately
@@ -283,6 +294,7 @@ fn rebuildLabel(re: *Remap, old_id: InstId) void {
     const label_id = re.extra[range.start];
     const label = re.rebuildExpr(label_id);
 
+    re.num_of_declar += 1;
     re.new_extra.appendAssumeCapacity(label);
 
     // Skip the first
