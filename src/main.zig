@@ -13,7 +13,10 @@ pub fn main(init: Init) !void {
     const source = try readFile(init, FILE_NAME);
     defer init.gpa.free(source);
 
-    try compileFile(init, source, FILE_NAME);
+    compileFile(init, source, FILE_NAME) catch |err| switch (err) {
+        error.ParseError, error.SemanticError => return,
+        else => return err,
+    };
 }
 
 /// Make sure to free the []const u8 result!!!

@@ -1,13 +1,15 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const ir = @import("dia_ir.zig");
+const dir = @import("dia_ir.zig");
 const Optimize = @import("optimize.zig").Optimize;
+
+const Allocator = std.mem.Allocator;
 
 const TokenIndex = frontend.token.TokenIndex;
 
-const Inst = ir.Inst;
-const InstId = ir.InstId;
-const invalid_inst = ir.invalid_inst;
+const Inst = dir.Inst;
+const InstId = dir.InstId;
+const invalid_inst = dir.invalid_inst;
 
 // ───────────────────────────────
 //            REMAPPING
@@ -20,11 +22,16 @@ pub const NewIR = struct {
     instructions: []const Inst,
     extra: []const InstId,
     num_of_declar: u32,
+
+    pub fn deinit(ir: *NewIR, allocator: Allocator) void {
+        allocator.free(ir.instructions);
+        allocator.free(ir.extra);
+    }
 };
 
 pub const Remap = @This();
 
-allocator: std.mem.Allocator,
+allocator: Allocator,
 instructions: []Inst,
 extra: []InstId,
 // KV pair is condition id -> block id

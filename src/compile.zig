@@ -3,6 +3,7 @@ const frontend = @import("frontend");
 const sem = @import("middle").semantic;
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
+const backend = @import("backend");
 
 const Io = std.Io;
 const Init = std.process.Init;
@@ -18,37 +19,37 @@ const SourceFile = frontend.source_file.SourceFile;
 
 const ErrorBundle = bundle.ErrorBundle;
 
+const remap = backend.remap;
+const NewIR = remap.NewIR;
+
 // TODO: Get file_path instead of file_name.
 pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void {
     // Generate AST from source
-    var parse_tree = tree.parse(init.gpa, source) catch |err| {
-        if (err == error.ParseError) return;
-        return err;
-    };
+    var parse_tree = try tree.parse(init.gpa, source);
     defer parse_tree.deinit(init.gpa);
 
     const source_file = parse_tree.ast.source_file;
 
-    if (parse_tree.errors.len > 0)
-        return try printAstErrorsToStderr(init, source_file, parse_tree.errors, file_name);
+    if (parse_tree.errors.len > 0) {
+        try printAstErrorsToStderr(init, source_file, parse_tree.errors, file_name);
+        return error.ParseError;
+    }
 
-    var decorated_ast = sem.analyze(init.gpa, &parse_tree.ast) catch |err| {
-        if (err == error.SemanticError) return;
-        return err;
-    };
+    var decorated_ast = try sem.analyze(init.gpa, &parse_tree.ast);
     defer decorated_ast.deinit(init.gpa);
 
-    if (decorated_ast.errors.len > 0)
-        return try printSemanticErrorsToStderr(init, source_file, decorated_ast.errors, file_name);
+    if (decorated_ast.errors.len > 0) {
+        try printSemanticErrorsToStderr(init, source_file, decorated_ast.errors, file_name);
+        return error.SemanticError;
+    }
 
-    var new_ir = low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated) catch |err| {
-        if (err == error.OptimizeError) return;
-        return err;
-    };
-    defer new_ir.deinit(init.gpa);
+    var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
+    defer lower_result.deinit(init.gpa);
 
-    if (new_ir.errors.len > 0)
-        return try printSemanticErrorsToStderr(init, source_file, new_ir.errors, file_name);
+    if (lower_result.errors.len > 0) {
+        try printSemanticErrorsToStderr(init, source_file, lower_result.errors, file_name);
+        return error.SemanticError;
+    }
 }
 
 fn printAstErrorsToStderr(init: Init, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
