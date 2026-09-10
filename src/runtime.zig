@@ -49,7 +49,6 @@ extra: []const InstId,
 
 declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 
-// TODO: Determine if I should insert Io in the struct or as a fn parameter.
 pub fn runProgram(io: Io, allocator: Allocator, ir: NewIR) !void {
     var runtime: Runtime = .{
         .allocator = allocator,
@@ -135,6 +134,8 @@ fn storeValue(ru: *Runtime, inst: Inst) !void {
 
     const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
     entry.value_ptr.* = value;
+
+    std.debug.print("The value is: {d}\n", .{value});
 }
 
 fn eval(ru: *Runtime, inst_idx: InstId) !u8 {
@@ -152,7 +153,6 @@ fn eval(ru: *Runtime, inst_idx: InstId) !u8 {
 
             return fold(inst.tag, lhs, rhs) catch |err| return err;
         },
-        // TODO: Change this to unreachable.
         else => unreachable,
     };
 }
