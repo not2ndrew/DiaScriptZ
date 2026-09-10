@@ -113,13 +113,12 @@ fn block(ru: *Runtime, start: u32, len: u32) !void {
     }
 }
 
-// TODO: Remapping is incorrect.
 fn stmt(ru: *Runtime, inst_idx: InstId) !void {
     const inst = ru.instructions[inst_idx];
-    std.debug.print("Inst tag: {t}\n\n", .{inst.tag});
+    std.debug.print("Inst tag: {t}\n", .{inst.tag});
     return switch (inst.tag) {
         .declaration => ru.declaration(inst),
-        .dialogue => {},
+        .store => ru.storeValue(inst),
         else => unreachable,
     };
 }
@@ -128,6 +127,14 @@ fn declaration(ru: *Runtime, inst: Inst) !void {
     const store = inst.data.store;
     const value = try ru.eval(store.value);
     ru.declarations.putAssumeCapacityNoClobber(store.symbol_id, value);
+}
+
+fn storeValue(ru: *Runtime, inst: Inst) !void {
+    const store = inst.data.store;
+    const value = try ru.eval(store.value);
+
+    const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
+    entry.value_ptr.* = value;
 }
 
 fn eval(ru: *Runtime, inst_idx: InstId) !u8 {

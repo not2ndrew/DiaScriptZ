@@ -1,2 +1,2 @@
 var x = 10
-A: There are {x} apples
+x += 1
