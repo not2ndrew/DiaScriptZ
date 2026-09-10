@@ -1,12 +1,15 @@
 const std = @import("std");
 const compileFile = @import("compile.zig").compileFile;
-const runProgram = @import("runtime.zig").runProgram;
+const runtime = @import("runtime.zig");
 
 const Allocator = std.mem.Allocator;
 const Init = std.process.Init;
 
 const Io = std.Io;
 const DelimiterError = Io.Reader.DelimiterError;
+
+const RunTimeError = runtime.RunTimeError;
+const runProgram = runtime.runProgram;
 
 const FILE_NAME = "script.txt";
 
@@ -26,7 +29,10 @@ pub fn main(init: Init) !void {
     // for (ir.instructions) |inst| {
     //     std.debug.print("Tag: {t}\n", .{inst.tag});
     // }
-    try runProgram(init.io, init.gpa, ir);
+    runProgram(init.io, init.gpa, ir) catch |err| switch (err) {
+        RunTimeError.Overflow, RunTimeError.DivisionByZero => return,
+        else => return err,
+    };
 }
 
 /// Make sure to free the []const u8 result!!!

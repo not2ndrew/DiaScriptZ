@@ -10,6 +10,8 @@ const InstId = backend.ir.InstId;
 
 const NewIR = backend.remap.NewIR;
 
+pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
+
 // ───────────────────────────────
 //            RUNTIME
 // ───────────────────────────────
@@ -49,7 +51,7 @@ extra: []const InstId,
 
 declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 
-pub fn runProgram(io: Io, allocator: Allocator, ir: NewIR) !void {
+pub fn runProgram(io: Io, allocator: Allocator, ir: NewIR) RunTimeError!void {
     var runtime: Runtime = .{
         .allocator = allocator,
         .io = io,
@@ -67,7 +69,7 @@ pub fn deinit(ru: *Runtime) void {
     ru.declarations.deinit(ru.allocator);
 }
 
-fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) !u8 {
+fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) RunTimeError!u8 {
     return switch (tag) {
         .add => std.math.add(u8, lhs, rhs),
         .sub => std.math.sub(u8, lhs, rhs),
@@ -89,56 +91,7 @@ fn compare(tag: Inst.Tag, lhs: u8, rhs: u8) bool {
     };
 }
 
-fn logicalOp(tag: Inst.Tag, lhs: bool, rhs: bool) bool {
-    return switch (tag) {
-        .bool_and => lhs and rhs,
-        .bool_or => lhs or rhs,
-        else => unreachable,
-    };
-}
-
-fn run(ru: *Runtime) !void {
-    const root_inst = ru.instructions[ru.instructions.len - 1];
-    const range = root_inst.data.range;
-
-    try ru.block(range.start, range.len);
-}
-
-fn block(ru: *Runtime, start: u32, len: u32) !void {
-    const end = start + len;
-    for (start .. end) |idx| {
-        const stmt_idx = ru.extra[idx];
-        try ru.stmt(stmt_idx);
-    }
-}
-
-fn stmt(ru: *Runtime, inst_idx: InstId) !void {
-    const inst = ru.instructions[inst_idx];
-    std.debug.print("Inst tag: {t}\n", .{inst.tag});
-    return switch (inst.tag) {
-        .declaration => ru.declaration(inst),
-        .store => ru.storeValue(inst),
-        else => unreachable,
-    };
-}
-
-fn declaration(ru: *Runtime, inst: Inst) !void {
-    const store = inst.data.store;
-    const value = try ru.eval(store.value);
-    ru.declarations.putAssumeCapacityNoClobber(store.symbol_id, value);
-}
-
-fn storeValue(ru: *Runtime, inst: Inst) !void {
-    const store = inst.data.store;
-    const value = try ru.eval(store.value);
-
-    const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
-    entry.value_ptr.* = value;
-
-    std.debug.print("The value is: {d}\n", .{value});
-}
-
-fn eval(ru: *Runtime, inst_idx: InstId) !u8 {
+fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     const inst = ru.instructions[inst_idx];
     return switch (inst.tag) {
         .constant => inst.data.uint,
@@ -151,8 +104,103 @@ fn eval(ru: *Runtime, inst_idx: InstId) !u8 {
             const lhs = try ru.eval(b.lhs);
             const rhs = try ru.eval(b.rhs);
 
-            return fold(inst.tag, lhs, rhs) catch |err| return err;
+            return try fold(inst.tag, lhs, rhs);
         },
         else => unreachable,
     };
+}
+
+fn run(ru: *Runtime) RunTimeError!void {
+    const root_inst = ru.instructions[ru.instructions.len - 1];
+    const range = root_inst.data.range;
+
+    try ru.block(range.start, range.len);
+}
+
+fn block(ru: *Runtime, start: u32, len: u32) RunTimeError!void {
+    const end = start + len;
+    for (start .. end) |idx| {
+        const stmt_idx = ru.extra[idx];
+        try ru.stmt(stmt_idx);
+    }
+}
+
+fn stmt(ru: *Runtime, inst_idx: InstId) RunTimeError!void {
+    const inst = ru.instructions[inst_idx];
+    std.debug.print("Inst tag: {t}\n", .{inst.tag});
+    return switch (inst.tag) {
+        .declaration => ru.declaration(inst),
+        .store => ru.storeValue(inst),
+        .branch =>ru.branch(inst),
+        else => unreachable,
+    };
+}
+
+fn declaration(ru: *Runtime, inst: Inst) RunTimeError!void {
+    const store = inst.data.store;
+    const value = try ru.eval(store.value);
+    ru.declarations.putAssumeCapacityNoClobber(store.symbol_id, value);
+}
+
+fn storeValue(ru: *Runtime, inst: Inst) RunTimeError!void {
+    const store = inst.data.store;
+    const value = try ru.eval(store.value);
+
+    const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
+    entry.value_ptr.* = value;
+
+    std.debug.print("The value is: {d}\n", .{value});
+}
+
+fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
+    const range = inst.data.range;
+    const cond = ru.extra[range.start];
+    const then_block = ru.extra[range.start + 1];
+    const else_block = ru.extra[range.start + 2];
+
+    const branch_result = try ru.condition(cond);
+
+    if (branch_result) {
+        const then_inst = ru.instructions[then_block];
+        const t_range = then_inst.data.range;
+        try ru.block(t_range.start, t_range.len);
+    } else {
+        const else_inst = ru.instructions[else_block];
+        const e_range = else_inst.data.range;
+        try ru.block(e_range.start, e_range.len);
+    }
+}
+
+fn condition(ru: *Runtime, inst_idx: InstId) RunTimeError!bool {
+    const inst = ru.instructions[inst_idx];
+
+    return switch (inst.tag) {
+        .bool_and, .bool_or => try ru.logicalCondition(inst),
+        .eql, .not_eql,
+        .less, .less_or_eql,
+        .greater, .greater_or_eql => ru.compareCondition(inst),
+        else => unreachable,
+    };
+}
+
+fn logicalCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
+    const binary = inst.data.binary;
+
+    const lhs = try ru.condition(binary.lhs);
+    const rhs = try ru.condition(binary.rhs);
+
+    return switch (inst.tag) {
+        .bool_and => lhs and rhs,
+        .bool_or => lhs or rhs,
+        else => unreachable,
+    };
+}
+
+fn compareCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
+    const binary = inst.data.binary;
+
+    const lhs = try ru.eval(binary.lhs);
+    const rhs = try ru.eval(binary.rhs);
+
+    return compare(inst.tag, lhs, rhs);
 }
