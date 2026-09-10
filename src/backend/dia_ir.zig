@@ -242,7 +242,6 @@ fn reduceChoiceBlock(ir: *DiaIR, start: u32, len: u32) !InstId {
 fn reduceStmt(ir: *DiaIR, node: Node) Error!InstId {
     return switch (node.tag) {
         // Arithmetic IR
-        // .declar_stmt, .assign => ir.reduceDecl(node),
         .declar_stmt => ir.reduceAssign(node, .declaration),
         .assign => ir.reduceAssign(node, .store),
 

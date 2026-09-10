@@ -23,7 +23,10 @@ pub fn main(init: Init) !void {
     // Based on ir, we can assume there are no compile time errors.
     // However, there can exist runtime errors. If we do encounter
     // a single runtime error, then we must abort the program immediately.
-    // runProgram(init.io, init.gpa, ir);
+    // for (ir.instructions) |inst| {
+    //     std.debug.print("Tag: {t}\n", .{inst.tag});
+    // }
+    try runProgram(init.io, init.gpa, ir);
 }
 
 /// Make sure to free the []const u8 result!!!

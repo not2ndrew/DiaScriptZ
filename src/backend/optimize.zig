@@ -148,7 +148,7 @@ fn block(opt: *Optimize, start: u32, len: u32) Error!void {
 fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     return switch (inst.tag) {
-        .store => {},
+        .store => opt.storeValue(inst),
         .declaration => opt.declaration(inst_idx),
         .branch => opt.foldBranch(inst_idx),
         .dialogue, .choice => opt.foldDialogue(inst),
@@ -174,6 +174,10 @@ fn declaration(opt: *Optimize, inst_idx: InstId) Error!void {
     const value = try opt.eval(store.value);
     if (symbol.kind == .constant and value == .uint)
         try opt.constants.put(opt.allocator, symbol_id, value.uint);
+}
+
+fn storeValue(opt: *Optimize, inst: Inst) Error!void {
+    _ = try opt.eval(inst.data.store.value);
 }
 
 fn eval(opt: *Optimize, inst_idx: InstId) Error!Value {

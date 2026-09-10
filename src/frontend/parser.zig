@@ -568,13 +568,6 @@ fn parseFactor(p: *Parser) Error!NodeIndex {
             return expr;
         },
         else => {
-            // TODO: This should point at the current token. Not the previous.
-            // If I were to do p.token_pos instead of p.token_pos - 1,
-            // error bundle would not show the entire source line.
-            // try p.errors.append(p.allocator, .{
-            //     .tag = .expected_expr,
-            //     .token_pos = p.token_pos,
-            // });
             _ = try p.expect(.identifier);
 
             return Error.ParseError;

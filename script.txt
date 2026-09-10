@@ -1,2 +1,2 @@
-A: Welcome back home
-B: Thanks
+var x = 10
+A: There are {x} apples
