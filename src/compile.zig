@@ -67,6 +67,19 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
         return error.SemanticError;
     }
 
+    var diaIR: dir.DiaIR = .{
+        .allocator = init.gpa,
+        .ast = &parse_tree.ast,
+        .decorated = &decorated_ast.decorated,
+    };
+    defer diaIR.deinit();
+
+    try diaIR.generate();
+
+    for (diaIR.instructions.items) |inst| {
+        std.debug.print("tag: {t}\n", .{inst.tag});
+    }
+
     // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
     // defer lower_result.deinit(init.gpa);
     //

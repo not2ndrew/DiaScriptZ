@@ -1,3 +1,7 @@
-var x = 0
+~ Forest
+end
 
-x: Hello World
+A: Hello World -> Forest
+
+~ Forest
+end

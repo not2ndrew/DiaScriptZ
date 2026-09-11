@@ -74,6 +74,7 @@ pub const DecoratedAst = struct {
 
     pub fn deinit(ast: *DecoratedAst, allocator: Allocator) void {
         allocator.free(ast.decorated.symbols);
+        allocator.free(ast.decorated.kinds);
         allocator.free(ast.decorated.jump_labels);
         ast.decorated.pool.deinit(allocator);
         allocator.free(ast.errors);
@@ -81,6 +82,7 @@ pub const DecoratedAst = struct {
 
     pub const Decorated = struct {
         symbols: []const IdentId,
+        kinds: []const SymbolKind,
         jump_labels: []const IdentId,
         pool: InternPool,
     };
@@ -103,6 +105,7 @@ interner: Interner = .{},
 // symbol_table is local hashmap for all declaration variable, labels, and speakers.
 symbol_table: SymbolTable = .empty,
 symbols: std.ArrayList(IdentId) = .empty,
+kinds: std.ArrayList(SymbolKind) = .empty,
 
 scope_stack: std.ArrayList(u32) = .empty,
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
@@ -114,6 +117,7 @@ pub fn deinit(sem: *Semantic) void {
     sem.interner.deinit(sem.allocator);
     sem.symbol_table.deinit(sem.allocator);
     sem.symbols.deinit(sem.allocator);
+    sem.kinds.deinit(sem.allocator);
     sem.scope_stack.deinit(sem.allocator);
     sem.unresolved_jumps.deinit(sem.allocator);
     sem.resolved_jumps.deinit(sem.allocator);
@@ -139,8 +143,9 @@ fn endScope(sem: *Semantic) void {
     }
 }
 
-fn addSymbol(sem: *Semantic, ident: IdentId) !void {
+fn addSymbol(sem: *Semantic, ident: IdentId, kind: SymbolKind) !void {
     try sem.symbols.append(sem.allocator, ident);
+    try sem.kinds.append(sem.allocator, kind);
 }
 
 // The last node of a post-traversal list
@@ -187,6 +192,7 @@ pub fn analyze(allocator: Allocator, ast: *const Ast) !DecoratedAst {
     return .{
         .decorated = .{
             .symbols = try sem.symbols.toOwnedSlice(allocator),
+            .kinds = try sem.kinds.toOwnedSlice(allocator),
             .jump_labels = try sem.resolved_jumps.toOwnedSlice(allocator),
             .pool = try sem.interner.finalize(allocator),
         },
@@ -283,7 +289,7 @@ fn visitVarDecl(sem: *Semantic, node: Node) !void {
         };
     }
 
-    try sem.addSymbol(ident_id);
+    try sem.addSymbol(ident_id, mutability);
     entity.value_ptr.* = mutability;
 
     sem.initializing_symbol = ident_id;
@@ -327,6 +333,7 @@ fn visitAssign(sem: *Semantic, node: Node) !void {
         else => {},
     }
 
+    try sem.addSymbol(ident_id, kind);
     try sem.visitValue(assign.@"1");
 }
 
@@ -397,7 +404,7 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
         .var_ident => {
             const name = sem.ast.source_file.tokenSlice(token_pos);
             const ident_id = try sem.interner.intern(sem.allocator, name);
-            _ = sem.symbol_table.get(ident_id) orelse {
+            const kind = sem.symbol_table.get(ident_id) orelse {
                 return sem.errors.append(sem.allocator, .{
                     .tag = .undeclared_var,
                     .token_pos = token_pos,
@@ -410,6 +417,8 @@ fn visitValue(sem: *Semantic, node_idx: NodeIndex) !void {
                     .token_pos = token_pos,
                 });
             }
+
+            try sem.addSymbol(ident_id, kind);
         },
         .string => {
             const text = sem.ast.source_file.tokenSlice(node.token_pos);
@@ -454,7 +463,7 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
             }),
         }
     } else {
-        try sem.addSymbol(ident_id);
+        try sem.addSymbol(ident_id, .speaker);
         entity.value_ptr.* = .speaker;
     }
 
@@ -523,22 +532,21 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     }
 
     if (sem.symbol_table.get(ident_id)) |kind| {
-        return sem.errors.append(sem.allocator, .{
-            .tag = .ident_mismatch,
-            .token_pos = token_pos,
-            .data = .{ .initialized = kind },
-        });
+        return switch (kind) {
+            .label => sem.errors.append(sem.allocator, .{
+                .tag = .duplicate_label,
+                .token_pos = token_pos,
+            }),
+            else => sem.errors.append(sem.allocator, .{
+                .tag = .ident_mismatch,
+                .token_pos = token_pos,
+                .data = .{ .initialized = kind },
+            }),
+        };
     }
 
     const entity = try sem.symbol_table.getOrPut(sem.allocator, ident_id);
-    if (entity.found_existing) {
-        return sem.errors.append(sem.allocator, .{
-            .tag = .duplicate_label,
-            .token_pos = token_pos,
-        });
-    }
-
-    try sem.addSymbol(ident_id);
+    try sem.addSymbol(ident_id, .label);
     entity.value_ptr.* = .label;
 
     // We have already scanned the first idx.

@@ -14,8 +14,6 @@ const invalid_node = nod.invalid_node;
 const Ast = frontend.ast.Ast;
 
 const sem = middle.semantic;
-const Symbol = sem.Symbol;
-const SymbolId = sem.SymbolId;
 const Decorated = sem.DecoratedAst.Decorated;
 
 const in = middle.interner;
@@ -89,7 +87,6 @@ pub const Inst = struct {
         ident: IdentId,
         store: struct {
             ident: IdentId,
-            // symbol_id: SymbolId,
             value: InstId,
         },
         binary: struct {
@@ -109,9 +106,9 @@ decorated: *const Decorated,
 
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(InstId) = .empty,
-symbol_ref: SymbolId = 0,
+ident_ref: IdentId = 0,
 jump_ref: IdentId = 0,
-text_id_ref: u32 = 0,
+text_ref: u32 = 0,
 
 pub fn deinit(ir: *DiaIR) void {
     const allocator = ir.allocator;
@@ -152,29 +149,21 @@ fn appendSpan(ir: *DiaIR, items: []const InstId) Span {
     return .{ .start = start, .len = @intCast(items.len) };
 }
 
-// fn nextSymbol(ir: *DiaIR) SymbolId {
-//     const id = ir.decorated.symbol_refs[ir.symbol_ref];
-//     ir.symbol_ref += 1;
-//     return id;
-// }
-
 fn nextIdent(ir: *DiaIR) IdentId {
-    const symbol_id = ir.decorated.symbol_refs[ir.symbol_ref];
-    ir.symbol_ref += 1;
-
-    const symbol = ir.decorated.symbols[symbol_id];
-    return symbol.ident_id;
+    const id = ir.decorated.symbols[ir.ident_ref];
+    ir.ident_ref += 1;
+    return id;
 }
 
-// fn nextJump(ir: *DiaIR) IdentId {
-//     const id = ir.decorated.jumps[ir.jump_ref];
-//     ir.jump_ref += 1;
-//     return id;
-// }
+fn nextJump(ir: *DiaIR) IdentId {
+    const id = ir.decorated.jump_labels[ir.jump_ref];
+    ir.jump_ref += 1;
+    return id;
+}
 
 fn nextText(ir: *DiaIR) u32 {
-    const len = ir.text_id_ref;
-    ir.text_id_ref += 1;
+    const len = ir.text_ref;
+    ir.text_ref += 1;
     return len;
 }
 
@@ -281,12 +270,12 @@ fn reduceAssign(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
     const value_idx = assign.@"1";
     const value_node = ir.ast.nodes.get(value_idx);
 
-    const symbol_id = ir.nextSymbol();
+    const ident_id = ir.nextIdent();
 
     const value = try ir.evalValue(value_node);
 
     return ir.appendInst(tag, node.token_pos, .{
-        .store = .{ .symbol_id = symbol_id, .value = value }
+        .store = .{ .ident = ident_id, .value = value }
     });
 }
 
@@ -299,10 +288,10 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
     const value_node = ir.ast.nodes.get(value_idx);
 
     const ident = ir.ast.nodes.get(ident_idx);
-    const symbol_id = ir.nextSymbol();
+    const ident_id = ir.nextIdent();
 
     const lhs = ir.appendInst(.load, ident.token_pos, .{
-        .load = symbol_id,
+        .ident = ident_id,
     });
     const rhs = try ir.evalValue(value_node);
 
@@ -310,7 +299,7 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
         .binary = .{ .lhs = lhs, .rhs = rhs }
     });
     return ir.appendInst(.store, node.token_pos, .{
-        .store = .{ .symbol_id = symbol_id, .value = result }
+        .store = .{ .ident = ident_id, .value = result }
     });
 }
 
@@ -363,9 +352,9 @@ fn reduceDialogue(ir: *DiaIR, node: Node) Error!InstId {
 
     var speaker: InstId = invalid_inst;
     if (speaker_node.tag != .anonymous) {
-        const speaker_id = ir.nextSymbol();
+        const ident_id = ir.nextIdent();
         speaker = ir.appendInst(.speaker, node.token_pos, .{
-            .load = speaker_id,
+            .ident = ident_id,
         });
     }
 
@@ -408,9 +397,9 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
     var jump: u32 = invalid_inst;
     if (jump_idx != invalid_inst) {
         const jump_node = ir.ast.nodes.get(jump_idx);
-        const ident_id = ir.nextJump();
+        const jump_id = ir.nextJump();
         jump = ir.appendInst(.jump, jump_node.token_pos, .{
-            .jump = ident_id,
+            .ident = jump_id,
         });
     }
 
@@ -432,9 +421,9 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
 
-    const ident_id = ir.nextSymbol();
+    const ident_id = ir.nextIdent();
     const label_inst = ir.appendInst(.label, label_node.token_pos, .{
-        .label = ident_id,
+        .ident = ident_id,
     });
 
     try stmts.append(ir.allocator, label_inst);
@@ -465,9 +454,9 @@ fn evalValue(ir: *DiaIR, node: Node) Error!InstId {
             return ir.appendInst(.constant, token_pos, .{ .uint = num });
         },
         .var_ident => {
-            const symbol_id = ir.nextSymbol();
+            const ident_id = ir.nextIdent();
             return ir.appendInst(.load, token_pos, .{
-                .load = symbol_id
+                .ident = ident_id
             });
         },
         .string => {
