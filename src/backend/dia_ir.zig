@@ -76,14 +76,20 @@ pub const Inst = struct {
         branch,
     };
 
+    // TODO: We will be using the InternPool as our index instead of symbols.
+    // 1) Replace all SymbolId with IdentId,
+    // 2) load, label, and jump are all identical.
+    // We can group them up into a singular union.
     pub const Data = union {
         boolean: bool,
         uint: u8,
-        load: SymbolId,
-        label: IdentId,
-        jump: IdentId,
+        // load: SymbolId,
+        // label: IdentId,
+        // jump: IdentId,
+        ident: IdentId,
         store: struct {
-            symbol_id: SymbolId,
+            ident: IdentId,
+            // symbol_id: SymbolId,
             value: InstId,
         },
         binary: struct {
@@ -146,17 +152,25 @@ fn appendSpan(ir: *DiaIR, items: []const InstId) Span {
     return .{ .start = start, .len = @intCast(items.len) };
 }
 
-fn nextSymbol(ir: *DiaIR) SymbolId {
-    const id = ir.decorated.symbol_refs[ir.symbol_ref];
+// fn nextSymbol(ir: *DiaIR) SymbolId {
+//     const id = ir.decorated.symbol_refs[ir.symbol_ref];
+//     ir.symbol_ref += 1;
+//     return id;
+// }
+
+fn nextIdent(ir: *DiaIR) IdentId {
+    const symbol_id = ir.decorated.symbol_refs[ir.symbol_ref];
     ir.symbol_ref += 1;
-    return id;
+
+    const symbol = ir.decorated.symbols[symbol_id];
+    return symbol.ident_id;
 }
 
-fn nextJump(ir: *DiaIR) IdentId {
-    const id = ir.decorated.jumps[ir.jump_ref];
-    ir.jump_ref += 1;
-    return id;
-}
+// fn nextJump(ir: *DiaIR) IdentId {
+//     const id = ir.decorated.jumps[ir.jump_ref];
+//     ir.jump_ref += 1;
+//     return id;
+// }
 
 fn nextText(ir: *DiaIR) u32 {
     const len = ir.text_id_ref;

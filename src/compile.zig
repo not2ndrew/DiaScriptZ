@@ -47,7 +47,7 @@ pub fn deinit(comp: *Compile, allocator: Allocator) void {
 }
 
 // TODO: Get file_path instead of file_name.
-pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !Compile {
+pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void {
     // Generate AST from source
     var parse_tree = try tree.parse(init.gpa, source);
     defer parse_tree.deinit(init.gpa);
@@ -67,15 +67,15 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !Compi
         return error.SemanticError;
     }
 
-    var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
-    defer lower_result.deinit(init.gpa);
+    // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
+    // defer lower_result.deinit(init.gpa);
+    //
+    // if (lower_result.errors.len > 0) {
+    //     try printSemanticErrorsToStderr(init, source_file, lower_result.errors, file_name);
+    //     return error.SemanticError;
+    // }
 
-    if (lower_result.errors.len > 0) {
-        try printSemanticErrorsToStderr(init, source_file, lower_result.errors, file_name);
-        return error.SemanticError;
-    }
-
-    return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
+    // return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
 }
 
 fn printAstErrorsToStderr(init: Init, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {

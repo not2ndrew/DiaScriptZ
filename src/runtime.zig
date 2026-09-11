@@ -228,5 +228,6 @@ fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
 //         // TODO: I need a way to extract speaker name.
 //         // Extract interner's bytes and text slice to this struct.
 //         const speaker_inst = ru.instructions[speaker];
+//         const speaker_symbol = ru.symbols[speaker_inst.data.load];
 //     }
 // }
