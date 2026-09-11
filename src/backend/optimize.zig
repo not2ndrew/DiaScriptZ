@@ -11,8 +11,6 @@ const invalid_inst = ir.invalid_inst;
 
 const sem = middle.semantic;
 const Decorated = sem.DecoratedAst.Decorated;
-const Symbol = sem.Symbol;
-const SymbolId = sem.SymbolId;
 
 const InstId = ir.InstId;
 const DiaIR = ir.DiaIR;
@@ -53,13 +51,15 @@ decorated: *const Decorated,
 instructions: []Inst,
 extra: []InstId,
 
-constants: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+constants: std.array_hash_map.Auto(IdentId, u8) = .empty,
 // KV pair is condition id -> block id
 branch_result: std.array_hash_map.Auto(InstId, InstId) = .empty,
 
 live: std.array_hash_map.Auto(InstId, void) = .empty,
 
 errors: std.ArrayList(sem.Semantic.Error) = .empty,
+
+kind_idx: u32 = 0,
 
 pub fn deinit(opt: *Optimize) void {
     opt.allocator.free(opt.instructions);
@@ -122,6 +122,12 @@ fn rewriteValue(opt: *Optimize, inst_idx: InstId, value: Value) void {
     }
 }
 
+fn nextKind(opt: *Optimize) sem.SymbolKind {
+    const kind = opt.decorated.kinds[opt.kind_idx];
+    opt.kind_idx += 1;
+    return kind;
+}
+
 pub fn optimizeRoot(opt: *Optimize) Error!void {
     const root_idx: u32 = @intCast(opt.instructions.len - 1);
     const root_inst = opt.instructions[root_idx];
@@ -168,12 +174,11 @@ fn stmt(opt: *Optimize, inst_idx: InstId) Error!void {
 fn declaration(opt: *Optimize, inst_idx: InstId) Error!void {
     const inst = opt.instructions[inst_idx];
     const store = inst.data.store;
-    const symbol_id = store.symbol_id;
-    const symbol = opt.decorated.symbols[symbol_id];
+    const kind = opt.nextKind();
 
     const value = try opt.eval(store.value);
-    if (symbol.kind == .constant and value == .uint)
-        try opt.constants.put(opt.allocator, symbol_id, value.uint);
+    if (kind == .constant and value == .uint)
+        try opt.constants.put(opt.allocator, store.ident, value.uint);
 }
 
 fn storeValue(opt: *Optimize, inst: Inst) Error!void {
@@ -186,7 +191,7 @@ fn eval(opt: *Optimize, inst_idx: InstId) Error!Value {
     return switch (inst.tag) {
         .constant => .{ .uint = inst.data.uint },
         .load => {
-            const v = opt.constants.get(inst.data.load)
+            const v = opt.constants.get(inst.data.ident)
                 orelse return .unknown;
 
             const value: Value = .{ .uint = v };
@@ -355,12 +360,14 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 
 const DCE = struct {
     opt: *Optimize,
-    used_symbols: std.array_hash_map.Auto(SymbolId, void) = .empty,
-    used_labels: std.array_hash_map.Auto(IdentId, void) = .empty,
+    used_symbols: std.array_hash_map.Auto(IdentId, void) = .empty,
+    // used_symbols: std.array_hash_map.Auto(IdentId, void) = .empty,
+    // used_labels: std.array_hash_map.Auto(IdentId, void) = .empty,
 
     pub fn deinit(dce: *DCE) void {
         dce.used_symbols.deinit(dce.opt.allocator);
-        dce.used_labels.deinit(dce.opt.allocator);
+        // dce.used_symbols.deinit(dce.opt.allocator);
+        // dce.used_labels.deinit(dce.opt.allocator);
     }
 
     pub fn run(dce: *DCE, root_idx: InstId) Allocator.Error!void {
@@ -415,8 +422,9 @@ const DCE = struct {
                 const jump = dce.opt.extra[end - 1];
 
                 if (jump != invalid_inst) {
-                    const jump_id = dce.opt.instructions[jump].data.jump;
-                    try dce.used_labels.put(dce.opt.allocator, jump_id, {});
+                    const jump_id = dce.opt.instructions[jump].data.ident;
+                    // try dce.used_labels.put(dce.opt.allocator, jump_id, {});
+                    try dce.used_symbols.put(dce.opt.allocator, jump_id, {});
                 }
 
                 for (start + 1 .. end - 1) |idx| {
@@ -450,7 +458,7 @@ const DCE = struct {
         const inst = dce.opt.instructions[inst_idx];
 
         switch (inst.tag) {
-            .load => try dce.used_symbols.put(dce.opt.allocator, inst.data.load, {}),
+            .load => try dce.used_symbols.put(dce.opt.allocator, inst.data.ident, {}),
 
             .add, .sub, .mul, .div,
             .eql, .not_eql,
@@ -486,7 +494,7 @@ const DCE = struct {
         switch (inst.tag) {
             .declaration => {
                 const store = inst.data.store;
-                if (dce.used_symbols.contains(store.symbol_id))
+                if (dce.used_symbols.contains(store.ident))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {});
             },
             .store => try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {}),
@@ -515,7 +523,7 @@ const DCE = struct {
                 const label_id = dce.opt.extra[range.start];
                 const label = dce.opt.instructions[label_id];
 
-                if (dce.used_labels.contains(label.data.label))
+                if (dce.used_symbols.contains(label.data.ident))
                     try dce.opt.live.putNoClobber(dce.opt.allocator, inst_idx, {})
                 else
                     return;

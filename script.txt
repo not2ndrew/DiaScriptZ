@@ -1,7 +1,2 @@
-~ Forest
-end
-
-A: Hello World -> Forest
-
-~ Forest
-end
+var x = 10
+x += 1

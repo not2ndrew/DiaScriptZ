@@ -74,16 +74,13 @@ pub const Inst = struct {
         branch,
     };
 
-    // TODO: We will be using the InternPool as our index instead of symbols.
-    // 1) Replace all SymbolId with IdentId,
-    // 2) load, label, and jump are all identical.
-    // We can group them up into a singular union.
     pub const Data = union {
         boolean: bool,
         uint: u8,
         // load: SymbolId,
         // label: IdentId,
         // jump: IdentId,
+        // load, label, and jump all take an identifier operand
         ident: IdentId,
         store: struct {
             ident: IdentId,
