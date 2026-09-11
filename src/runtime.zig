@@ -1,14 +1,19 @@
 const std = @import("std");
+const middle = @import("middle");
 const backend = @import("backend");
-const SymbolId = @import("middle").semantic.SymbolId;
+const Compile = @import("compile.zig").Compile;
 
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
-const Inst = backend.ir.Inst;
-const InstId = backend.ir.InstId;
+const sem = middle.semantic;
+const Symbol = sem.Symbol;
+const SymbolId = sem.SymbolId;
 
-const NewIR = backend.remap.NewIR;
+const dir = backend.ir;
+const Inst = dir.Inst;
+const InstId = dir.InstId;
+const invalid_inst = dir.invalid_inst;
 
 pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
 
@@ -48,19 +53,25 @@ allocator: Allocator,
 io: Io,
 instructions: []const Inst,
 extra: []const InstId,
+symbols: []const Symbol,
+bytes: []const u8,
+texts: []const u8,
 
 declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
 
-pub fn runProgram(io: Io, allocator: Allocator, ir: NewIR) RunTimeError!void {
+pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void {
     var runtime: Runtime = .{
         .allocator = allocator,
         .io = io,
-        .instructions = ir.instructions,
-        .extra = ir.extra,
+        .instructions = comp.instructions,
+        .extra = comp.extra,
+        .symbols = comp.symbols,
+        .bytes = comp.bytes,
+        .texts = comp.texts,
     };
     defer runtime.deinit();
 
-    try runtime.declarations.ensureTotalCapacity(allocator, ir.num_of_declar);
+    try runtime.declarations.ensureTotalCapacity(allocator, comp.num_of_declar);
     
     try runtime.run();
 }
@@ -89,6 +100,40 @@ fn compare(tag: Inst.Tag, lhs: u8, rhs: u8) bool {
         .greater_or_eql => lhs >= rhs,
         else => unreachable,
     };
+}
+
+fn condition(ru: *Runtime, inst_idx: InstId) RunTimeError!bool {
+    const inst = ru.instructions[inst_idx];
+
+    return switch (inst.tag) {
+        .bool_and, .bool_or => try ru.logicalCondition(inst),
+        .eql, .not_eql,
+        .less, .less_or_eql,
+        .greater, .greater_or_eql => ru.compareCondition(inst),
+        else => unreachable,
+    };
+}
+
+fn logicalCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
+    const binary = inst.data.binary;
+
+    const lhs = try ru.condition(binary.lhs);
+    const rhs = try ru.condition(binary.rhs);
+
+    return switch (inst.tag) {
+        .bool_and => lhs and rhs,
+        .bool_or => lhs or rhs,
+        else => unreachable,
+    };
+}
+
+fn compareCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
+    const binary = inst.data.binary;
+
+    const lhs = try ru.eval(binary.lhs);
+    const rhs = try ru.eval(binary.rhs);
+
+    return compare(inst.tag, lhs, rhs);
 }
 
 fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
@@ -171,36 +216,17 @@ fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
     }
 }
 
-fn condition(ru: *Runtime, inst_idx: InstId) RunTimeError!bool {
-    const inst = ru.instructions[inst_idx];
-
-    return switch (inst.tag) {
-        .bool_and, .bool_or => try ru.logicalCondition(inst),
-        .eql, .not_eql,
-        .less, .less_or_eql,
-        .greater, .greater_or_eql => ru.compareCondition(inst),
-        else => unreachable,
-    };
-}
-
-fn logicalCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
-    const binary = inst.data.binary;
-
-    const lhs = try ru.condition(binary.lhs);
-    const rhs = try ru.condition(binary.rhs);
-
-    return switch (inst.tag) {
-        .bool_and => lhs and rhs,
-        .bool_or => lhs or rhs,
-        else => unreachable,
-    };
-}
-
-fn compareCondition(ru: *Runtime, inst: Inst) RunTimeError!bool {
-    const binary = inst.data.binary;
-
-    const lhs = try ru.eval(binary.lhs);
-    const rhs = try ru.eval(binary.rhs);
-
-    return compare(inst.tag, lhs, rhs);
-}
+// TODO: Using IO, run the dialogue char by char in the terminal.
+// This can be done using io.sleep
+// Using a loop, print one char at a time and sleep for x amount of milliseconds.
+// fn dialogue(ru: *Runtime, inst: Inst) RunTimeError!void {
+//     const range = inst.data.range;
+//
+//     const speaker = ru.extra[range.start];
+//
+//     if (speaker != invalid_inst) {
+//         // TODO: I need a way to extract speaker name.
+//         // Extract interner's bytes and text slice to this struct.
+//         const speaker_inst = ru.instructions[speaker];
+//     }
+// }
