@@ -463,10 +463,10 @@ fn visitDialogue(sem: *Semantic, node: Node) !void {
             }),
         }
     } else {
-        try sem.addSymbol(ident_id, .speaker);
         entity.value_ptr.* = .speaker;
     }
 
+    try sem.addSymbol(ident_id, .speaker);
     try sem.visitDialogueParts(start, range.len);
 }
 

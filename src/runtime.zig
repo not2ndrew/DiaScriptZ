@@ -21,6 +21,8 @@ pub const IoError = Io.Cancelable || Io.Writer.Error;
 pub const RunTimeError = Allocator.Error || IoError || error { Overflow, DivisionByZero, NoSpaceLeft };
 
 pub const DIALOGUE_SIZE = 100;
+// For an u8 integer, the maximum value is 255. Thus, the max digits is 3.
+const MAX_DIGITS = 3;
 
 // ───────────────────────────────
 //            RUNTIME
@@ -172,7 +174,6 @@ fn block(ru: *Runtime, io: Io, start: u32, len: u32) RunTimeError!void {
 
 fn stmt(ru: *Runtime, io: Io, inst_idx: InstId) RunTimeError!void {
     const inst = ru.instructions[inst_idx];
-    // std.debug.print("Inst tag: {t}\n", .{inst.tag});
     return switch (inst.tag) {
         .declaration => ru.declaration(inst),
         .store => ru.storeValue(inst),
@@ -194,8 +195,6 @@ fn storeValue(ru: *Runtime, inst: Inst) RunTimeError!void {
 
     const entry = ru.declarations.getEntry(store.ident) orelse unreachable;
     entry.value_ptr.* = value;
-
-    std.debug.print("The value is: {d}\n", .{value});
 }
 
 fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
@@ -230,8 +229,8 @@ fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
         const name = ru.pool.getIdent(speaker_inst.data.ident);
 
         // TODO: This is inefficient. Using @memcpy twice.
-        len += try appendSlice(&buffer, len, name);
-        len += try appendSlice(&buffer, len, ": ");
+        try appendSlice(&buffer, &len, name);
+        try appendSlice(&buffer, &len, ": ");
 
         try ru.dialogueParts(&buffer, &len, range.start + 1, range.start + range.len - 1);
 
@@ -239,12 +238,12 @@ fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     }
 }
 
-fn appendSlice(buffer: []u8, pos: usize, text: []const u8) RunTimeError!usize {
-    if (pos + text.len > buffer.len)
+fn appendSlice(buffer: []u8, pos: *usize, text: []const u8) RunTimeError!void {
+    if (pos.* + text.len > buffer.len)
         return RunTimeError.OutOfMemory;
 
-    @memcpy(buffer[pos .. pos + text.len], text);
-    return text.len;
+    @memcpy(buffer[pos.* .. pos.* + text.len], text);
+    pos.* += text.len;
 }
 
 fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) RunTimeError!void {
@@ -256,33 +255,26 @@ fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) 
             .text => {
                 const span = inst.data.range;
                 const text = ru.pool.texts[span.start .. span.start + span.len];
-                len.* += try appendSlice(buffer, len.*, text);
+                try appendSlice(buffer, len, text);
             },
             .constant => {
-                var buf: [3]u8 = undefined;
+                var buf: [MAX_DIGITS]u8 = undefined;
                 const str = try std.fmt.bufPrint(&buf, "{d}", .{ inst.data.uint });
-                len.* += try appendSlice(buffer, len.*, str);
+                try appendSlice(buffer, len, str);
             },
             .load => {
-                var buf: [3]u8 = undefined;
+                var buf: [MAX_DIGITS]u8 = undefined;
                 const num = ru.declarations.get(inst.data.ident) orelse unreachable;
                 const str = try std.fmt.bufPrint(&buf, "{d}", .{ num });
-                len.* += try appendSlice(buffer, len.*, str);
+                try appendSlice(buffer, len, str);
             },
             else => unreachable,
         }
     }
 }
 
-// TODO: Return an error if dialogue line is too big.
-// If a dialogue line is too large, return an error.
-// We'll assume the maximum characters must be DIALOGUE_SIZE.
-// It should tell the user that you must insert a new line.
-//
-// When I say dialogue line, I am referring to the whole line itself.
-// Combine all text and interpolation length to get the total length.
 fn printDialogue(io: Io, text: []u8, len: usize) RunTimeError!void {
-    // TODO: Depending on the system (Windows, Linux),
+    // TODO: Depending on the Operating System (Windows, Linux),
     // there may be additional characters
     // For example:
     //    Windows has \r\n

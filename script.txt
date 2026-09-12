@@ -1,2 +1,5 @@
 var x = 10
-A: Hello World
+A: Current value of x is { x }
+x += 1
+
+A: The value of x is now { x }
