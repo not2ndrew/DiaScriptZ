@@ -303,12 +303,8 @@ fn reduceArith(ir: *DiaIR, node: Node, comptime tag: Inst.Tag) Error!InstId {
 fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
     const range = node.data.range;
     const start = range.start;
-    const len = range.len;
 
-    var stmts: std.ArrayList(u32) = .empty;
-    defer stmts.deinit(ir.allocator);
-
-    try stmts.ensureTotalCapacity(ir.allocator, len);
+    var branch: [3]InstId = undefined;
 
     const cond_idx = ir.ast.extra_data[start];
     const cond_node = ir.ast.nodes.get(cond_idx);
@@ -327,12 +323,12 @@ fn reduceIfStmt(ir: *DiaIR, node: Node) Error!InstId {
         else_block = try ir.reduceBlock(e_range.start, e_range.len);
     }
 
-    stmts.appendAssumeCapacity(cond);
-    stmts.appendAssumeCapacity(then_block);
-    stmts.appendAssumeCapacity(else_block);
+    branch[0] = cond;
+    branch[1] = then_block;
+    branch[2] = else_block;
 
     return ir.appendInst(.branch, node.token_pos, .{
-        .range = ir.appendSpan(stmts.items),
+        .range = ir.appendSpan(&branch),
     });
 }
 
