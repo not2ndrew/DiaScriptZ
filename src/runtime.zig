@@ -17,7 +17,10 @@ const Inst = dir.Inst;
 const InstId = dir.InstId;
 const invalid_inst = dir.invalid_inst;
 
-pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
+pub const IoError = Io.Cancelable || Io.Writer.Error;
+pub const RunTimeError = Allocator.Error || IoError || error { Overflow, DivisionByZero };
+
+pub const BUF_SIZE = 100;
 
 // ───────────────────────────────
 //            RUNTIME
@@ -52,7 +55,7 @@ pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
 pub const Runtime = @This();
 
 allocator: Allocator,
-io: Io,
+// io: Io,
 instructions: []const Inst,
 extra: []const InstId,
 pool: InternPool,
@@ -62,7 +65,7 @@ declarations: std.array_hash_map.Auto(IdentId, u8) = .empty,
 pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void {
     var runtime: Runtime = .{
         .allocator = allocator,
-        .io = io,
+        // .io = io,
         .instructions = comp.instructions,
         .extra = comp.extra,
         .pool = comp.pool,
@@ -71,7 +74,7 @@ pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void
 
     try runtime.declarations.ensureTotalCapacity(allocator, comp.num_of_declar);
     
-    try runtime.run();
+    try runtime.run(io);
 }
 
 pub fn deinit(ru: *Runtime) void {
@@ -152,28 +155,29 @@ fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     };
 }
 
-fn run(ru: *Runtime) RunTimeError!void {
+fn run(ru: *Runtime, io: Io) RunTimeError!void {
     const root_inst = ru.instructions[ru.instructions.len - 1];
     const range = root_inst.data.range;
 
-    try ru.block(range.start, range.len);
+    try ru.block(io, range.start, range.len);
 }
 
-fn block(ru: *Runtime, start: u32, len: u32) RunTimeError!void {
+fn block(ru: *Runtime, io: Io, start: u32, len: u32) RunTimeError!void {
     const end = start + len;
     for (start .. end) |idx| {
         const stmt_idx = ru.extra[idx];
-        try ru.stmt(stmt_idx);
+        try ru.stmt(io, stmt_idx);
     }
 }
 
-fn stmt(ru: *Runtime, inst_idx: InstId) RunTimeError!void {
+fn stmt(ru: *Runtime, io: Io, inst_idx: InstId) RunTimeError!void {
     const inst = ru.instructions[inst_idx];
-    std.debug.print("Inst tag: {t}\n", .{inst.tag});
+    // std.debug.print("Inst tag: {t}\n", .{inst.tag});
     return switch (inst.tag) {
         .declaration => ru.declaration(inst),
         .store => ru.storeValue(inst),
-        .branch =>ru.branch(inst),
+        .branch =>ru.branch(io, inst),
+        .dialogue => ru.dialogue(io, inst),
         else => unreachable,
     };
 }
@@ -194,7 +198,7 @@ fn storeValue(ru: *Runtime, inst: Inst) RunTimeError!void {
     std.debug.print("The value is: {d}\n", .{value});
 }
 
-fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
+fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     const range = inst.data.range;
     const cond = ru.extra[range.start];
     const then_block = ru.extra[range.start + 1];
@@ -205,26 +209,71 @@ fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
     if (branch_result) {
         const then_inst = ru.instructions[then_block];
         const t_range = then_inst.data.range;
-        try ru.block(t_range.start, t_range.len);
+        try ru.block(io, t_range.start, t_range.len);
     } else {
         const else_inst = ru.instructions[else_block];
         const e_range = else_inst.data.range;
-        try ru.block(e_range.start, e_range.len);
+        try ru.block(io, e_range.start, e_range.len);
     }
 }
 
-// TODO: Using IO, run the dialogue char by char in the terminal.
-// This can be done using io.sleep
-// Using a loop, print one char at a time and sleep for x amount of milliseconds.
-// fn dialogue(ru: *Runtime, inst: Inst) RunTimeError!void {
-//     const range = inst.data.range;
-//
-//     const speaker = ru.extra[range.start];
-//
-//     if (speaker != invalid_inst) {
-//         // TODO: I need a way to extract speaker name.
-//         // Extract interner's bytes and text slice to this struct.
-//         const speaker_inst = ru.instructions[speaker];
-//         const name = ru.pool.getIdent(speaker_inst.data.ident);
-//     }
-// }
+fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
+    var line: std.ArrayList(u8) = .empty;
+    defer line.deinit(ru.allocator);
+
+    const range = inst.data.range;
+
+    const speaker = ru.extra[range.start];
+
+    if (speaker != invalid_inst) {
+        const speaker_inst = ru.instructions[speaker];
+        const name = ru.pool.getIdent(speaker_inst.data.ident);
+
+        // TODO: This is inefficient. Calling allocation twice.
+        try line.appendSlice(ru.allocator, name);
+        try line.appendSlice(ru.allocator, ": ");
+
+        try ru.dialogueParts(&line, range.start + 1, range.start + range.len - 1);
+
+        try printDialogue(io, line.items);
+    }
+}
+
+fn dialogueParts(ru: *Runtime, line: *std.ArrayList(u8), start: u32, end: u32) RunTimeError!void {
+    for (start .. end) |idx| {
+        const extra = ru.extra[idx];
+        const inst = ru.instructions[extra];
+
+        switch (inst.tag) {
+            .text => {
+                const span = inst.data.range;
+                const text = ru.pool.texts[span.start .. span.start + span.len];
+                try line.appendSlice(ru.allocator, text);
+            },
+            .constant, .load => {},
+            else => unreachable,
+        }
+    }
+}
+
+// TODO: Either in Parse.zig, or semantic.zig
+// If a dialogue line is too large, return an error.
+// We'll assume the maximum characters must be BUF_SIZE.
+// It should tell the user that you must insert a new line.
+fn printDialogue(io: Io, text: []u8) RunTimeError!void {
+    var buffer: [BUF_SIZE]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
+    defer io.unlockStderr();
+
+    const writer = stderr.terminal().writer;
+
+    for (0 .. BUF_SIZE) |i| {
+        try writer.print("{c}", .{text[i]});
+        try io.sleep(.fromMilliseconds(100), .awake);
+
+        try writer.flush();
+    }
+
+    try writer.writeByte('\n');
+    try writer.flush();
+}

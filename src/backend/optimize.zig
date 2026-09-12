@@ -361,13 +361,9 @@ fn foldLabel(opt: *Optimize, inst: Inst) Error!void {
 const DCE = struct {
     opt: *Optimize,
     used_symbols: std.array_hash_map.Auto(IdentId, void) = .empty,
-    // used_symbols: std.array_hash_map.Auto(IdentId, void) = .empty,
-    // used_labels: std.array_hash_map.Auto(IdentId, void) = .empty,
 
     pub fn deinit(dce: *DCE) void {
         dce.used_symbols.deinit(dce.opt.allocator);
-        // dce.used_symbols.deinit(dce.opt.allocator);
-        // dce.used_labels.deinit(dce.opt.allocator);
     }
 
     pub fn run(dce: *DCE, root_idx: InstId) Allocator.Error!void {
@@ -423,7 +419,6 @@ const DCE = struct {
 
                 if (jump != invalid_inst) {
                     const jump_id = dce.opt.instructions[jump].data.ident;
-                    // try dce.used_labels.put(dce.opt.allocator, jump_id, {});
                     try dce.used_symbols.put(dce.opt.allocator, jump_id, {});
                 }
 
