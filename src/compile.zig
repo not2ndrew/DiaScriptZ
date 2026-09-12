@@ -114,33 +114,15 @@ fn printSemanticErrorsToStderr(init: Init, source_file: SourceFile, errors: []co
 }
 
 pub fn createCompile(gpa: Allocator, ir: *const NewIR, decorated: *const sem.DecoratedAst.Decorated) !Compile {
-    const instructions = try gpa.alloc(Inst, ir.instructions.len);
-    @memcpy(instructions, ir.instructions);
-
-    const extra = try gpa.alloc(InstId, ir.extra.len);
-    @memcpy(extra, ir.extra);
-
-    const bytes = try gpa.alloc(u8, decorated.pool.bytes.len);
-    @memcpy(bytes, decorated.pool.bytes);
-
-    const texts = try gpa.alloc(u8, decorated.pool.texts.len);
-    @memcpy(texts, decorated.pool.texts);
-
-    const text_spans = try gpa.alloc(Span, decorated.pool.text_spans.len);
-    @memcpy(text_spans, decorated.pool.text_spans);
-
-    const ident_spans = try gpa.alloc(Span, decorated.pool.ident_spans.len);
-    @memcpy(ident_spans, decorated.pool.ident_spans);
-
     return .{
-        .instructions = instructions,
-        .extra = extra,
+        .instructions = try gpa.dupe(Inst, ir.instructions),
+        .extra = try gpa.dupe(InstId, ir.extra),
         .num_of_declar = ir.num_of_declar,
         .pool = .{
-            .bytes = bytes,
-            .ident_spans = ident_spans,
-            .texts = texts,
-            .text_spans = text_spans,
+            .bytes = try gpa.dupe(u8, decorated.pool.bytes),
+            .ident_spans = try gpa.dupe(Span, decorated.pool.ident_spans),
+            .texts = try gpa.dupe(u8, decorated.pool.texts),
+            .text_spans = try gpa.dupe(Span, decorated.pool.text_spans),
         }
     };
 }
