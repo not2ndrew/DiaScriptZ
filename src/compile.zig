@@ -1,6 +1,6 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sem = @import("middle").semantic;
+const middle = @import("middle");
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
 const backend = @import("backend");
@@ -17,7 +17,11 @@ const Ast = tree.Ast;
 
 const SourceFile = frontend.source_file.SourceFile;
 
-const Symbol = sem.Symbol;
+const sem = middle.semantic;
+
+const interner = middle.interner;
+const InternPool = interner.InternPool;
+const Span = interner.Span;
 
 const ErrorBundle = bundle.ErrorBundle;
 
@@ -32,22 +36,18 @@ pub const Compile = @This();
 
 instructions: []const Inst,
 extra: []const InstId,
-symbols: []const Symbol,
-bytes: []const u8,
-texts: []const u8,
+pool: InternPool,
 
 num_of_declar: u32,
 
 pub fn deinit(comp: *Compile, allocator: Allocator) void {
     allocator.free(comp.instructions);
     allocator.free(comp.extra);
-    allocator.free(comp.symbols);
-    allocator.free(comp.bytes);
-    allocator.free(comp.texts);
+    comp.pool.deinit(allocator);
 }
 
 // TODO: Get file_path instead of file_name.
-pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void {
+pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !Compile {
     // Generate AST from source
     var parse_tree = try tree.parse(init.gpa, source);
     defer parse_tree.deinit(init.gpa);
@@ -88,7 +88,7 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
         return error.SemanticError;
     }
 
-    // return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
+    return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
 }
 
 fn printAstErrorsToStderr(init: Init, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
@@ -120,21 +120,27 @@ pub fn createCompile(gpa: Allocator, ir: *const NewIR, decorated: *const sem.Dec
     const extra = try gpa.alloc(InstId, ir.extra.len);
     @memcpy(extra, ir.extra);
 
-    const symbols = try gpa.alloc(Symbol, decorated.symbols.len);
-    @memcpy(symbols, decorated.symbols);
-
     const bytes = try gpa.alloc(u8, decorated.pool.bytes.len);
     @memcpy(bytes, decorated.pool.bytes);
 
     const texts = try gpa.alloc(u8, decorated.pool.texts.len);
     @memcpy(texts, decorated.pool.texts);
 
+    const text_spans = try gpa.alloc(Span, decorated.pool.text_spans.len);
+    @memcpy(text_spans, decorated.pool.text_spans);
+
+    const ident_spans = try gpa.alloc(Span, decorated.pool.ident_spans.len);
+    @memcpy(ident_spans, decorated.pool.ident_spans);
+
     return .{
         .instructions = instructions,
         .extra = extra,
-        .symbols = symbols,
-        .bytes = bytes,
-        .texts = texts,
         .num_of_declar = ir.num_of_declar,
+        .pool = .{
+            .bytes = bytes,
+            .ident_spans = ident_spans,
+            .texts = texts,
+            .text_spans = text_spans,
+        }
     };
 }

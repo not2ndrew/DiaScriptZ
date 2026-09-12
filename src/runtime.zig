@@ -7,8 +7,10 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const sem = middle.semantic;
-const Symbol = sem.Symbol;
-const SymbolId = sem.SymbolId;
+
+const interner = middle.interner;
+const InternPool = interner.InternPool;
+const IdentId = interner.IdentId;
 
 const dir = backend.ir;
 const Inst = dir.Inst;
@@ -53,11 +55,9 @@ allocator: Allocator,
 io: Io,
 instructions: []const Inst,
 extra: []const InstId,
-symbols: []const Symbol,
-bytes: []const u8,
-texts: []const u8,
+pool: InternPool,
 
-declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+declarations: std.array_hash_map.Auto(IdentId, u8) = .empty,
 
 pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void {
     var runtime: Runtime = .{
@@ -65,9 +65,7 @@ pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void
         .io = io,
         .instructions = comp.instructions,
         .extra = comp.extra,
-        .symbols = comp.symbols,
-        .bytes = comp.bytes,
-        .texts = comp.texts,
+        .pool = comp.pool,
     };
     defer runtime.deinit();
 
@@ -141,8 +139,7 @@ fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     return switch (inst.tag) {
         .constant => inst.data.uint,
         .load => {
-            const symbol_id = inst.data.load;
-            return ru.declarations.get(symbol_id) orelse unreachable;
+            return ru.declarations.get(inst.data.ident) orelse unreachable;
         },
         .add, .sub, .mul, .div => {
             const b = inst.data.binary;
@@ -184,14 +181,14 @@ fn stmt(ru: *Runtime, inst_idx: InstId) RunTimeError!void {
 fn declaration(ru: *Runtime, inst: Inst) RunTimeError!void {
     const store = inst.data.store;
     const value = try ru.eval(store.value);
-    ru.declarations.putAssumeCapacityNoClobber(store.symbol_id, value);
+    ru.declarations.putAssumeCapacityNoClobber(store.ident, value);
 }
 
 fn storeValue(ru: *Runtime, inst: Inst) RunTimeError!void {
     const store = inst.data.store;
     const value = try ru.eval(store.value);
 
-    const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
+    const entry = ru.declarations.getEntry(store.ident) orelse unreachable;
     entry.value_ptr.* = value;
 
     std.debug.print("The value is: {d}\n", .{value});
@@ -228,6 +225,6 @@ fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
 //         // TODO: I need a way to extract speaker name.
 //         // Extract interner's bytes and text slice to this struct.
 //         const speaker_inst = ru.instructions[speaker];
-//         const speaker_symbol = ru.symbols[speaker_inst.data.load];
+//         const name = ru.pool.getIdent(speaker_inst.data.ident);
 //     }
 // }
