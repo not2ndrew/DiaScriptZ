@@ -18,9 +18,9 @@ const InstId = dir.InstId;
 const invalid_inst = dir.invalid_inst;
 
 pub const IoError = Io.Cancelable || Io.Writer.Error;
-pub const RunTimeError = Allocator.Error || IoError || error { Overflow, DivisionByZero };
+pub const RunTimeError = Allocator.Error || IoError || error { Overflow, DivisionByZero, NoSpaceLeft };
 
-pub const BUF_SIZE = 100;
+pub const DIALOGUE_SIZE = 100;
 
 // ───────────────────────────────
 //            RUNTIME
@@ -218,8 +218,8 @@ fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
 }
 
 fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
-    var line: std.ArrayList(u8) = .empty;
-    defer line.deinit(ru.allocator);
+    var buffer: [DIALOGUE_SIZE]u8 = undefined;
+    var len: usize = 0;
 
     const range = inst.data.range;
 
@@ -229,17 +229,25 @@ fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
         const speaker_inst = ru.instructions[speaker];
         const name = ru.pool.getIdent(speaker_inst.data.ident);
 
-        // TODO: This is inefficient. Calling allocation twice.
-        try line.appendSlice(ru.allocator, name);
-        try line.appendSlice(ru.allocator, ": ");
+        // TODO: This is inefficient. Using @memcpy twice.
+        len += try appendSlice(&buffer, len, name);
+        len += try appendSlice(&buffer, len, ": ");
 
-        try ru.dialogueParts(&line, range.start + 1, range.start + range.len - 1);
+        try ru.dialogueParts(&buffer, &len, range.start + 1, range.start + range.len - 1);
 
-        try printDialogue(io, line.items);
+        try printDialogue(io, &buffer, len);
     }
 }
 
-fn dialogueParts(ru: *Runtime, line: *std.ArrayList(u8), start: u32, end: u32) RunTimeError!void {
+fn appendSlice(buffer: []u8, pos: usize, text: []const u8) RunTimeError!usize {
+    if (pos + text.len > buffer.len)
+        return RunTimeError.OutOfMemory;
+
+    @memcpy(buffer[pos .. pos + text.len], text);
+    return text.len;
+}
+
+fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) RunTimeError!void {
     for (start .. end) |idx| {
         const extra = ru.extra[idx];
         const inst = ru.instructions[extra];
@@ -248,26 +256,47 @@ fn dialogueParts(ru: *Runtime, line: *std.ArrayList(u8), start: u32, end: u32) R
             .text => {
                 const span = inst.data.range;
                 const text = ru.pool.texts[span.start .. span.start + span.len];
-                try line.appendSlice(ru.allocator, text);
+                len.* += try appendSlice(buffer, len.*, text);
             },
-            .constant, .load => {},
+            .constant => {
+                var buf: [3]u8 = undefined;
+                const str = try std.fmt.bufPrint(&buf, "{d}", .{ inst.data.uint });
+                len.* += try appendSlice(buffer, len.*, str);
+            },
+            .load => {
+                var buf: [3]u8 = undefined;
+                const num = ru.declarations.get(inst.data.ident) orelse unreachable;
+                const str = try std.fmt.bufPrint(&buf, "{d}", .{ num });
+                len.* += try appendSlice(buffer, len.*, str);
+            },
             else => unreachable,
         }
     }
 }
 
-// TODO: Either in Parse.zig, or semantic.zig
+// TODO: Return an error if dialogue line is too big.
 // If a dialogue line is too large, return an error.
-// We'll assume the maximum characters must be BUF_SIZE.
+// We'll assume the maximum characters must be DIALOGUE_SIZE.
 // It should tell the user that you must insert a new line.
-fn printDialogue(io: Io, text: []u8) RunTimeError!void {
-    var buffer: [BUF_SIZE]u8 = undefined;
+//
+// When I say dialogue line, I am referring to the whole line itself.
+// Combine all text and interpolation length to get the total length.
+fn printDialogue(io: Io, text: []u8, len: usize) RunTimeError!void {
+    // TODO: Depending on the system (Windows, Linux),
+    // there may be additional characters
+    // For example:
+    //    Windows has \r\n
+    //    Linux only has \n
+    //
+    // Best solution is to create a customizer for dialogue system.
+    // Do +1 for '\n'
+    var buffer: [DIALOGUE_SIZE + 1]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
     defer io.unlockStderr();
 
     const writer = stderr.terminal().writer;
 
-    for (0 .. BUF_SIZE) |i| {
+    for (0 .. len) |i| {
         try writer.print("{c}", .{text[i]});
         try io.sleep(.fromMilliseconds(100), .awake);
 
