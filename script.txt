@@ -1,5 +1,5 @@
-var x = 10
-A: Current value of x is { x }
-x += 1
+_ : Hello World -> A
 
-A: The value of x is now { x }
+~ A
+   _ : Going back home.
+end

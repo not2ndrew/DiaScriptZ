@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const sem = middle.semantic;
+const MAX_NUM_CHOICES = sem.MAX_NUM_CHOICES;
 
 const interner = middle.interner;
 const InternPool = interner.InternPool;
@@ -83,6 +84,14 @@ pub fn deinit(ru: *Runtime) void {
     ru.declarations.deinit(ru.allocator);
 }
 
+fn appendSlice(buffer: []u8, pos: *usize, text: []const u8) RunTimeError!void {
+    if (pos.* + text.len > buffer.len)
+        return RunTimeError.OutOfMemory;
+
+    @memcpy(buffer[pos.* .. pos.* + text.len], text);
+    pos.* += text.len;
+}
+
 fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) RunTimeError!u8 {
     return switch (tag) {
         .add => std.math.add(u8, lhs, rhs),
@@ -157,6 +166,38 @@ fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     };
 }
 
+fn printDialogue(io: Io, text: []u8, len: usize) RunTimeError!void {
+    // TODO: Depending on the Operating System (Windows, Linux),
+    // there may be additional characters
+    // For example:
+    //    Windows has \r\n
+    //    Linux only has \n
+    //
+    // Best solution is to create a customizer for dialogue system.
+    // Do +1 for '\n'
+    var buffer: [DIALOGUE_SIZE + 1]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
+    defer io.unlockStderr();
+
+    const writer = stderr.terminal().writer;
+
+    for (0 .. len) |i| {
+        try writer.print("{c}", .{text[i]});
+        try io.sleep(.fromMilliseconds(100), .awake);
+
+        try writer.flush();
+    }
+
+    try writer.writeByte('\n');
+    try writer.flush();
+}
+
+fn printChoices(io: Io, text: []u8, len: usize) RunTimeError!void {
+    _ = io;
+    _ = text;
+    _ = len;
+}
+
 fn run(ru: *Runtime, io: Io) RunTimeError!void {
     const root_inst = ru.instructions[ru.instructions.len - 1];
     const range = root_inst.data.range;
@@ -179,6 +220,7 @@ fn stmt(ru: *Runtime, io: Io, inst_idx: InstId) RunTimeError!void {
         .store => ru.storeValue(inst),
         .branch =>ru.branch(io, inst),
         .dialogue => ru.dialogue(io, inst),
+        .label_block => std.debug.print("Hello\n", .{}),
         else => unreachable,
     };
 }
@@ -216,13 +258,27 @@ fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     }
 }
 
+// MAJOR TODO: do NOT iterate over labels.
+// Labels can only be accessed by dialogue jumps.
+//
+// A solution is to insert labels into a new array.
+// dialogue jumps are indexed by LabelId.
+//
+// Other than the change of jump IdentId to LabelId,
+// everything else remains the same.
+//
+// Label's stmts inside can be stored inside extra just like an
+// if branch block.
 fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     var buffer: [DIALOGUE_SIZE]u8 = undefined;
     var len: usize = 0;
 
     const range = inst.data.range;
+    const start = range.start;
+    const end = range.start + range.len;
 
-    const speaker = ru.extra[range.start];
+    const speaker = ru.extra[start];
+    const jump = ru.extra[end - 1];
 
     if (speaker != invalid_inst) {
         const speaker_inst = ru.instructions[speaker];
@@ -232,18 +288,15 @@ fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
         try appendSlice(&buffer, &len, name);
         try appendSlice(&buffer, &len, ": ");
 
-        try ru.dialogueParts(&buffer, &len, range.start + 1, range.start + range.len - 1);
-
-        try printDialogue(io, &buffer, len);
     }
-}
 
-fn appendSlice(buffer: []u8, pos: *usize, text: []const u8) RunTimeError!void {
-    if (pos.* + text.len > buffer.len)
-        return RunTimeError.OutOfMemory;
+    // start + 1 to avoid scanning speaker
+    // end - 1 to avoid parts handling jump
+    try ru.dialogueParts(&buffer, &len, start + 1, end - 1);
+    try printDialogue(io, &buffer, len);
 
-    @memcpy(buffer[pos.* .. pos.* + text.len], text);
-    pos.* += text.len;
+    // TODO: I need a connection between jump and label.
+    if (jump != invalid_inst) {}
 }
 
 fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) RunTimeError!void {
@@ -271,30 +324,4 @@ fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) 
             else => unreachable,
         }
     }
-}
-
-fn printDialogue(io: Io, text: []u8, len: usize) RunTimeError!void {
-    // TODO: Depending on the Operating System (Windows, Linux),
-    // there may be additional characters
-    // For example:
-    //    Windows has \r\n
-    //    Linux only has \n
-    //
-    // Best solution is to create a customizer for dialogue system.
-    // Do +1 for '\n'
-    var buffer: [DIALOGUE_SIZE + 1]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
-    defer io.unlockStderr();
-
-    const writer = stderr.terminal().writer;
-
-    for (0 .. len) |i| {
-        try writer.print("{c}", .{text[i]});
-        try io.sleep(.fromMilliseconds(100), .awake);
-
-        try writer.flush();
-    }
-
-    try writer.writeByte('\n');
-    try writer.flush();
 }
