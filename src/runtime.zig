@@ -58,7 +58,6 @@ const MAX_DIGITS = 3;
 pub const Runtime = @This();
 
 allocator: Allocator,
-// io: Io,
 instructions: []const Inst,
 extra: []const InstId,
 pool: InternPool,
@@ -258,7 +257,14 @@ fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     }
 }
 
-// MAJOR TODO: do NOT iterate over labels.
+// MAJOR TODO: Replace Inst jump identId with an InstId
+// pointing to Label inst.
+//
+// MAJOR TODO: Determine whether label blocks should be scanned
+// during runtime.
+// - From the root_node, label blocks are considered.
+// - Maybe consider moving label id outside of regular instructions?
+//
 // Labels can only be accessed by dialogue jumps.
 //
 // A solution is to insert labels into a new array.
@@ -269,6 +275,30 @@ fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
 //
 // Label's stmts inside can be stored inside extra just like an
 // if branch block.
+//
+// Solution 2:
+// Simply replace IdentId to InstId where InstId points 
+// to the corresponding Label's instruction.
+// In dia_ir.zig, create an identId -> Label InstId mapping.
+//
+// For any label encountered during scanning, insert label's identId and return
+// the InstId.
+//
+// Next, we create unresolved arraylist. During scanning for dialogue,
+// we use the hashmap to determine if jump is referenced before or after label.
+//
+// If found, insert label instId to jump. InstId is inserted AFTER the creation
+// of the label instruction.
+// Otherwise, append dialogue to unresolved arraylist.
+//
+// After scanning the whole ast, go over the unresolved arraylist.
+// Now repeat the hashmap scan for each unresolved jump and
+// substitute their undefined value with the label InstId.
+//
+// Based on semantic.zig, there should be no unreachable error.
+//
+// Drawback is we would have to repeat an unresolved scan twice
+// once in semantic.zig and one in dia_ir.zig
 fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     var buffer: [DIALOGUE_SIZE]u8 = undefined;
     var len: usize = 0;

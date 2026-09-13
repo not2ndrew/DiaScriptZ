@@ -70,7 +70,7 @@ pub fn intern(self: *Interner, allocator: Allocator, name: []const u8) !IdentId 
     const result = try self.table.getOrPut(allocator, name);
 
     if (result.found_existing)
-    return result.value_ptr.*;
+        return result.value_ptr.*;
 
     const id: IdentId = @intCast(self.ident_spans.items.len);
     result.value_ptr.* = id;

@@ -25,6 +25,10 @@ const Error = Allocator.Error;
 
 pub const InstId = u32;
 pub const invalid_inst = std.math.maxInt(u32);
+pub const UnresolvedJump = struct {
+    ident_id: IdentId,
+    jump_inst: InstId,
+};
 
 pub const Inst = struct {
     tag: Tag,
@@ -77,6 +81,8 @@ pub const Inst = struct {
     pub const Data = union {
         boolean: bool,
         uint: u8,
+        // TODO: jump now points to label instruction id.
+        jump: InstId,
         // load: SymbolId,
         // label: IdentId,
         // jump: IdentId,
@@ -103,14 +109,21 @@ decorated: *const Decorated,
 
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(InstId) = .empty,
+
+label_map: std.array_hash_map.Auto(IdentId, InstId) = .empty,
+unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
+
 ident_ref: IdentId = 0,
 jump_ref: IdentId = 0,
 text_ref: u32 = 0,
+
 
 pub fn deinit(ir: *DiaIR) void {
     const allocator = ir.allocator;
     ir.instructions.deinit(allocator);
     ir.extra.deinit(allocator);
+    ir.label_map.deinit(allocator);
+    ir.unresolved_jumps.deinit(allocator);
 }
 
 pub fn generate(ir: *DiaIR) Error!void {
@@ -123,6 +136,13 @@ pub fn generate(ir: *DiaIR) Error!void {
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
     _ = try ir.reduceBlock(range.start, range.len);
+
+    for (ir.unresolved_jumps.items) |unresolved| {
+        const label_block = ir.label_map.get(unresolved.ident_id)
+            orelse unreachable;
+
+        ir.instructions.items[unresolved.jump_inst].data.jump = label_block;
+    }
 
     try ir.instructions.shrinkToLen(allocator);
     try ir.extra.shrinkToLen(allocator);
@@ -388,12 +408,26 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
 
     const jump_idx = ir.ast.extra_data[end - 1];
     var jump: u32 = invalid_inst;
+
     if (jump_idx != invalid_inst) {
         const jump_node = ir.ast.nodes.get(jump_idx);
-        const jump_id = ir.nextJump();
+        const ident_id = ir.nextJump();
+
         jump = ir.appendInst(.jump, jump_node.token_pos, .{
-            .ident = jump_id,
+            .jump = invalid_inst,
         });
+
+        if (ir.label_map.get(ident_id)) |label_block| {
+            ir.instructions.items[jump].data.jump = label_block;
+        } else {
+            try ir.unresolved_jumps.append(ir.allocator, .{
+                .ident_id = ident_id,
+                .jump_inst = jump,
+            });
+        }
+        // jump = ir.appendInst(.jump, jump_node.token_pos, .{
+        //     .ident = jump_id,
+        // });
     }
 
     parts.appendAssumeCapacity(jump);
@@ -424,9 +458,13 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     // Skip the label itself.
     try ir.reduceStmtList(&stmts, start + 1, len - 1);
 
-    return ir.appendInst(.label_block, node.token_pos, .{
+    const label_block = ir.appendInst(.label_block, node.token_pos, .{
         .range = ir.appendSpan(stmts.items),
     });
+
+    try ir.label_map.putNoClobber(ir.allocator, ident_id, label_block);
+
+    return label_block;
 }
 
 fn reduceCondition(ir: *DiaIR, node: Node) Error!InstId {
