@@ -209,38 +209,38 @@ fn visitBlock(sem: *Semantic, token_pos: TokenIndex, start: u32, len: u32) !void
 fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
     const end = start + len;
     var i: u32 = start;
+
     while (i < end) {
         const node_idx = sem.ast.extra_data[i];
         const node = sem.ast.nodes.get(node_idx);
 
-        if (node.tag != .choice) {
-            try sem.visitStmt(node_idx);
-            i += 1;
-            continue;
-        }
+        if (node.tag == .choice) {
+            var count: u32 = 0;
+            var last_choice_pos: TokenIndex = 0;
 
-        var count: u32 = 0;
-        var last_choice_pos: TokenIndex = 0;
+            // Handle choice blocks here
+            while (i < end) : (i += 1) {
+                const choice_idx = sem.ast.extra_data[i];
+                const choice_node = sem.ast.nodes.get(choice_idx);
 
-        // Handle choice blocks here
-        while (i < end) : (i += 1) {
-            const choice_idx = sem.ast.extra_data[i];
-            const choice_node = sem.ast.nodes.get(choice_idx);
-
-            if (choice_node.tag != .choice)
+                if (choice_node.tag != .choice)
                 break;
 
-            count += 1;
-            last_choice_pos = choice_node.token_pos;
+                count += 1;
+                last_choice_pos = choice_node.token_pos;
 
-            try sem.visitChoice(choice_node);
-        }
+                try sem.visitChoice(choice_node);
+            }
 
-        if (count > MAX_NUM_CHOICES) {
-            try sem.errors.append(sem.allocator, .{
-                .tag = .too_many_choices,
-                .token_pos = last_choice_pos,
-            });
+            if (count > MAX_NUM_CHOICES) {
+                try sem.errors.append(sem.allocator, .{
+                    .tag = .too_many_choices,
+                    .token_pos = last_choice_pos,
+                });
+            }
+        } else {
+            try sem.visitStmt(node_idx);
+            i += 1;
         }
     }
 }

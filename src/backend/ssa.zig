@@ -24,9 +24,10 @@ const Span = in.Span;
 const Error = Allocator.Error;
 
 pub const InstId = u32;
-pub const invalid_inst = std.math.maxInt(u32);
+pub const invalid_inst = std.math.maxInt(InstId);
 
 pub const BlockId = u32;
+pub const invalid_block = std.math.maxInt(BlockId);
 pub const ValueId = InstId;
 
 // Every basic block has zero or more ordinary instructions
@@ -43,6 +44,11 @@ pub const Block = struct {
 pub const BlockEdge = struct {
     from: BlockId,
     to: BlockId,
+};
+
+pub const UnresolvedJump = struct {
+    ident_id: IdentId,
+    jump_id: InstId,
 };
 
 pub const Inst = struct {
@@ -80,7 +86,6 @@ pub const Inst = struct {
         choice,
 
         // Dialogue
-        dialogue,
         speaker,
         label,
         text,
@@ -91,6 +96,10 @@ pub const Inst = struct {
 
         boolean: bool,
         uint: u8,
+        // TODO: Idk if I should keep this or not.
+        // I do need a way to extract the ident id from
+        // string intern pool.
+        ident: IdentId,
 
         binary: struct {
             lhs: InstId,
@@ -98,6 +107,8 @@ pub const Inst = struct {
         },
 
         phi: Span,
+
+        range: Span,
 
         jump: BlockId,
 
@@ -121,11 +132,14 @@ decorated: *const Decorated,
 
 blocks: std.MultiArrayList(Block) = .empty,
 // For blocks with ranges.
-// extra_blocks: std.ArrayList(BlockEdge) = .empty,
+// edges: std.ArrayList(BlockEdge) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(InstId) = .empty,
 
 values: std.array_hash_map.Auto(IdentId, ValueId) = .empty,
+jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
+
+unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
 
 current_block: u32 = 0,
 
@@ -138,6 +152,8 @@ pub fn deinit(ir: *Ssa) void {
     ir.instructions.deinit(ir.allocator);
     ir.extra.deinit(ir.allocator);
     ir.values.deinit(ir.allocator);
+    ir.jump_blocks.deinit(ir.allocator);
+    ir.unresolved_jumps.deinit(ir.allocator);
 }
 
 pub fn generate(ir: *Ssa) Error!void {
@@ -147,6 +163,11 @@ pub fn generate(ir: *Ssa) Error!void {
 
     const block_id = try ir.createBlock();
     try ir.buildBlock(block_id, range.start, range.len);
+
+    for (ir.unresolved_jumps.items) |unresolved| {
+        const block = ir.jump_blocks.get(unresolved.ident_id) orelse unreachable;
+        ir.instructions.items[unresolved.jump_id].data.jump = block;
+    }
 }
 
 fn nextIdent(ir: *Ssa) IdentId {
@@ -185,6 +206,13 @@ fn evalValue(ir: *Ssa, node: Node) Error!InstId {
             const ident = ir.nextIdent();
             return ir.values.get(ident) orelse unreachable;
         },
+        .string => {
+            const text_id = ir.nextText();
+            const span = ir.decorated.pool.text_spans[text_id];
+            return ir.emit(.text, token_pos, .{
+                .range = .{ .start = span.start, .len = span.len }
+            });
+        },
 
         .plus => ir.evalBinary(.add, node),
         .minus => ir.evalBinary(.sub, node),
@@ -209,12 +237,12 @@ fn evalBinary(ir: *Ssa, comptime tag: Inst.Tag, node: Node) Error!InstId {
 
 fn isTerminator(tag: Inst.Tag) bool {
     return switch (tag) {
-        .jump, .branch => true,
+        .jump, .branch, .choice => true,
         else => false,
     };
 }
 
-fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!ValueId {
+fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!InstId {
     const block = ir.current_block; 
 
     const inst_id: InstId = @intCast(ir.instructions.items.len);
@@ -228,8 +256,26 @@ fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!V
     return inst_id;
 }
 
-// fn terminate(ir: *Ssa, inst: Inst) Error!void {}
+fn emitJump(ir: *Ssa, node: Node) Error!InstId {
+    const ident_id = ir.nextJump();
 
+    const jump_id = try ir.emit(.jump, node.token_pos, .{
+        .jump = invalid_block,
+    });
+
+    if (ir.jump_blocks.get(ident_id)) |label_block| {
+        ir.instructions.items[jump_id].data.jump = label_block;
+    } else {
+        try ir.unresolved_jumps.append(ir.allocator, .{
+            .ident_id = ident_id,
+            .jump_id = jump_id,
+        });
+    }
+
+    return jump_id;
+}
+
+// TODO: Still need to figure out how to implement this.
 // fn addSuccessor(ir: *Ssa, from: BlockId, to: BlockId) Error!void {
 //     const block = ir.current_block;
 // }
@@ -259,50 +305,41 @@ fn createBlock(ir: *Ssa) Error!BlockId {
 }
 
 fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
-    var i: u32 = start;
-    const end = start + len;
+    for (start .. start + len) |idx| {
+        const extra = ir.ast.extra_data[idx];
+        const node = ir.ast.nodes.get(extra);
+        const terminated = try ir.addStmt(node);
 
-    while (i < end) {
-        const node_idx = ir.ast.extra_data[i];
-        const node = ir.ast.nodes.get(node_idx);
-
-        if (node.tag != .choice) {
-            _ = try ir.addStmt(node);
-
-            i += 1;
-            continue;
+        if (terminated) {
+            // If there are more stmts after this one, create a new block
+            if (idx + 1 < start + len) {
+                const next_block = try ir.createBlock();
+                ir.switchBlock(next_block);
+            }
         }
-
-        // Handle choices
-        // const choice_count = ir.countChoices(i, end);
-        // if (choice_count != 1) {
-        //     const choice_block = try ir.reduceChoiceBlock(i, choice_count);
-        //     // try stmts.append(ir.allocator, choice_block);
-        // } else {
-        //     const choice = try ir.reduceChoice(node);
-        //     // try stmts.append(ir.allocator, choice);
-        // }
-        //
-        // i += choice_count;
     }
 }
 
-fn addStmt(ir: *Ssa, node: Node) Error!InstId {
-    return switch (node.tag) {
-        .declar_stmt => ir.addDeclar(node),
-        .assign => ir.addAssign(node),
+fn addStmt(ir: *Ssa, node: Node) Error!bool {
+    try switch (node.tag) {
+        .declar_stmt => try ir.addDeclar(node),
+        .assign => try ir.addAssign(node),
 
         .plus_equal => ir.addArith(node, .add),
         .minus_equal => ir.addArith(node, .sub),
         .mult_equal => ir.addArith(node, .mul),
         .div_equal => ir.addArith(node, .div),
 
-        // The rest is done later on.
+        .dialogue => return ir.addDialogue(node),
+
+        .label => ir.addLabel(node),
         else => unreachable,
     };
+
+    return false;
 }
 
-fn addDeclar(ir: *Ssa, node: Node) Error!InstId {
+fn addDeclar(ir: *Ssa, node: Node) Error!void {
     const value_idx = node.data.node_and_node.@"1";
     const value_node = ir.ast.nodes.get(value_idx);
 
@@ -310,10 +347,9 @@ fn addDeclar(ir: *Ssa, node: Node) Error!InstId {
     const value = try ir.evalValue(value_node);
 
     try ir.values.put(ir.allocator, ident, value);
-    return value;
 }
 
-fn addAssign(ir: *Ssa, node: Node) Error!InstId {
+fn addAssign(ir: *Ssa, node: Node) Error!void {
     const value_idx = node.data.node_and_node.@"1";
     const value_node = ir.ast.nodes.get(value_idx);
 
@@ -322,11 +358,9 @@ fn addAssign(ir: *Ssa, node: Node) Error!InstId {
 
     const current = ir.values.getPtr(ident) orelse unreachable;
     current.* = value;
-
-    return value;
 }
 
-fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!InstId {
+fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
     const value_idx = node.data.node_and_node.@"1";
     const value_node = ir.ast.nodes.get(value_idx);
 
@@ -340,5 +374,50 @@ fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!InstId {
     });
 
     try ir.values.put(ir.allocator, ident, result);
-    return result;
+}
+
+fn addDialogue(ir: *Ssa, node: Node) Error!bool {
+    const range = node.data.range;
+
+    const speaker_node = ir.ast.nodes.get(ir.ast.extra_data[range.start]);
+    var speaker: InstId = invalid_inst;
+
+    if (speaker_node.tag != .anonymous) {
+        const ident_id = ir.nextIdent();
+        speaker = try ir.emit(.speaker, node.token_pos, .{
+            .ident = ident_id,
+        });
+    }
+
+    return try ir.addDialogueParts(range.start, range.len);
+}
+
+fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!bool {
+    const end = start + len;
+    for (start + 1..end - 1) |idx| {
+        const text_idx = ir.ast.extra_data[idx];
+        const text_node = ir.ast.nodes.get(text_idx);
+        _ = try ir.evalValue(text_node);
+    }
+
+    const jump_idx = ir.ast.extra_data[end - 1];
+
+    if (jump_idx == invalid_inst)
+        return false;
+
+    const jump_node = ir.ast.nodes.get(jump_idx);
+    _ = try ir.emitJump(jump_node);
+
+    return true;
+}
+
+fn addLabel(ir: *Ssa, node: Node) Error!void {
+    const block = try ir.createBlock();
+    ir.switchBlock(block);
+
+    const label = ir.nextIdent();
+    try ir.jump_blocks.putNoClobber(ir.allocator, label, block);
+
+    const range = node.data.range;
+    try ir.stmtList(range.start + 1, range.len - 1);
 }

@@ -1,2 +1,6 @@
-var x = 1
-x += 1
+A: Hello World -> B
+
+~ B
+   const i = 0
+   A: The value of i is { i }
+end
