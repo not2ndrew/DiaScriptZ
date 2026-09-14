@@ -141,20 +141,12 @@ pub fn deinit(ir: *Ssa) void {
 }
 
 pub fn generate(ir: *Ssa) Error!void {
-    const allocator = ir.allocator;
-    // We expect as many diaIR instructions and extra as nodes and extra_data.
-    try ir.instructions.ensureTotalCapacity(allocator, ir.ast.nodes.len);
-    try ir.extra.ensureTotalCapacity(allocator, ir.ast.extra_data.len);
-
     // Root node in a post-traversal order is the last node.
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
+
     const block_id = try ir.createBlock();
     try ir.buildBlock(block_id, range.start, range.len);
-
-    try ir.instructions.shrinkToLen(allocator);
-    try ir.extra.shrinkToLen(allocator);
-
 }
 
 fn nextIdent(ir: *Ssa) IdentId {
@@ -226,7 +218,7 @@ fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!V
     const block = ir.current_block; 
 
     const inst_id: InstId = @intCast(ir.instructions.items.len);
-    ir.instructions.appendAssumeCapacity(.{
+    try ir.instructions.append(ir.allocator, .{
         .tag = tag,
         .token_pos = token_pos,
         .data = data,
@@ -300,6 +292,11 @@ fn addStmt(ir: *Ssa, node: Node) Error!InstId {
         .declar_stmt => ir.addDeclar(node),
         .assign => ir.addAssign(node),
 
+        .plus_equal => ir.addArith(node, .add),
+        .minus_equal => ir.addArith(node, .sub),
+        .mult_equal => ir.addArith(node, .mul),
+        .div_equal => ir.addArith(node, .div),
+
         // The rest is done later on.
         else => unreachable,
     };
@@ -327,4 +324,21 @@ fn addAssign(ir: *Ssa, node: Node) Error!InstId {
     current.* = value;
 
     return value;
+}
+
+fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!InstId {
+    const value_idx = node.data.node_and_node.@"1";
+    const value_node = ir.ast.nodes.get(value_idx);
+
+    const ident = ir.nextIdent();
+
+    const lhs = ir.values.get(ident) orelse unreachable;
+    const rhs = try ir.evalValue(value_node);
+
+    const result = try ir.emit(tag, node.token_pos, .{
+        .binary = .{ .lhs = lhs, .rhs = rhs }
+    });
+
+    try ir.values.put(ir.allocator, ident, result);
+    return result;
 }
