@@ -25,6 +25,7 @@ const Error = Allocator.Error;
 
 pub const InstId = u32;
 pub const invalid_inst = std.math.maxInt(u32);
+
 pub const UnresolvedJump = struct {
     ident_id: IdentId,
     jump_inst: InstId,
@@ -81,12 +82,7 @@ pub const Inst = struct {
     pub const Data = union {
         boolean: bool,
         uint: u8,
-        // TODO: jump now points to label instruction id.
         jump: InstId,
-        // load: SymbolId,
-        // label: IdentId,
-        // jump: IdentId,
-        // load, label, and jump all take an identifier operand
         ident: IdentId,
         store: struct {
             ident: IdentId,
@@ -116,7 +112,6 @@ unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
 ident_ref: IdentId = 0,
 jump_ref: IdentId = 0,
 text_ref: u32 = 0,
-
 
 pub fn deinit(ir: *DiaIR) void {
     const allocator = ir.allocator;
@@ -425,9 +420,6 @@ fn reduceDialogueParts(ir: *DiaIR, parts: *std.ArrayList(u32), start: u32, len: 
                 .jump_inst = jump,
             });
         }
-        // jump = ir.appendInst(.jump, jump_node.token_pos, .{
-        //     .ident = jump_id,
-        // });
     }
 
     parts.appendAssumeCapacity(jump);
@@ -448,6 +440,16 @@ fn reduceLabel(ir: *DiaIR, node: Node) Error!InstId {
     var stmts: std.ArrayList(u32) = .empty;
     defer stmts.deinit(ir.allocator);
 
+    // TODO: Determine whether I want to store label inst inside label block.
+    // Looking in my optimizer.zig and runtime.zig, I only use ident_id.
+    // The rest of the values is not used.
+    //
+    // Solution:
+    // I could create a union struct
+    // label_block: struct {
+    //    ident: IdentId,
+    //    body: Span,
+    // }
     const ident_id = ir.nextIdent();
     const label_inst = ir.appendInst(.label, label_node.token_pos, .{
         .ident = ident_id,

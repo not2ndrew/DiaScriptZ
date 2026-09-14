@@ -1,5 +1,3 @@
-_ : Hello World -> A
-
-~ A
-   _ : Going back home.
-end
+var x = 1
+x = 2
+x = x + 3
