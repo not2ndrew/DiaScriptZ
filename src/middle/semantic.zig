@@ -48,6 +48,7 @@ pub const Error = struct {
         // Semantic Errors
         int_overflow,
         division_by_zero,
+        unreachable_stmt,
         // TODO: Create a note to where the ident is used
         // Note: Previous declaration here:
         ident_mismatch,
@@ -209,10 +210,21 @@ fn visitBlock(sem: *Semantic, token_pos: TokenIndex, start: u32, len: u32) !void
 fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
     const end = start + len;
     var i: u32 = start;
+    var exited = false;
 
     while (i < end) {
         const node_idx = sem.ast.extra_data[i];
         const node = sem.ast.nodes.get(node_idx);
+
+        if (exited) {
+            try sem.errors.append(sem.allocator, .{
+                .token_pos = node.token_pos,
+                .tag = .unreachable_stmt,
+            });
+
+            i += 1;
+            continue;
+        }
 
         if (node.tag == .choice) {
             var count: u32 = 0;
@@ -240,6 +252,10 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
             }
         } else {
             try sem.visitStmt(node_idx);
+
+            if (node.tag == .exit)
+                exited = true;
+
             i += 1;
         }
     }
@@ -249,6 +265,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     // Choice is handled in visitStmtList
     return switch (node.tag) {
+        .exit => {},
         .declar_stmt => sem.visitVarDecl(node),
         .assign, .plus_equal, .minus_equal, .mult_equal, .div_equal
         => sem.visitAssign(node),

@@ -88,6 +88,9 @@ pub fn writeSemanticErrorMessage(sf: *const SourceFile, w: *Writer, err: Semanti
         .division_by_zero => {
             return w.writeAll("Cannot divide by 0");
         },
+        .unreachable_stmt => {
+            return w.writeAll("Unreachable code");
+        },
         // TODO: This requires additional note to show where it is already initialized at.
         .ident_mismatch => {
             return w.print("'{s}' is already defined as {s}", .{slice, @tagName(err.data.initialized)});

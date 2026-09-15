@@ -2,6 +2,13 @@ const std = @import("std");
 
 pub const TokenIndex = u32;
 
+// TODO: I should introduce a new keyword called exit.
+// Similar to coding "break" in a loop or switch case,
+// exit will "exit" out of a block and move into the parent block.
+// If the parent block uses exit, then the whole program will stop.
+//
+// exit can be used in if statement blocks and labelled blocks
+// exit should be a standalone statement.
 pub const Token = struct {
     tag: Tag,
     start: usize,
@@ -11,6 +18,7 @@ pub const Token = struct {
         // Unique keywords
         keyword_const,
         keyword_var,
+        keyword_exit,
         keyword_if,
         keyword_else,
         keyword_end,
@@ -71,6 +79,7 @@ pub fn lexeme(tag: Token.Tag) ?[]const u8 {
 
         .keyword_const => "const",
         .keyword_var => "var",
+        .keyword_exit => "exit",
         .keyword_if => "if",
         .keyword_else => "else",
         .keyword_end => "end",
@@ -119,6 +128,7 @@ pub fn lexeme(tag: Token.Tag) ?[]const u8 {
 pub const keywords = std.StaticStringMap(Token.Tag).initComptime(.{
     .{ "const", .keyword_const },
     .{ "var", .keyword_var },
+    .{ "exit", .keyword_exit },
     .{ "if", .keyword_if },
     .{ "else", .keyword_else },
     .{ "end", .keyword_end },

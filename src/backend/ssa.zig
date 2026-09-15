@@ -422,6 +422,8 @@ fn addStmt(ir: *Ssa, node: Node) Error!bool {
         .declar_stmt => ir.addDeclar(node),
         .assign => ir.addAssign(node),
 
+        .exit => {},
+
         .plus_equal => ir.addArith(node, .add),
         .minus_equal => ir.addArith(node, .sub),
         .mult_equal => ir.addArith(node, .mul),
