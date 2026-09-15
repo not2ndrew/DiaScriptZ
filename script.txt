@@ -1,6 +1,5 @@
-A: Hello World -> B
+B: Go to C -> C
 
-~ B
-   const i = 0
-   A: The value of i is { i }
+~ C
+   D: Hello
 end

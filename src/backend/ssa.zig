@@ -91,7 +91,9 @@ pub const Inst = struct {
         text,
     };
 
-    pub const Data = union {
+    // TODO: enum is only added for the sake of printing.
+    // This carries an extra cost in memory.
+    pub const Data = union(enum) {
         none: void,
 
         boolean: bool,
@@ -170,6 +172,82 @@ pub fn generate(ir: *Ssa) Error!void {
     }
 }
 
+pub fn printSSA(ir: *Ssa, io: std.Io) !void {
+    var buffer: [1000]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
+    defer io.unlockStderr();
+
+    const w = stderr.terminal().writer;
+
+    for (0 .. ir.blocks.len) |block_idx| {
+        const first = ir.blocks.items(.first_inst)[block_idx];
+        const count = ir.blocks.items(.inst_count)[block_idx];
+
+        try w.print("block{d}:\n", .{block_idx});
+        
+        for (first .. first + count) |inst_idx| {
+            try w.print("    ", .{});
+            try ir.printInst(w, @intCast(inst_idx));
+            try w.writeByte('\n');
+        }
+    }
+}
+
+fn printInst(ir: *Ssa, w: *std.Io.Writer, inst_idx: InstId) !void {
+    const inst = ir.instructions.items[inst_idx];
+
+    switch (inst.tag) {
+        .constant => {
+            try w.print("${d} = constant ", .{inst_idx});
+
+            switch (inst.data) {
+                .uint => |value| try w.print("{d}", .{value}),
+                .boolean => |value| try w.print("{}", .{value}),
+                .ident => |ident| try w.print("ident{d}", .{ident}),
+                else => unreachable,
+            }
+        },
+        
+        .text => {
+            const range = inst.data.range;
+
+            try w.print("%{d} = text [{d} .. {d}]", .{
+                inst_idx, range.start, range.start + range.len
+            });
+        },
+
+        .speaker => {
+            try w.print("%{d} = speaker ident{d}", .{inst_idx, inst.data.ident});
+        },
+        .add,
+        .sub,
+        .mul,
+        .div,
+        .eql,
+        .not_eql,
+        .less,
+        .less_or_eql,
+        .greater,
+        .greater_or_eql,
+        .bool_or,
+        .bool_and,
+        => {
+            const binary = inst.data.binary;
+
+            try w.print("%{d} = {s} %{d}, %{d}", .{
+                inst_idx,
+                @tagName(inst.tag),
+                binary.lhs,
+                binary.rhs,
+            });
+        },
+        .jump => {
+            try w.print("jump block{d}", .{inst.data.jump});
+        },
+        else => unreachable,
+    }
+}
+
 fn nextIdent(ir: *Ssa) IdentId {
     const id = ir.decorated.symbols[ir.ident_ref];
     ir.ident_ref += 1;
@@ -193,9 +271,34 @@ fn switchBlock(ir: *Ssa, block: BlockId) void {
     ir.current_block = block;
 }
 
+fn toInstTag(tag: Node.Tag) Inst.Tag {
+    return switch (tag) {
+        .plus => .add,
+        .minus => .sub,
+        .mult => .mul,
+        .div => .div,
+
+        .plus_equal => .add,
+        .minus_equal => .sub,
+        .mult_equal => .mul,
+        .div_equal => .div,
+
+        .equal_equal => .eql,
+        .not_equal => .not_eql,
+        .less => .less,
+        .less_or_equal => .less_or_eql,
+        .greater => .greater,
+        .greater_or_equal => .greater_or_eql,
+
+        .bool_and => .bool_and,
+        .bool_or => .bool_or,
+        else => unreachable,
+    };
+}
+
 fn evalValue(ir: *Ssa, node: Node) Error!InstId {
     const token_pos = node.token_pos;
-    return switch (node.tag) {
+    switch (node.tag) {
         .number => {
             const text = ir.ast.source_file.tokenSlice(token_pos);
             const num = std.fmt.parseInt(u8, text, 10) catch unreachable;
@@ -214,21 +317,20 @@ fn evalValue(ir: *Ssa, node: Node) Error!InstId {
             });
         },
 
-        .plus => ir.evalBinary(.add, node),
-        .minus => ir.evalBinary(.sub, node),
-        .mult => ir.evalBinary(.mul, node),
-        .div => ir.evalBinary(.div, node),
+        else => {},
+    }
 
-        else => unreachable,
-    };
+    const tag = toInstTag(node.tag);
+    return ir.evalBinary(tag, node);
 }
 
-fn evalBinary(ir: *Ssa, comptime tag: Inst.Tag, node: Node) Error!InstId {
+fn evalBinary(ir: *Ssa, tag: Inst.Tag, node: Node) Error!InstId {
     const children = node.data.node_and_node;
-    const lhs_node = ir.ast.nodes.get(children.@"0");
-    const rhs_node = ir.ast.nodes.get(children.@"1");
-    const lhs = try ir.evalValue(lhs_node);
-    const rhs = try ir.evalValue(rhs_node);
+
+    const left_node = ir.ast.nodes.get(children.@"0");
+    const right_node = ir.ast.nodes.get(children.@"1");
+    const lhs = try ir.evalValue(left_node);
+    const rhs = try ir.evalValue(right_node);
 
     return ir.emit(tag, node.token_pos, .{
         .binary = .{ .lhs = lhs, .rhs = rhs }
@@ -282,13 +384,7 @@ fn emitJump(ir: *Ssa, node: Node) Error!InstId {
 
 fn buildBlock(ir: *Ssa, block_id: BlockId, start: u32, len: u32) Error!void {
     ir.switchBlock(block_id);
-    const before = ir.instructions.items.len;
-
     try ir.stmtList(start, len);
-
-    const after = ir.instructions.items.len;
-
-    ir.blocks.items(.inst_count)[block_id] = @intCast(after - before);
 }
 
 fn createBlock(ir: *Ssa) Error!BlockId {
@@ -313,8 +409,8 @@ fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
         if (terminated) {
             // If there are more stmts after this one, create a new block
             if (idx + 1 < start + len) {
-                const next_block = try ir.createBlock();
-                ir.switchBlock(next_block);
+                const new_block = try ir.createBlock();
+                ir.switchBlock(new_block);
             }
         }
     }
@@ -322,8 +418,9 @@ fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
 
 fn addStmt(ir: *Ssa, node: Node) Error!bool {
     try switch (node.tag) {
-        .declar_stmt => try ir.addDeclar(node),
-        .assign => try ir.addAssign(node),
+        // Non-block stmts 
+        .declar_stmt => ir.addDeclar(node),
+        .assign => ir.addAssign(node),
 
         .plus_equal => ir.addArith(node, .add),
         .minus_equal => ir.addArith(node, .sub),
@@ -332,7 +429,10 @@ fn addStmt(ir: *Ssa, node: Node) Error!bool {
 
         .dialogue => return ir.addDialogue(node),
 
+        // Blocks
         .label => ir.addLabel(node),
+
+        // .if_stmt => ir.addBranch(node),
         else => unreachable,
     };
 
@@ -412,12 +512,9 @@ fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!bool {
 }
 
 fn addLabel(ir: *Ssa, node: Node) Error!void {
-    const block = try ir.createBlock();
-    ir.switchBlock(block);
-
     const label = ir.nextIdent();
-    try ir.jump_blocks.putNoClobber(ir.allocator, label, block);
+    try ir.jump_blocks.putNoClobber(ir.allocator, label, ir.current_block);
 
     const range = node.data.range;
-    try ir.stmtList(range.start + 1, range.len - 1);
+    try ir.buildBlock(ir.current_block, range.start + 1, range.len - 1);
 }

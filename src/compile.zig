@@ -76,9 +76,7 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
 
     try ssa.generate();
 
-    for (ssa.instructions.items) |inst| {
-        std.debug.print("Inst tag: {t}\n", .{inst.tag});
-    }
+    try ssa.printSSA(init.io);
 
     // var diaIR: dir.DiaIR = .{
     //     .allocator = init.gpa,
