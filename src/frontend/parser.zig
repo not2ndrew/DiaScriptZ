@@ -448,13 +448,11 @@ fn parseLabel(p: *Parser) Error!NodeIndex {
     _ = try p.expect(.tilde);
 
     const ident_pos = p.token_pos;
-    const label = try p.parseGenericIdent(.label_ident);
-    try stmts.append(p.allocator, label);
-
+    _ = try p.parseGenericIdent(.label_ident);
     _ = try p.expect(.semi_colon);
 
     // label extra_data layout:
-    // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
+    // [ stmt_1, stmt_2, stmt_3, ... , stmt_n ]
     return p.addNode(.label, ident_pos, .{
         .range = try p.collectStmtUntil(.keyword_end, &stmts),
     });

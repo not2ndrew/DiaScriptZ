@@ -527,16 +527,14 @@ fn visitDialogueParts(sem: *Semantic, start: u32, len: u32) !void {
 }
 
 // label extra_data layout:
-// [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
+// [ stmt_1, stmt_2, stmt_3, ... , stmt_n ]
 fn visitLabel(sem: *Semantic, node: Node) !void {
     // First index of a label block is always the label_ident
     const range = node.data.range;
     const start = range.start;
     const len = range.len;
 
-    const label_idx = sem.ast.extra_data[start];
-    const label = sem.ast.nodes.get(label_idx);
-    const token_pos = label.token_pos;
+    const token_pos = node.token_pos;
 
     const label_name = sem.ast.source_file.tokenSlice(token_pos);
     const ident_id = try sem.interner.intern(sem.allocator, label_name);
@@ -566,7 +564,5 @@ fn visitLabel(sem: *Semantic, node: Node) !void {
     try sem.addSymbol(ident_id, .label);
     entity.value_ptr.* = .label;
 
-    // We have already scanned the first idx.
-    // So skip the first idx and reduce len by 1.
-    try sem.visitBlock(node.token_pos, start + 1, len - 1);
+    try sem.visitBlock(node.token_pos, start, len);
 }

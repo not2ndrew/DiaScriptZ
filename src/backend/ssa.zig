@@ -92,7 +92,14 @@ pub const Inst = struct {
     };
 
     // TODO: enum is only added for the sake of printing.
-    // This carries an extra cost in memory.
+    // This cost an extra byte in memory.
+    //
+    // TODO: Move tokenIndex in Data for optional error reporting.
+    // Instructions that can fail at optimization or runtime will be
+    // needing an optional tokenIndex for errors.
+    //
+    // This includes:
+    // 1) Integer errors (Overflow, DivisionByZero),
     pub const Data = union(enum) {
         none: void,
 
@@ -107,6 +114,12 @@ pub const Inst = struct {
             lhs: InstId,
             rhs: InstId,
         },
+
+        // This is needed because operators could lead to integer errors.
+        // binary_v2: struct {
+        //     src_tok: TokenIndex,
+        //     payload_index: BinaryIndex,
+        // },
 
         phi: Span,
 
@@ -518,5 +531,5 @@ fn addLabel(ir: *Ssa, node: Node) Error!void {
     try ir.jump_blocks.putNoClobber(ir.allocator, label, ir.current_block);
 
     const range = node.data.range;
-    try ir.buildBlock(ir.current_block, range.start + 1, range.len - 1);
+    try ir.buildBlock(ir.current_block, range.start, range.len);
 }
