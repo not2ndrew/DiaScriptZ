@@ -1,5 +1,9 @@
-B: Go to C -> C
+var x = 0
 
-~ C
-   D: Hello
-end
+if (1 > 2) {
+   x = 1
+} else {
+   x = 2
+}
+
+x += 1

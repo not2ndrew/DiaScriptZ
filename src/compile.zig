@@ -74,9 +74,11 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     };
     defer ssa.deinit();
 
-    try ssa.generate();
+    var complete_ssa = try ssa.generate();
+    defer complete_ssa.deinit(init.gpa);
 
-    try ssa.printSSA(init.io);
+    // THIS IS ONLY FOR DIAGNOSTICS.
+    try bundle.printSSA(init.io, complete_ssa.blocks, complete_ssa.instructions);
 
     // var diaIR: dir.DiaIR = .{
     //     .allocator = init.gpa,

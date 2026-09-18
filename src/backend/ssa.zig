@@ -112,9 +112,28 @@ pub const Inst = struct {
             rhs: InstId,
         },
 
+        // Indexes into extra.
+        branch: struct {
+            cond: u32,
+            then_block: u32,
+            else_block: u32,
+        },
+
         phi: Span,
         range: Span,
     };
+};
+
+pub const GenSSA = struct {
+    blocks: std.MultiArrayList(Block).Slice,
+    instructions: []const Inst,
+    extra: []const u32,
+
+    pub fn deinit(ssa: *GenSSA, allocator: Allocator) void {
+        ssa.blocks.deinit(allocator);
+        allocator.free(ssa.instructions);
+        allocator.free(ssa.extra);
+    }
 };
 
 // TODO: Rename Ssa to DiaIR later on.
@@ -152,7 +171,7 @@ pub fn deinit(ir: *Ssa) void {
     ir.unresolved_jumps.deinit(ir.allocator);
 }
 
-pub fn generate(ir: *Ssa) Error!void {
+pub fn generate(ir: *Ssa) Error!GenSSA {
     // Root node in a post-traversal order is the last node.
     const root_node = ir.ast.nodes.get(ir.ast.nodes.len - 1);
     const range = root_node.data.range;
@@ -164,83 +183,12 @@ pub fn generate(ir: *Ssa) Error!void {
         const block = ir.jump_blocks.get(unresolved.ident_id) orelse unreachable;
         ir.instructions.items[unresolved.jump_id].data.jump = block;
     }
-}
 
-pub fn printSSA(ir: *Ssa, io: std.Io) !void {
-    // TODO: Replace 100 with a more defined constant.
-    var buffer: [100]u8 = undefined;
-    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
-    defer io.unlockStderr();
-
-    const w = stderr.terminal().writer;
-
-    for (0 .. ir.blocks.len) |block_idx| {
-        const first = ir.blocks.items(.first_inst)[block_idx];
-        const count = ir.blocks.items(.inst_count)[block_idx];
-
-        try w.print("block{d}:\n", .{block_idx});
-        
-        for (first .. first + count) |inst_idx| {
-            try w.print("    ", .{});
-            try ir.printInst(w, @intCast(inst_idx));
-            try w.writeByte('\n');
-        }
-    }
-}
-
-fn printInst(ir: *Ssa, w: *std.Io.Writer, inst_idx: InstId) !void {
-    const inst = ir.instructions.items[inst_idx];
-
-    switch (inst.tag) {
-        .constant => {
-            try w.print("${d} = constant ", .{inst_idx});
-
-            switch (inst.data) {
-                .uint => |value| try w.print("{d}", .{value}),
-                .boolean => |value| try w.print("{}", .{value}),
-                .ident => |ident| try w.print("ident{d}", .{ident}),
-                else => unreachable,
-            }
-        },
-        
-        .text => {
-            const range = inst.data.range;
-
-            try w.print("%{d} = text [{d} .. {d}]", .{
-                inst_idx, range.start, range.start + range.len
-            });
-        },
-
-        .speaker => {
-            try w.print("%{d} = speaker ident{d}", .{inst_idx, inst.data.ident});
-        },
-        .add,
-        .sub,
-        .mul,
-        .div,
-        .eql,
-        .not_eql,
-        .less,
-        .less_or_eql,
-        .greater,
-        .greater_or_eql,
-        .bool_or,
-        .bool_and,
-        => {
-            const binary = inst.data.binary;
-
-            try w.print("%{d} = {s} %{d}, %{d}", .{
-                inst_idx,
-                @tagName(inst.tag),
-                binary.lhs,
-                binary.rhs,
-            });
-        },
-        .jump => {
-            try w.print("jump block{d}", .{inst.data.jump});
-        },
-        else => unreachable,
-    }
+    return .{
+        .blocks = ir.blocks.toOwnedSlice(),
+        .instructions = try ir.instructions.toOwnedSlice(ir.allocator),
+        .extra = try ir.extra.toOwnedSlice(ir.allocator),
+    };
 }
 
 fn nextIdent(ir: *Ssa) IdentId {
@@ -432,7 +380,7 @@ fn addStmt(ir: *Ssa, node: Node) Error!bool {
         // Blocks
         .label => ir.addLabel(node),
 
-        // .if_stmt => ir.addBranch(node),
+        .if_stmt => ir.addBranch(node),
         else => unreachable,
     };
 
@@ -520,4 +468,34 @@ fn addLabel(ir: *Ssa, node: Node) Error!void {
 
     const range = node.data.range;
     try ir.buildBlock(ir.current_block, range.start, range.len);
+}
+
+fn addBranch(ir: *Ssa, node: Node) Error!void {
+    const current_block = ir.current_block;
+    const range = node.data.range;
+    const start = range.start;
+    
+    const cond = ir.ast.extra_data[start];
+    const then_extra = ir.ast.extra_data[start + 1];
+    const else_extra = ir.ast.extra_data[start + 2];
+
+    const cond_node = ir.ast.nodes.get(cond);
+    _ = try ir.evalValue(cond_node);
+
+    const then_node = ir.ast.nodes.get(then_extra);
+    const t_range = then_node.data.range;
+    const then_block = try ir.createBlock();
+    try ir.buildBlock(then_block, t_range.start, t_range.len);
+
+    ir.switchBlock(current_block);
+
+    if (else_extra == invalid_inst)
+        return;
+
+    const else_node = ir.ast.nodes.get(else_extra);
+    const e_range = else_node.data.range;
+    const else_block = try ir.createBlock();
+    try ir.buildBlock(else_block, e_range.start, e_range.len);
+
+    ir.switchBlock(current_block);
 }
