@@ -51,9 +51,11 @@ pub const UnresolvedJump = struct {
     jump_id: InstId,
 };
 
+// Not every Instruction needs to store TokenIndex
+// for reporting errors.
+// For every union data that can fail, insert TokenIndex.
 pub const Inst = struct {
     tag: Tag,
-    token_pos: TokenIndex,
     data: Data,
 
     pub const Tag = enum {
@@ -91,48 +93,27 @@ pub const Inst = struct {
         text,
     };
 
-    // TODO: enum is only added for the sake of printing.
-    // This cost an extra byte in memory.
-    //
-    // TODO: Move tokenIndex in Data for optional error reporting.
-    // Instructions that can fail at optimization or runtime will be
-    // needing an optional tokenIndex for errors.
-    //
-    // This includes:
-    // 1) Integer errors (Overflow, DivisionByZero),
     pub const Data = union(enum) {
         none: void,
-
         boolean: bool,
         uint: u8,
-        // TODO: Idk if I should keep this or not.
-        // I do need a way to extract the ident id from
-        // string intern pool.
         ident: IdentId,
+        jump: BlockId,
+
+        // payload identifier are variable identifiers.
+        pl_ident: struct {
+            token: TokenIndex,
+            ident: IdentId,
+        },
 
         binary: struct {
+            token: TokenIndex,
             lhs: InstId,
             rhs: InstId,
         },
 
-        // This is needed because operators could lead to integer errors.
-        // binary_v2: struct {
-        //     src_tok: TokenIndex,
-        //     payload_index: BinaryIndex,
-        // },
-
         phi: Span,
-
         range: Span,
-
-        jump: BlockId,
-
-        // branch: Span,
-        // branch: struct {
-        //     condition: ValueId,
-        //     then_block: BlockId,
-        //     else_block: BlockId,
-        // }
     };
 };
 
@@ -149,7 +130,7 @@ blocks: std.MultiArrayList(Block) = .empty,
 // For blocks with ranges.
 // edges: std.ArrayList(BlockEdge) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
-extra: std.ArrayList(InstId) = .empty,
+extra: std.ArrayList(u32) = .empty,
 
 values: std.array_hash_map.Auto(IdentId, ValueId) = .empty,
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
@@ -186,7 +167,8 @@ pub fn generate(ir: *Ssa) Error!void {
 }
 
 pub fn printSSA(ir: *Ssa, io: std.Io) !void {
-    var buffer: [1000]u8 = undefined;
+    // TODO: Replace 100 with a more defined constant.
+    var buffer: [100]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
     defer io.unlockStderr();
 
@@ -316,7 +298,7 @@ fn evalValue(ir: *Ssa, node: Node) Error!InstId {
             const text = ir.ast.source_file.tokenSlice(token_pos);
             const num = std.fmt.parseInt(u8, text, 10) catch unreachable;
 
-            return ir.emit(.constant, token_pos, .{ .uint = num });
+            return ir.emit(.constant, .{ .uint = num });
         },
         .var_ident => {
             const ident = ir.nextIdent();
@@ -325,7 +307,7 @@ fn evalValue(ir: *Ssa, node: Node) Error!InstId {
         .string => {
             const text_id = ir.nextText();
             const span = ir.decorated.pool.text_spans[text_id];
-            return ir.emit(.text, token_pos, .{
+            return ir.emit(.text, .{
                 .range = .{ .start = span.start, .len = span.len }
             });
         },
@@ -345,8 +327,12 @@ fn evalBinary(ir: *Ssa, tag: Inst.Tag, node: Node) Error!InstId {
     const lhs = try ir.evalValue(left_node);
     const rhs = try ir.evalValue(right_node);
 
-    return ir.emit(tag, node.token_pos, .{
-        .binary = .{ .lhs = lhs, .rhs = rhs }
+    return ir.emit(tag, .{
+        .binary = .{
+            .token = node.token_pos,
+            .lhs = lhs,
+            .rhs = rhs,
+        }
     });
 }
 
@@ -357,13 +343,12 @@ fn isTerminator(tag: Inst.Tag) bool {
     };
 }
 
-fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!InstId {
+fn emit(ir: *Ssa, tag: Inst.Tag, data: Inst.Data) Error!InstId {
     const block = ir.current_block; 
 
     const inst_id: InstId = @intCast(ir.instructions.items.len);
     try ir.instructions.append(ir.allocator, .{
         .tag = tag,
-        .token_pos = token_pos,
         .data = data,
     });
 
@@ -371,10 +356,10 @@ fn emit(ir: *Ssa, tag: Inst.Tag, token_pos: TokenIndex, data: Inst.Data) Error!I
     return inst_id;
 }
 
-fn emitJump(ir: *Ssa, node: Node) Error!InstId {
+fn emitJump(ir: *Ssa) Error!InstId {
     const ident_id = ir.nextJump();
 
-    const jump_id = try ir.emit(.jump, node.token_pos, .{
+    const jump_id = try ir.emit(.jump, .{
         .jump = invalid_block,
     });
 
@@ -484,8 +469,12 @@ fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
     const lhs = ir.values.get(ident) orelse unreachable;
     const rhs = try ir.evalValue(value_node);
 
-    const result = try ir.emit(tag, node.token_pos, .{
-        .binary = .{ .lhs = lhs, .rhs = rhs }
+    const result = try ir.emit(tag, .{
+        .binary = .{
+            .token = node.token_pos,
+            .lhs = lhs,
+            .rhs = rhs
+        }
     });
 
     try ir.values.put(ir.allocator, ident, result);
@@ -499,7 +488,7 @@ fn addDialogue(ir: *Ssa, node: Node) Error!bool {
 
     if (speaker_node.tag != .anonymous) {
         const ident_id = ir.nextIdent();
-        speaker = try ir.emit(.speaker, node.token_pos, .{
+        speaker = try ir.emit(.speaker, .{
             .ident = ident_id,
         });
     }
@@ -520,8 +509,7 @@ fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!bool {
     if (jump_idx == invalid_inst)
         return false;
 
-    const jump_node = ir.ast.nodes.get(jump_idx);
-    _ = try ir.emitJump(jump_node);
+    _ = try ir.emitJump();
 
     return true;
 }
