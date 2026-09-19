@@ -18,6 +18,7 @@ const Block = ssa.Block;
 const Blocks = std.MultiArrayList(Block).Slice;
 const Inst = ssa.Inst;
 const InstId = ssa.InstId;
+const invalid_block = ssa.invalid_block;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -363,9 +364,15 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
             });
         },
         .jump => {
-            try w.print("jump block{d}", .{inst.data.jump});
+            try w.print("jump %{d}", .{inst.data.jump});
+        },
+        .branch => {
+            const branch = inst.data.branch;
+            try w.print("branch %{d}, block %{d}", .{ branch.cond, branch.then_block });
+
+            if (branch.else_block != invalid_block)
+                try w.print(", block %{d}", .{ branch.else_block });
         },
         else => unreachable,
     }
 }
-

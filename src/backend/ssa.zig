@@ -49,6 +49,7 @@ pub const BlockEdge = struct {
 pub const UnresolvedJump = struct {
     ident_id: IdentId,
     jump_id: InstId,
+    from_block: BlockId,
 };
 
 // Not every Instruction needs to store TokenIndex
@@ -147,7 +148,7 @@ decorated: *const Decorated,
 
 blocks: std.MultiArrayList(Block) = .empty,
 // For blocks with ranges.
-// edges: std.ArrayList(BlockEdge) = .empty,
+edges: std.ArrayList(BlockEdge) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
@@ -181,7 +182,7 @@ pub fn generate(ir: *Ssa) Error!GenSSA {
 
     for (ir.unresolved_jumps.items) |unresolved| {
         const block = ir.jump_blocks.get(unresolved.ident_id) orelse unreachable;
-        ir.instructions.items[unresolved.jump_id].data.jump = block;
+        try ir.addEdge(unresolved.from_block, block);
     }
 
     return .{
@@ -209,9 +210,12 @@ fn nextText(ir: *Ssa) u32 {
     return len;
 }
 
-
 fn switchBlock(ir: *Ssa, block: BlockId) void {
     ir.current_block = block;
+}
+
+fn addEdge(ir: *Ssa, from: BlockId, to: BlockId) Error!void {
+    try ir.edges.append(ir.allocator, .{ .from = from, .to = to });
 }
 
 fn toInstTag(tag: Node.Tag) Inst.Tag {
@@ -237,6 +241,41 @@ fn toInstTag(tag: Node.Tag) Inst.Tag {
         .bool_or => .bool_or,
         else => unreachable,
     };
+}
+
+fn emit(ir: *Ssa, tag: Inst.Tag, data: Inst.Data) Error!InstId {
+    const block = ir.current_block; 
+
+    const inst_id: InstId = @intCast(ir.instructions.items.len);
+    try ir.instructions.append(ir.allocator, .{
+        .tag = tag,
+        .data = data,
+    });
+
+    ir.blocks.items(.inst_count)[block] += 1;
+    return inst_id;
+}
+
+fn emitJump(ir: *Ssa) Error!InstId {
+    const from = ir.current_block;
+    const ident_id = ir.nextJump();
+
+    const jump_id = try ir.emit(.jump, .{
+        .jump = invalid_block,
+    });
+
+    if (ir.jump_blocks.get(ident_id)) |label_block| {
+        ir.instructions.items[jump_id].data.jump = label_block;
+        try ir.addEdge(from, label_block);
+    } else {
+        try ir.unresolved_jumps.append(ir.allocator, .{
+            .ident_id = ident_id,
+            .jump_id = jump_id,
+            .from_block = from,
+        });
+    }
+
+    return jump_id;
 }
 
 fn evalValue(ir: *Ssa, node: Node) Error!InstId {
@@ -291,48 +330,6 @@ fn isTerminator(tag: Inst.Tag) bool {
     };
 }
 
-fn emit(ir: *Ssa, tag: Inst.Tag, data: Inst.Data) Error!InstId {
-    const block = ir.current_block; 
-
-    const inst_id: InstId = @intCast(ir.instructions.items.len);
-    try ir.instructions.append(ir.allocator, .{
-        .tag = tag,
-        .data = data,
-    });
-
-    ir.blocks.items(.inst_count)[block] += 1;
-    return inst_id;
-}
-
-fn emitJump(ir: *Ssa) Error!InstId {
-    const ident_id = ir.nextJump();
-
-    const jump_id = try ir.emit(.jump, .{
-        .jump = invalid_block,
-    });
-
-    if (ir.jump_blocks.get(ident_id)) |label_block| {
-        ir.instructions.items[jump_id].data.jump = label_block;
-    } else {
-        try ir.unresolved_jumps.append(ir.allocator, .{
-            .ident_id = ident_id,
-            .jump_id = jump_id,
-        });
-    }
-
-    return jump_id;
-}
-
-// TODO: Still need to figure out how to implement this.
-// fn addSuccessor(ir: *Ssa, from: BlockId, to: BlockId) Error!void {
-//     const block = ir.current_block;
-// }
-
-fn buildBlock(ir: *Ssa, block_id: BlockId, start: u32, len: u32) Error!void {
-    ir.switchBlock(block_id);
-    try ir.stmtList(start, len);
-}
-
 fn createBlock(ir: *Ssa) Error!BlockId {
     const block_id: BlockId = @intCast(ir.blocks.len);
 
@@ -344,6 +341,13 @@ fn createBlock(ir: *Ssa) Error!BlockId {
     });
 
     return block_id;
+}
+
+fn buildBlock(ir: *Ssa, block_id: BlockId, start: u32, len: u32) Error!void {
+    ir.switchBlock(block_id);
+    ir.blocks.items(.first_inst)[block_id] = @intCast(ir.instructions.items.len);
+
+    try ir.stmtList(start, len);
 }
 
 fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
@@ -362,6 +366,7 @@ fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
     }
 }
 
+// TODO: For addArith, we need to create a phi function.
 fn addStmt(ir: *Ssa, node: Node) Error!bool {
     try switch (node.tag) {
         // Non-block stmts 
@@ -475,27 +480,37 @@ fn addBranch(ir: *Ssa, node: Node) Error!void {
     const range = node.data.range;
     const start = range.start;
     
-    const cond = ir.ast.extra_data[start];
+    const cond_extra = ir.ast.extra_data[start];
     const then_extra = ir.ast.extra_data[start + 1];
     const else_extra = ir.ast.extra_data[start + 2];
 
-    const cond_node = ir.ast.nodes.get(cond);
-    _ = try ir.evalValue(cond_node);
+    const cond_node = ir.ast.nodes.get(cond_extra);
+    const cond = try ir.evalValue(cond_node);
+
+    const then_block = try ir.createBlock();
+    var else_block: BlockId = invalid_block;
+
+    const else_valid = else_extra != invalid_inst;
+    if (else_valid)
+        else_block = try ir.createBlock();
+
+    _ = try ir.emit(.branch, .{
+        .branch = .{
+            .cond = cond,
+            .then_block = then_block,
+            .else_block = else_block,
+        }
+    });
 
     const then_node = ir.ast.nodes.get(then_extra);
     const t_range = then_node.data.range;
-    const then_block = try ir.createBlock();
     try ir.buildBlock(then_block, t_range.start, t_range.len);
 
-    ir.switchBlock(current_block);
-
-    if (else_extra == invalid_inst)
-        return;
-
-    const else_node = ir.ast.nodes.get(else_extra);
-    const e_range = else_node.data.range;
-    const else_block = try ir.createBlock();
-    try ir.buildBlock(else_block, e_range.start, e_range.len);
+    if (else_valid) {
+        const else_node = ir.ast.nodes.get(else_extra);
+        const e_range = else_node.data.range;
+        try ir.buildBlock(else_block, e_range.start, e_range.len);
+    }
 
     ir.switchBlock(current_block);
 }
