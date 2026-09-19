@@ -218,6 +218,13 @@ fn addEdge(ir: *Ssa, from: BlockId, to: BlockId) Error!void {
     try ir.edges.append(ir.allocator, .{ .from = from, .to = to });
 }
 
+fn isTerminator(tag: Inst.Tag) bool {
+    return switch (tag) {
+        .jump, .branch, .choice => true,
+        else => false,
+    };
+}
+
 fn toInstTag(tag: Node.Tag) Inst.Tag {
     return switch (tag) {
         .plus => .add,
@@ -323,13 +330,6 @@ fn evalBinary(ir: *Ssa, tag: Inst.Tag, node: Node) Error!InstId {
     });
 }
 
-fn isTerminator(tag: Inst.Tag) bool {
-    return switch (tag) {
-        .jump, .branch, .choice => true,
-        else => false,
-    };
-}
-
 fn createBlock(ir: *Ssa) Error!BlockId {
     const block_id: BlockId = @intCast(ir.blocks.len);
 
@@ -367,6 +367,16 @@ fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
 }
 
 // TODO: For addArith, we need to create a phi function.
+// The problem is writing variables in values hashmap is global.
+//
+// We must create local variables for each block.
+// If a block does not have the requested variable,
+// then we search recursively in every other block.
+//
+// Searching recursively must travel from child to parent to root.
+//
+// Our semantic guarantees there is at least one match.
+// So we can assume that searching will never fail.
 fn addStmt(ir: *Ssa, node: Node) Error!bool {
     try switch (node.tag) {
         // Non-block stmts 
@@ -385,7 +395,7 @@ fn addStmt(ir: *Ssa, node: Node) Error!bool {
         // Blocks
         .label => ir.addLabel(node),
 
-        .if_stmt => ir.addBranch(node),
+        .if_stmt => return ir.addBranch(node),
         else => unreachable,
     };
 
@@ -475,8 +485,7 @@ fn addLabel(ir: *Ssa, node: Node) Error!void {
     try ir.buildBlock(ir.current_block, range.start, range.len);
 }
 
-fn addBranch(ir: *Ssa, node: Node) Error!void {
-    const current_block = ir.current_block;
+fn addBranch(ir: *Ssa, node: Node) Error!bool {
     const range = node.data.range;
     const start = range.start;
     
@@ -511,6 +520,6 @@ fn addBranch(ir: *Ssa, node: Node) Error!void {
         const e_range = else_node.data.range;
         try ir.buildBlock(else_block, e_range.start, e_range.len);
     }
-
-    ir.switchBlock(current_block);
+    
+    return true;
 }
