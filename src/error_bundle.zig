@@ -320,7 +320,7 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
 
     switch (inst.tag) {
         .constant => {
-            try w.print("${d} = constant ", .{inst_idx});
+            try w.print("%{d} = constant ", .{inst_idx});
 
             switch (inst.data) {
                 .uint => |value| try w.print("{d}", .{value}),

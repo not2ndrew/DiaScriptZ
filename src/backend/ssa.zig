@@ -33,12 +33,14 @@ pub const ValueId = InstId;
 // Every basic block has zero or more ordinary instructions
 // followed by exactly one terminator, except an unterminated
 // block while CFG construction is in progress.
+//
+// TODO: Try to implement phi functions.
+// Note that Zig does not encourage recursion.
+// https://ziglang.org/download/0.3.0/release-notes.html#recursionhttps://github.com/ziglang/zig/issues/1006#issuecomment-534660820
+// https://github.com/ziglang/zig/issues/1006#issuecomment-534660820
 pub const Block = struct {
     first_inst: InstId,
     inst_count: u32,
-
-    predecessors: Span,
-    successors: Span,
 };
 
 pub const BlockEdge = struct {
@@ -137,7 +139,6 @@ pub const GenSSA = struct {
     }
 };
 
-// TODO: Rename Ssa to DiaIR later on.
 // DiaIR converts the given AST and Decorated into IR
 // in Matthias Braun's SSA format.
 pub const Ssa = @This();
@@ -147,8 +148,6 @@ ast: *const Ast,
 decorated: *const Decorated,
 
 blocks: std.MultiArrayList(Block) = .empty,
-// For blocks with ranges.
-edges: std.ArrayList(BlockEdge) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
@@ -181,8 +180,8 @@ pub fn generate(ir: *Ssa) Error!GenSSA {
     try ir.buildBlock(block_id, range.start, range.len);
 
     for (ir.unresolved_jumps.items) |unresolved| {
-        const block = ir.jump_blocks.get(unresolved.ident_id) orelse unreachable;
-        try ir.addEdge(unresolved.from_block, block);
+        _ = ir.jump_blocks.get(unresolved.ident_id) orelse unreachable;
+        ir.instructions.items[unresolved.jump_id].data.jump = unresolved.jump_id;
     }
 
     return .{
@@ -212,17 +211,6 @@ fn nextText(ir: *Ssa) u32 {
 
 fn switchBlock(ir: *Ssa, block: BlockId) void {
     ir.current_block = block;
-}
-
-fn addEdge(ir: *Ssa, from: BlockId, to: BlockId) Error!void {
-    try ir.edges.append(ir.allocator, .{ .from = from, .to = to });
-}
-
-fn isTerminator(tag: Inst.Tag) bool {
-    return switch (tag) {
-        .jump, .branch, .choice => true,
-        else => false,
-    };
 }
 
 fn toInstTag(tag: Node.Tag) Inst.Tag {
@@ -273,7 +261,6 @@ fn emitJump(ir: *Ssa) Error!InstId {
 
     if (ir.jump_blocks.get(ident_id)) |label_block| {
         ir.instructions.items[jump_id].data.jump = label_block;
-        try ir.addEdge(from, label_block);
     } else {
         try ir.unresolved_jumps.append(ir.allocator, .{
             .ident_id = ident_id,
@@ -334,10 +321,9 @@ fn createBlock(ir: *Ssa) Error!BlockId {
     const block_id: BlockId = @intCast(ir.blocks.len);
 
     try ir.blocks.append(ir.allocator, .{
+        // first_inst may be modified depending on the SSA.
         .first_inst = @intCast(ir.instructions.items.len),
         .inst_count = 0,
-        .predecessors = .{ .start = 0, .len = 0 },
-        .successors = .{ .start = 0, .len = 0 },
     });
 
     return block_id;
@@ -354,30 +340,13 @@ fn stmtList(ir: *Ssa, start: u32, len: u32) Error!void {
     for (start .. start + len) |idx| {
         const extra = ir.ast.extra_data[idx];
         const node = ir.ast.nodes.get(extra);
-        const terminated = try ir.addStmt(node);
-
-        if (terminated) {
-            // If there are more stmts after this one, create a new block
-            if (idx + 1 < start + len) {
-                const new_block = try ir.createBlock();
-                ir.switchBlock(new_block);
-            }
-        }
+        try ir.addStmt(node);
     }
 }
 
 // TODO: For addArith, we need to create a phi function.
 // The problem is writing variables in values hashmap is global.
-//
-// We must create local variables for each block.
-// If a block does not have the requested variable,
-// then we search recursively in every other block.
-//
-// Searching recursively must travel from child to parent to root.
-//
-// Our semantic guarantees there is at least one match.
-// So we can assume that searching will never fail.
-fn addStmt(ir: *Ssa, node: Node) Error!bool {
+fn addStmt(ir: *Ssa, node: Node) Error!void {
     try switch (node.tag) {
         // Non-block stmts 
         .declar_stmt => ir.addDeclar(node),
@@ -390,16 +359,14 @@ fn addStmt(ir: *Ssa, node: Node) Error!bool {
         .mult_equal => ir.addArith(node, .mul),
         .div_equal => ir.addArith(node, .div),
 
-        .dialogue => return ir.addDialogue(node),
+        .dialogue => ir.addDialogue(node),
 
         // Blocks
         .label => ir.addLabel(node),
 
-        .if_stmt => return ir.addBranch(node),
+        .if_stmt => ir.addBranch(node),
         else => unreachable,
     };
-
-    return false;
 }
 
 fn addDeclar(ir: *Ssa, node: Node) Error!void {
@@ -443,7 +410,7 @@ fn addArith(ir: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
     try ir.values.put(ir.allocator, ident, result);
 }
 
-fn addDialogue(ir: *Ssa, node: Node) Error!bool {
+fn addDialogue(ir: *Ssa, node: Node) Error!void {
     const range = node.data.range;
 
     const speaker_node = ir.ast.nodes.get(ir.ast.extra_data[range.start]);
@@ -459,7 +426,7 @@ fn addDialogue(ir: *Ssa, node: Node) Error!bool {
     return try ir.addDialogueParts(range.start, range.len);
 }
 
-fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!bool {
+fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start + 1..end - 1) |idx| {
         const text_idx = ir.ast.extra_data[idx];
@@ -470,11 +437,12 @@ fn addDialogueParts(ir: *Ssa, start: u32, len: u32) Error!bool {
     const jump_idx = ir.ast.extra_data[end - 1];
 
     if (jump_idx == invalid_inst)
-        return false;
+        return;
 
     _ = try ir.emitJump();
 
-    return true;
+    const new_block = try ir.createBlock();
+    ir.switchBlock(new_block);
 }
 
 fn addLabel(ir: *Ssa, node: Node) Error!void {
@@ -485,7 +453,7 @@ fn addLabel(ir: *Ssa, node: Node) Error!void {
     try ir.buildBlock(ir.current_block, range.start, range.len);
 }
 
-fn addBranch(ir: *Ssa, node: Node) Error!bool {
+fn addBranch(ir: *Ssa, node: Node) Error!void {
     const range = node.data.range;
     const start = range.start;
     
@@ -497,29 +465,40 @@ fn addBranch(ir: *Ssa, node: Node) Error!bool {
     const cond = try ir.evalValue(cond_node);
 
     const then_block = try ir.createBlock();
-    var else_block: BlockId = invalid_block;
 
-    const else_valid = else_extra != invalid_inst;
-    if (else_valid)
-        else_block = try ir.createBlock();
+    const has_else = else_extra != invalid_inst;
+    const else_block = if (has_else)
+        try ir.createBlock()
+    else
+        invalid_block;
 
+    const merge_block = try ir.createBlock();
+
+    // Current block branches to then / else blocks
     _ = try ir.emit(.branch, .{
         .branch = .{
             .cond = cond,
             .then_block = then_block,
-            .else_block = else_block,
+            .else_block = if (has_else) else_block else merge_block,
         }
     });
 
-    const then_node = ir.ast.nodes.get(then_extra);
-    const t_range = then_node.data.range;
-    try ir.buildBlock(then_block, t_range.start, t_range.len);
+    // === THEN BLOCK ===
+    try ir.buildBranchBlock(then_extra, then_block, merge_block);
 
-    if (else_valid) {
-        const else_node = ir.ast.nodes.get(else_extra);
-        const e_range = else_node.data.range;
-        try ir.buildBlock(else_block, e_range.start, e_range.len);
-    }
-    
-    return true;
+    // === ELSE BLOCK ===
+    if (has_else)
+        try ir.buildBranchBlock(else_extra, else_block, merge_block);
+
+    // === MERGE ===
+    ir.switchBlock(merge_block);
+    ir.blocks.items(.first_inst)[merge_block] = @intCast(ir.instructions.items.len);
+}
+
+fn buildBranchBlock(ir: *Ssa, extra_idx: u32, block: BlockId, jump_block: BlockId) Error!void {
+    const node = ir.ast.nodes.get(extra_idx);
+    const range = node.data.range;
+    try ir.buildBlock(block, range.start, range.len);
+
+    _ = try ir.emit(.jump, .{ .jump = jump_block });
 }
