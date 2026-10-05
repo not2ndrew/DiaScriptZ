@@ -67,18 +67,18 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
         return error.SemanticError;
     }
 
-    var ssa: backend.ssa.Ssa = .{
+    var tac: backend.tac.Tac = .{
         .allocator = init.gpa,
         .ast = &parse_tree.ast,
         .decorated = &decorated_ast.decorated,
     };
-    defer ssa.deinit();
+    defer tac.deinit();
 
-    var complete_ssa = try ssa.generate();
-    defer complete_ssa.deinit(init.gpa);
+    var completed_tac = try tac.generate();
+    defer completed_tac.deinit(init.gpa);
 
     // THIS IS ONLY FOR DIAGNOSTICS.
-    try bundle.printSSA(init.io, complete_ssa.blocks, complete_ssa.instructions);
+    try bundle.printTac(init.io, completed_tac.blocks, completed_tac.instructions);
 
     // var diaIR: dir.DiaIR = .{
     //     .allocator = init.gpa,
