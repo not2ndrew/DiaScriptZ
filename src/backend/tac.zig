@@ -57,6 +57,9 @@ pub const Inst = struct {
         store,
         load,
 
+        // Exit
+        exit,
+
         // Arithmetic
         add,
         sub,
@@ -354,7 +357,7 @@ fn addStmt(tac: *Tac, node: Node) Error!void {
         .declar_stmt => tac.addDeclar(node),
         .assign => tac.addAssign(node),
 
-        .exit => {},
+        .exit => _ = try tac.emit(.exit, .none),
 
         .plus_equal => tac.addArith(node, .add),
         .minus_equal => tac.addArith(node, .sub),

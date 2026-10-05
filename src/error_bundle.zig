@@ -336,6 +336,8 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
         },
 
         .load => try w.print("%{d} = load v{d}", .{ inst_idx, inst.data.load }),
+
+        .exit => try w.writeAll("exit"),
         
         .text => {
             const range = inst.data.range;

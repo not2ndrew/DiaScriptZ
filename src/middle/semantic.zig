@@ -223,7 +223,7 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
             });
 
             i += 1;
-            continue;
+            return;
         }
 
         if (node.tag == .choice) {
