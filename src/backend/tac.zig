@@ -28,7 +28,7 @@ pub const invalid_inst = std.math.maxInt(InstId);
 
 pub const BlockId = u32;
 pub const invalid_block = std.math.maxInt(BlockId);
-pub const ValueId = InstId;
+pub const VariableId = u32;
 
 // Every basic block has zero or more ordinary instructions
 // followed by exactly one terminator, except an unterminated
@@ -54,6 +54,8 @@ pub const Inst = struct {
     pub const Tag = enum {
         // Constant
         constant,
+        store,
+        load,
 
         // Arithmetic
         add,
@@ -88,6 +90,13 @@ pub const Inst = struct {
         uint: u8,
         ident: IdentId,
         jump: BlockId,
+
+        store: struct {
+            variable: VariableId,
+            value: InstId,
+        },
+
+        load: VariableId,
 
         // payload identifier are variable identifiers.
         pl_ident: struct {
@@ -134,7 +143,7 @@ blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
-values: std.array_hash_map.Auto(IdentId, ValueId) = .empty,
+variables: std.array_hash_map.Auto(IdentId, VariableId) = .empty,
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
 
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
@@ -149,7 +158,7 @@ pub fn deinit(tac: *Tac) void {
     tac.blocks.deinit(tac.allocator);
     tac.instructions.deinit(tac.allocator);
     tac.extra.deinit(tac.allocator);
-    tac.values.deinit(tac.allocator);
+    tac.variables.deinit(tac.allocator);
     tac.jump_blocks.deinit(tac.allocator);
     tac.unresolved_jumps.deinit(tac.allocator);
 }
@@ -266,7 +275,10 @@ fn evalValue(tac: *Tac, node: Node) Error!InstId {
         },
         .var_ident => {
             const ident = tac.nextIdent();
-            return tac.values.get(ident) orelse unreachable;
+            const variable = try tac.getVariable(ident);
+
+            return tac.emit(.load, .{ .load = variable });
+            // return tac.variables.get(ident) orelse unreachable;
         },
         .string => {
             const text_id = tac.nextText();
@@ -298,6 +310,15 @@ fn evalBinary(tac: *Tac, tag: Inst.Tag, node: Node) Error!InstId {
             .rhs = rhs,
         }
     });
+}
+
+fn getVariable(tac: *Tac, ident: IdentId) Error!VariableId {
+    if (tac.variables.get(ident)) |id|
+        return id;
+
+    const id: VariableId = @intCast(tac.variables.count());
+    try tac.variables.putNoClobber(tac.allocator, ident, id);
+    return id;
 }
 
 fn createBlock(tac: *Tac) Error!BlockId {
@@ -357,7 +378,11 @@ fn addDeclar(tac: *Tac, node: Node) Error!void {
     const ident = tac.nextIdent();
     const value = try tac.evalValue(value_node);
 
-    try tac.values.put(tac.allocator, ident, value);
+    _ = try tac.emit(.store, .{
+        .store = .{ .variable = ident, .value = value }
+    });
+
+    // try tac.variables.put(tac.allocator, ident, value);
 }
 
 fn addAssign(tac: *Tac, node: Node) Error!void {
@@ -366,9 +391,11 @@ fn addAssign(tac: *Tac, node: Node) Error!void {
 
     const ident = tac.nextIdent();
     const value = try tac.evalValue(value_node);
+    const variable = try tac.getVariable(ident);
 
-    const current = tac.values.getPtr(ident) orelse unreachable;
-    current.* = value;
+    _ = try tac.emit(.store, .{
+        .store = .{ .variable = variable, .value = value }
+    });
 }
 
 fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
@@ -376,8 +403,9 @@ fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
     const value_node = tac.ast.nodes.get(value_idx);
 
     const ident = tac.nextIdent();
+    const variable = try tac.getVariable(ident);
 
-    const lhs = tac.values.get(ident) orelse unreachable;
+    const lhs = tac.variables.get(ident) orelse unreachable;
     const rhs = try tac.evalValue(value_node);
 
     const result = try tac.emit(tag, .{
@@ -388,7 +416,12 @@ fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
         }
     });
 
-    try tac.values.put(tac.allocator, ident, result);
+    _ = try tac.emit(.store, .{
+        .store = .{
+            .variable = variable,
+            .value = result,
+        },
+    });
 }
 
 fn addDialogue(tac: *Tac, node: Node) Error!void {

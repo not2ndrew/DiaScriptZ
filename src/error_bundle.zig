@@ -329,6 +329,13 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
                 else => unreachable,
             }
         },
+
+        .store => {
+            const store = inst.data.store;
+            try w.print("store v{d}, %{d}", .{ store.variable, store.value });
+        },
+
+        .load => try w.print("%{d} = load v{d}", .{ inst_idx, inst.data.load }),
         
         .text => {
             const range = inst.data.range;
