@@ -85,8 +85,6 @@ pub const Inst = struct {
 
         // Choices
         choice_option,
-        choice_text,
-        choice_value,
         choice,
     };
 
