@@ -94,7 +94,6 @@ pub const Inst = struct {
         uint: u8,
         ident: IdentId,
         jump: BlockId,
-        choice_value: InstId,
 
         store: struct {
             ident: IdentId,
