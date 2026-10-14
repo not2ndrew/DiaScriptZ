@@ -28,7 +28,6 @@ pub const invalid_inst = std.math.maxInt(InstId);
 
 pub const BlockId = u32;
 pub const invalid_block = std.math.maxInt(BlockId);
-pub const VariableId = u32;
 
 // Every basic block has zero or more ordinary instructions
 // followed by exactly one terminator, except an unterminated
@@ -41,7 +40,6 @@ pub const Block = struct {
 pub const UnresolvedJump = struct {
     ident_id: IdentId,
     jump_id: InstId,
-    from_block: BlockId,
 };
 
 // Not every Instruction needs to store TokenIndex
@@ -95,11 +93,11 @@ pub const Inst = struct {
         jump: BlockId,
 
         store: struct {
-            variable: VariableId,
+            ident: IdentId,
             value: InstId,
         },
 
-        load: VariableId,
+        load: IdentId,
 
         // payload identifier are variable identifiers.
         pl_ident: struct {
@@ -146,7 +144,6 @@ blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
-variables: std.array_hash_map.Auto(IdentId, VariableId) = .empty,
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
 
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
@@ -161,7 +158,6 @@ pub fn deinit(tac: *Tac) void {
     tac.blocks.deinit(tac.allocator);
     tac.instructions.deinit(tac.allocator);
     tac.extra.deinit(tac.allocator);
-    tac.variables.deinit(tac.allocator);
     tac.jump_blocks.deinit(tac.allocator);
     tac.unresolved_jumps.deinit(tac.allocator);
 }
@@ -204,10 +200,6 @@ fn nextText(tac: *Tac) u32 {
     return len;
 }
 
-fn switchBlock(tac: *Tac, block: BlockId) void {
-    tac.current_block = block;
-}
-
 fn toInstTag(tag: Node.Tag) Inst.Tag {
     return switch (tag) {
         .plus => .add,
@@ -234,20 +226,18 @@ fn toInstTag(tag: Node.Tag) Inst.Tag {
 }
 
 fn emit(tac: *Tac, tag: Inst.Tag, data: Inst.Data) Error!InstId {
-    const block = tac.current_block; 
-
     const inst_id: InstId = @intCast(tac.instructions.items.len);
+
     try tac.instructions.append(tac.allocator, .{
         .tag = tag,
         .data = data,
     });
 
-    tac.blocks.items(.inst_count)[block] += 1;
+    tac.blocks.items(.inst_count)[tac.current_block] += 1;
     return inst_id;
 }
 
 fn emitJump(tac: *Tac) Error!InstId {
-    const from = tac.current_block;
     const ident_id = tac.nextJump();
 
     const jump_id = try tac.emit(.jump, .{
@@ -260,7 +250,6 @@ fn emitJump(tac: *Tac) Error!InstId {
         try tac.unresolved_jumps.append(tac.allocator, .{
             .ident_id = ident_id,
             .jump_id = jump_id,
-            .from_block = from,
         });
     }
 
@@ -278,10 +267,8 @@ fn evalValue(tac: *Tac, node: Node) Error!InstId {
         },
         .var_ident => {
             const ident = tac.nextIdent();
-            const variable = try tac.getVariable(ident);
 
-            return tac.emit(.load, .{ .load = variable });
-            // return tac.variables.get(ident) orelse unreachable;
+            return tac.emit(.load, .{ .load = ident });
         },
         .string => {
             const text_id = tac.nextText();
@@ -315,15 +302,6 @@ fn evalBinary(tac: *Tac, tag: Inst.Tag, node: Node) Error!InstId {
     });
 }
 
-fn getVariable(tac: *Tac, ident: IdentId) Error!VariableId {
-    if (tac.variables.get(ident)) |id|
-        return id;
-
-    const id: VariableId = @intCast(tac.variables.count());
-    try tac.variables.putNoClobber(tac.allocator, ident, id);
-    return id;
-}
-
 fn createBlock(tac: *Tac) Error!BlockId {
     const block_id: BlockId = @intCast(tac.blocks.len);
 
@@ -336,26 +314,70 @@ fn createBlock(tac: *Tac) Error!BlockId {
     return block_id;
 }
 
-fn buildBlock(tac: *Tac, block_id: BlockId, start: u32, len: u32) Error!void {
-    tac.switchBlock(block_id);
-    tac.blocks.items(.first_inst)[block_id] = @intCast(tac.instructions.items.len);
+fn beginBlock(tac: *Tac, block: BlockId) void {
+    tac.current_block = block;
+    tac.blocks.items(.first_inst)[block] = @intCast(tac.instructions.items.len);
+    tac.blocks.items(.inst_count)[block] = 0;
+}
+
+fn buildBlock(tac: *Tac, block: BlockId, start: u32, len: u32) Error!void {
+    tac.beginBlock(block);
 
     try tac.stmtList(start, len);
 }
 
 fn stmtList(tac: *Tac, start: u32, len: u32) Error!void {
-    for (start .. start + len) |idx| {
-        const extra = tac.ast.extra_data[idx];
-        const node = tac.ast.nodes.get(extra);
-        try tac.addStmt(node);
+    var i: u32 = start;
+    const end = start + len;
+
+    while (i < end) {
+        const node_idx = tac.ast.extra_data[i];
+        const node = tac.ast.nodes.get(node_idx);
+
+        if (node.tag != .choice) {
+            try tac.addStmt(node);
+            i += 1;
+
+            continue;
+        }
+
+        const choice_len = tac.choiceGroupLen(i, end);
+
+        // TODO: I need a way to find a TAC for multiple dialogue choices.
+        // Since this is a terminal-based interpreter,
+        // choices will be made by using 1, 2, 3, or 4.
+        // So we can create a temp variable and perform
+        // multiple if checks and jump to the desired block.
+        // if (choice_len > 1) {
+        //     try tac.addChoiceGroup(i, choice_len);
+        // } else {
+        //     try tac.addChoice(node);
+        // }
+
+        i += choice_len;
     }
+}
+
+// Choice group is guaranteed to be less than 5 choices.
+fn choiceGroupLen(tac: *Tac, start: u32, end: u32) u32 {
+    var i: u32 = start;
+    while (i < end) {
+        const extra_idx = tac.ast.extra_data[i];
+        const node = tac.ast.nodes.get(extra_idx);
+
+        if (node.tag != .choice)
+            break;
+
+        i += 1;
+    }
+
+    return i - start;
 }
 
 fn addStmt(tac: *Tac, node: Node) Error!void {
     try switch (node.tag) {
         // Non-block stmts 
-        .declar_stmt => tac.addDeclar(node),
-        .assign => tac.addAssign(node),
+        .declar_stmt, .assign => tac.addStore(node),
 
         .exit => _ = try tac.emit(.exit, .none),
 
@@ -374,30 +396,15 @@ fn addStmt(tac: *Tac, node: Node) Error!void {
     };
 }
 
-fn addDeclar(tac: *Tac, node: Node) Error!void {
+fn addStore(tac: *Tac, node: Node) Error!void {
     const value_idx = node.data.node_and_node.@"1";
-    const value_node = tac.ast.nodes.get(value_idx);
-
     const ident = tac.nextIdent();
+
+    const value_node = tac.ast.nodes.get(value_idx);
     const value = try tac.evalValue(value_node);
 
     _ = try tac.emit(.store, .{
-        .store = .{ .variable = ident, .value = value }
-    });
-
-    // try tac.variables.put(tac.allocator, ident, value);
-}
-
-fn addAssign(tac: *Tac, node: Node) Error!void {
-    const value_idx = node.data.node_and_node.@"1";
-    const value_node = tac.ast.nodes.get(value_idx);
-
-    const ident = tac.nextIdent();
-    const value = try tac.evalValue(value_node);
-    const variable = try tac.getVariable(ident);
-
-    _ = try tac.emit(.store, .{
-        .store = .{ .variable = variable, .value = value }
+        .store = .{ .ident = ident, .value = value }
     });
 }
 
@@ -406,9 +413,10 @@ fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
     const value_node = tac.ast.nodes.get(value_idx);
 
     const ident = tac.nextIdent();
-    const variable = try tac.getVariable(ident);
 
-    const lhs = tac.variables.get(ident) orelse unreachable;
+    const lhs = try tac.emit(.load, .{
+        .load = ident,
+    });
     const rhs = try tac.evalValue(value_node);
 
     const result = try tac.emit(tag, .{
@@ -421,7 +429,7 @@ fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
 
     _ = try tac.emit(.store, .{
         .store = .{
-            .variable = variable,
+            .ident = ident,
             .value = result,
         },
     });
@@ -459,15 +467,16 @@ fn addDialogueParts(tac: *Tac, start: u32, len: u32) Error!void {
     _ = try tac.emitJump();
 
     const new_block = try tac.createBlock();
-    tac.switchBlock(new_block);
+    tac.beginBlock(new_block);
 }
 
 fn addLabel(tac: *Tac, node: Node) Error!void {
     const label = tac.nextIdent();
-    try tac.jump_blocks.putNoClobber(tac.allocator, label, tac.current_block);
+    const block = try tac.createBlock();
+    try tac.jump_blocks.putNoClobber(tac.allocator, label, block);
 
     const range = node.data.range;
-    try tac.buildBlock(tac.current_block, range.start, range.len);
+    try tac.buildBlock(block, range.start, range.len);
 }
 
 fn addBranch(tac: *Tac, node: Node) Error!void {
@@ -508,8 +517,7 @@ fn addBranch(tac: *Tac, node: Node) Error!void {
         try tac.buildBranchBlock(else_extra, else_block, merge_block);
 
     // === MERGE ===
-    tac.switchBlock(merge_block);
-    tac.blocks.items(.first_inst)[merge_block] = @intCast(tac.instructions.items.len);
+    tac.beginBlock(merge_block);
 }
 
 fn buildBranchBlock(tac: *Tac, extra_idx: u32, block: BlockId, jump_block: BlockId) Error!void {
@@ -518,4 +526,16 @@ fn buildBranchBlock(tac: *Tac, extra_idx: u32, block: BlockId, jump_block: Block
     try tac.buildBlock(block, range.start, range.len);
 
     _ = try tac.emit(.jump, .{ .jump = jump_block });
+}
+
+// Leave it for now.
+fn handleChoiceText(tac: *Tac, start: u32, len: u32) Error!void {
+    const end = start + len;
+    for (start + 1..end - 1) |idx| {
+        const text_idx = tac.ast.extra_data[idx];
+        const text_node = tac.ast.nodes.get(text_idx);
+        // TODO: Instead of emitting text, it should emit param
+        // to represent choices.
+        _ = try tac.evalValue(text_node);
+    }
 }

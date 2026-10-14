@@ -332,7 +332,7 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
 
         .store => {
             const store = inst.data.store;
-            try w.print("store v{d}, %{d}", .{ store.variable, store.value });
+            try w.print("store v{d}, %{d}", .{ store.ident, store.value });
         },
 
         .load => try w.print("%{d} = load v{d}", .{ inst_idx, inst.data.load }),

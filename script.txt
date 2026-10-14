@@ -1,4 +1,9 @@
 ~ A
-   B: Hello World
-   exit
+  var i = 1
 end
+
+~ B
+   asdf: Hello
+end
+
+var x = 10
