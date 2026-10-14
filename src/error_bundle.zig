@@ -382,6 +382,31 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
             if (branch.else_block != invalid_block)
                 try w.print(", block{d}", .{ branch.else_block });
         },
+        .choice_option => {
+            try w.writeAll("choice_option");
+        },
+
+        .choice_text => {
+            const range = inst.data.range;
+
+            try w.print("choice_text [{d}..{d}]", .{
+                range.start,
+                range.start + range.len,
+            });
+        },
+
+        .choice_value => {
+            try w.print("choice_value %{d}", .{
+                inst.data.choice_value,
+            });
+        },
+
+        .choice => {
+            try w.print("%{d} = choice {d}", .{
+                inst_idx,
+                inst.data.uint,
+            });
+        },
         else => unreachable,
     }
 }

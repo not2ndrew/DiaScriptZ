@@ -1,9 +1,8 @@
+* Option 1 -> A
+* Option 2
+
 ~ A
-  var i = 1
+   var i = 0
 end
 
-~ B
-   asdf: Hello
-end
-
-var x = 10
+const x = 10

@@ -77,12 +77,17 @@ pub const Inst = struct {
         // Terminators
         jump,
         branch,
-        choice,
 
         // Dialogue
         speaker,
         label,
         text,
+
+        // Choices
+        choice_option,
+        choice_text,
+        choice_value,
+        choice,
     };
 
     pub const Data = union(enum) {
@@ -91,6 +96,7 @@ pub const Inst = struct {
         uint: u8,
         ident: IdentId,
         jump: BlockId,
+        choice_value: InstId,
 
         store: struct {
             ident: IdentId,
@@ -113,9 +119,9 @@ pub const Inst = struct {
 
         // Indexes into extra.
         branch: struct {
-            cond: u32,
-            then_block: u32,
-            else_block: u32,
+            cond: InstId,
+            then_block: BlockId,
+            else_block: BlockId,
         },
 
         range: Span,
@@ -354,6 +360,10 @@ fn stmtList(tac: *Tac, start: u32, len: u32) Error!void {
         //     try tac.addChoice(node);
         // }
 
+        if (choice_len > 1) {
+            try tac.addChoiceGroup(i, choice_len);
+        }
+
         i += choice_len;
     }
 }
@@ -528,14 +538,101 @@ fn buildBranchBlock(tac: *Tac, extra_idx: u32, block: BlockId, jump_block: Block
     _ = try tac.emit(.jump, .{ .jump = jump_block });
 }
 
+fn addChoiceGroup(tac: *Tac, start: u32, len: u32) Error!void {
+    const end = start + len;
+    const choice_blocks = try tac.allocator.alloc(BlockId, len);
+    defer tac.allocator.free(choice_blocks);
+
+    const continuation = try tac.createBlock();
+
+    for (choice_blocks) |*block| {
+        block.* = try tac.createBlock();
+    }
+
+    // === MENU CONTENT ===
+    for (start .. end) |i| {
+        const extra_idx = tac.ast.extra_data[i];
+        const node = tac.ast.nodes.get(extra_idx);
+        const range = node.data.range;
+
+        // Mark the beginning of a new option
+        _ = try tac.emit(.choice_option, .none);
+        try tac.handleChoiceText(range.start, range.len);
+    }
+
+    // Display the options and wait for a valid selection.
+    const selected = try tac.emit(.choice, .{
+        .uint = @intCast(len)
+    });
+
+    // === DISPATCH ===
+    for (0 .. len - 1) |i| {
+        const expected = try tac.emit(.constant, .{
+            .uint = @intCast(i + 1)
+        });
+
+        const choice_node_idx = tac.ast.extra_data[start + i];
+        const choice_node = tac.ast.nodes.get(choice_node_idx);
+
+        const matches = try tac.emit(.eql, .{
+            .binary = .{
+                .token = choice_node.token_pos,
+                .lhs = selected,
+                .rhs = expected,
+            }
+        });
+
+        const next_check = try tac.createBlock();
+
+        _ = try tac.emit(.branch, .{
+            .branch = .{
+                .cond = matches,
+                .then_block = choice_blocks[i],
+                .else_block = next_check,
+            }
+        });
+
+        tac.beginBlock(next_check);
+    }
+
+    // The final option is the remaining valid selection.
+    _ = try tac.emit(.jump, .{
+        .jump = choice_blocks[len - 1],
+    });
+
+    // === OPTION DESTINATIONS ===
+    for (0 .. len) |i| {
+        const node_idx = tac.ast.extra_data[start + i];
+        const node = tac.ast.nodes.get(node_idx);
+        const range = node.data.range;
+
+        const goto_idx = tac.ast.extra_data[
+            range.start + range.len - 1
+        ];
+
+        tac.beginBlock(choice_blocks[i]);
+
+        if (goto_idx != invalid_node) {
+            // emitJump resolves the label immediately or records
+            // an unresolved jump for generate() to patch later.
+            _ = try tac.emitJump();
+        } else {
+            _ = try tac.emit(.jump, .{
+                .jump = continuation,
+            });
+        }
+    }
+
+    // Continue generating subsequent statements here.
+    tac.beginBlock(continuation);
+}
+
 // Leave it for now.
 fn handleChoiceText(tac: *Tac, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start + 1..end - 1) |idx| {
         const text_idx = tac.ast.extra_data[idx];
         const text_node = tac.ast.nodes.get(text_idx);
-        // TODO: Instead of emitting text, it should emit param
-        // to represent choices.
         _ = try tac.evalValue(text_node);
     }
 }
