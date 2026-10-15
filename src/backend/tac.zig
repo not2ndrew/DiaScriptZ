@@ -55,8 +55,9 @@ pub const Inst = struct {
         store,
         load,
 
-        // Exit
-        exit,
+        // Escape Scope
+        exit, // Terminates Program
+        ret, // Return to parent continuation.
 
         // Arithmetic
         add,
@@ -338,24 +339,17 @@ fn stmtList(tac: *Tac, start: u32, len: u32) Error!void {
         const node = tac.ast.nodes.get(node_idx);
 
         if (node.tag != .choice) {
-            try tac.addStmt(node);
-            i += 1;
+            if (node.tag == .label) {
+                try tac.addLabel(node, i + 1 < end);
+            } else {
+                try tac.addStmt(node);
+            }
 
+            i += 1;
             continue;
         }
 
         const choice_len = tac.choiceGroupLen(i, end);
-
-        // TODO: I need a way to find a TAC for multiple dialogue choices.
-        // Since this is a terminal-based interpreter,
-        // choices will be made by using 1, 2, 3, or 4.
-        // So we can create a temp variable and perform
-        // multiple if checks and jump to the desired block.
-        // if (choice_len > 1) {
-        //     try tac.addChoiceGroup(i, choice_len);
-        // } else {
-        //     try tac.addChoice(node);
-        // }
 
         if (choice_len > 1) {
             try tac.addChoiceGroup(i, choice_len);
@@ -386,7 +380,7 @@ fn addStmt(tac: *Tac, node: Node) Error!void {
         // Non-block stmts 
         .declar_stmt, .assign => tac.addStore(node),
 
-        .exit => _ = try tac.emit(.exit, .none),
+        .ret => _ = try tac.emit(.ret, .none),
 
         .plus_equal => tac.addArith(node, .add),
         .minus_equal => tac.addArith(node, .sub),
@@ -396,7 +390,7 @@ fn addStmt(tac: *Tac, node: Node) Error!void {
         .dialogue => tac.addDialogue(node),
 
         // Blocks
-        .label => tac.addLabel(node),
+        // .label => tac.addLabel(node),
 
         .if_stmt => tac.addBranch(node),
         else => unreachable,
@@ -477,13 +471,49 @@ fn addDialogueParts(tac: *Tac, start: u32, len: u32) Error!void {
     tac.beginBlock(new_block);
 }
 
-fn addLabel(tac: *Tac, node: Node) Error!void {
+// TODO:
+// Ideally, jump instruction should only append if there is a block
+// in between the basic instructions.
+// Jump on every label is redundant.
+// I think I can optimize it.
+// Input:
+//
+// ~ A
+//    var i = 0
+// end
+//
+// var j = 1 
+//
+// Output:
+// block0:
+//     jump block1
+// block1:
+//     %3 = constant 1
+//     store v2, %3
+// block2:
+//     %1 = constant 0
+//     store v1, %1
+//
+fn addLabel(tac: *Tac, node: Node, has_more: bool) Error!void {
+    const continuation = if (has_more)
+        try tac.createBlock()
+    else
+        invalid_block;
+
+    if (has_more) {
+        _ = try tac.emit(.jump, .{ .jump = continuation });
+    }
+
     const label = tac.nextIdent();
     const block = try tac.createBlock();
     try tac.jump_blocks.putNoClobber(tac.allocator, label, block);
 
     const range = node.data.range;
     try tac.buildBlock(block, range.start, range.len);
+
+    if (has_more) {
+        tac.beginBlock(continuation);
+    }
 }
 
 fn addBranch(tac: *Tac, node: Node) Error!void {
@@ -610,8 +640,6 @@ fn addChoiceGroup(tac: *Tac, start: u32, len: u32) Error!void {
         tac.beginBlock(choice_blocks[i]);
 
         if (goto_idx != invalid_node) {
-            // emitJump resolves the label immediately or records
-            // an unresolved jump for generate() to patch later.
             _ = try tac.emitJump();
         } else {
             _ = try tac.emit(.jump, .{

@@ -1,8 +1,5 @@
-* Option 1 -> A
-* Option 2
-
 ~ A
    var i = 0
 end
 
-const x = 10
+var j = 1 

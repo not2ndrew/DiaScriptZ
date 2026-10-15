@@ -51,7 +51,7 @@ pub const Node = struct {
     pub const Tag = enum {
         // Stmts
         declar_stmt,
-        exit,
+        ret,
         if_stmt,
         label,
         dialogue,

@@ -253,7 +253,7 @@ fn visitStmtList(sem: *Semantic, start: u32, len: u32) !void {
         } else {
             try sem.visitStmt(node_idx);
 
-            if (node.tag == .exit)
+            if (node.tag == .ret)
                 exited = true;
 
             i += 1;
@@ -265,7 +265,7 @@ fn visitStmt(sem: *Semantic, node_idx: NodeIndex) !void {
     const node = sem.ast.nodes.get(node_idx);
     // Choice is handled in visitStmtList
     return switch (node.tag) {
-        .exit => {},
+        .ret => {},
         .declar_stmt => sem.visitVarDecl(node),
         .assign, .plus_equal, .minus_equal, .mult_equal, .div_equal
         => sem.visitAssign(node),
