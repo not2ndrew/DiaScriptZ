@@ -18,7 +18,7 @@ pub const Token = struct {
         // Unique keywords
         keyword_const,
         keyword_var,
-        keyword_return,
+        keyword_exit,
         keyword_if,
         keyword_else,
         keyword_end,
@@ -79,7 +79,7 @@ pub fn lexeme(tag: Token.Tag) ?[]const u8 {
 
         .keyword_const => "const",
         .keyword_var => "var",
-        .keyword_return => "return",
+        .keyword_exit => "exit",
         .keyword_if => "if",
         .keyword_else => "else",
         .keyword_end => "end",
@@ -128,7 +128,7 @@ pub fn lexeme(tag: Token.Tag) ?[]const u8 {
 pub const keywords = std.StaticStringMap(Token.Tag).initComptime(.{
     .{ "const", .keyword_const },
     .{ "var", .keyword_var },
-    .{ "return", .keyword_return },
+    .{ "return", .keyword_exit },
     .{ "if", .keyword_if },
     .{ "else", .keyword_else },
     .{ "end", .keyword_end },

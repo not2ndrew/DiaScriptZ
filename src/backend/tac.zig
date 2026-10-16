@@ -57,7 +57,6 @@ pub const Inst = struct {
 
         // Escape Scope
         exit, // Terminates Program
-        ret, // Return to parent continuation.
 
         // Arithmetic
         add,
@@ -171,8 +170,12 @@ pub fn generate(tac: *Tac) Error!GenTac {
     const root_node = tac.ast.nodes.get(tac.ast.nodes.len - 1);
     const range = root_node.data.range;
 
+    // Start program.
     const block_id = try tac.createBlock();
     try tac.buildBlock(block_id, range.start, range.len);
+
+    // Terminate program.
+    _ = try tac.emit(.exit, .none);
 
     for (tac.unresolved_jumps.items) |unresolved| {
         const target = tac.jump_blocks.get(unresolved.ident_id) orelse unreachable;
@@ -380,7 +383,7 @@ fn addStmt(tac: *Tac, node: Node) Error!void {
         // Non-block stmts 
         .declar_stmt, .assign => tac.addStore(node),
 
-        .ret => _ = try tac.emit(.ret, .none),
+        .exit => _ = try tac.emit(.exit, .none),
 
         .plus_equal => tac.addArith(node, .add),
         .minus_equal => tac.addArith(node, .sub),
