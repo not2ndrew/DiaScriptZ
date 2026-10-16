@@ -519,6 +519,14 @@ fn addLabel(tac: *Tac, node: Node, has_more: bool) Error!void {
     }
 }
 
+// TODO: If the only difference between TAC and SSA is the phi node
+// for my interpreter, then it is a waste of time copying almost all
+// instructions from TAC to SSA and making slight or no changes.
+//
+// It is more efficient to generate the phi node here.
+//
+// Remove the "store" and "load" instruction for pure SSA registers
+// and phi nodes.
 fn addBranch(tac: *Tac, node: Node) Error!void {
     const range = node.data.range;
     const start = range.start;
@@ -655,8 +663,7 @@ fn addChoiceGroup(tac: *Tac, start: u32, len: u32) Error!void {
     tac.beginBlock(continuation);
 }
 
-// Leave it for now.
-fn handleChoiceText(tac: *Tac, start: u32, len: u32) Error!void {
+fn handleChoiceText(tac: *Tac, start: u33, len: u32) Error!void {
     const end = start + len;
     for (start + 1..end - 1) |idx| {
         const text_idx = tac.ast.extra_data[idx];
