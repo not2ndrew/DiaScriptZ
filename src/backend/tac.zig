@@ -54,6 +54,7 @@ pub const Inst = struct {
         constant,
         store,
         load,
+        phi,
 
         // Escape Scope
         exit, // Terminates Program
@@ -94,6 +95,11 @@ pub const Inst = struct {
         uint: u8,
         ident: IdentId,
         jump: BlockId,
+
+        phi: struct {
+            start: u32,
+            len: u32,
+        },
 
         store: struct {
             ident: IdentId,
@@ -147,6 +153,7 @@ blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
+values: std.array_hash_map.Auto(IdentId, InstId) = .empty,
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
 
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
@@ -161,6 +168,7 @@ pub fn deinit(tac: *Tac) void {
     tac.blocks.deinit(tac.allocator);
     tac.instructions.deinit(tac.allocator);
     tac.extra.deinit(tac.allocator);
+    tac.values.deinit(tac.allocator);
     tac.jump_blocks.deinit(tac.allocator);
     tac.unresolved_jumps.deinit(tac.allocator);
 }
@@ -274,8 +282,9 @@ fn evalValue(tac: *Tac, node: Node) Error!InstId {
         },
         .var_ident => {
             const ident = tac.nextIdent();
+            return tac.values.get(ident) orelse unreachable;
 
-            return tac.emit(.load, .{ .load = ident });
+            // return tac.emit(.load, .{ .load = ident });
         },
         .string => {
             const text_id = tac.nextText();
@@ -407,9 +416,11 @@ fn addStore(tac: *Tac, node: Node) Error!void {
     const value_node = tac.ast.nodes.get(value_idx);
     const value = try tac.evalValue(value_node);
 
-    _ = try tac.emit(.store, .{
-        .store = .{ .ident = ident, .value = value }
-    });
+    try tac.values.put(tac.allocator, ident, value);
+
+    // _ = try tac.emit(.store, .{
+    //     .store = .{ .ident = ident, .value = value }
+    // });
 }
 
 fn addArith(tac: *Tac, node: Node, comptime tag: Inst.Tag) Error!void {
