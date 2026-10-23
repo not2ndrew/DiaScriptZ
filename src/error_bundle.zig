@@ -1,7 +1,7 @@
 const std = @import("std");
 const Semantic = @import("middle").semantic.Semantic;
 const frontend = @import("frontend");
-const tac = @import("backend").tac;
+const ssa = @import("backend").ssa;
 
 const SourceFile = frontend.source_file.SourceFile;
 
@@ -14,11 +14,11 @@ const Ast = frontend.ast.Ast;
 
 const Tokens = std.MultiArrayList(Token).Slice;
 
-const Block = tac.Block;
+const Block = ssa.Block;
 const Blocks = std.MultiArrayList(Block).Slice;
-const Inst = tac.Inst;
-const InstId = tac.InstId;
-const invalid_block = tac.invalid_block;
+const Inst = ssa.Inst;
+const InstId = ssa.InstId;
+const invalid_block = ssa.invalid_block;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -293,7 +293,7 @@ pub const Diagnostic = struct {
     }
 };
 
-pub fn printTac(io: std.Io, blocks: Blocks, insts: []const Inst) !void {
+pub fn printSsa(io: std.Io, blocks: Blocks, insts: []const Inst) !void {
     // TODO: Replace 100 with a more defined constant.
     var buffer: [100]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
@@ -329,13 +329,6 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
                 else => unreachable,
             }
         },
-
-        .store => {
-            const store = inst.data.store;
-            try w.print("store v{d}, %{d}", .{ store.ident, store.value });
-        },
-
-        .load => try w.print("%{d} = load v{d}", .{ inst_idx, inst.data.load }),
 
         .exit => try w.writeAll("exit"),
         
