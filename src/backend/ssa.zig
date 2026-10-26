@@ -42,6 +42,24 @@ pub const UnresolvedJump = struct {
     jump_id: InstId,
 };
 
+pub const IncompletePhi = struct {
+    ident: IdentId,
+    block: BlockId,
+};
+
+pub const BlockState = struct {
+    definitions: std.array_hash_map.Auto(IdentId, InstId) = .empty,
+    predecessors: std.ArrayList(BlockId) = .empty,
+    incomplete_phis: std.ArrayList(IncompletePhi) = .empty,
+    sealed: bool = false,
+
+    pub fn deinit(state: *BlockState, allocator: Allocator) void {
+        state.definitions.deinit(allocator);
+        state.predecessors.deinit(allocator);
+        state.incomplete_phis.deinit(allocator);
+    }
+};
+
 // Not every Instruction needs to store TokenIndex
 // for reporting errors.
 // For every union data that can fail, insert TokenIndex.
@@ -144,10 +162,10 @@ blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
 extra: std.ArrayList(u32) = .empty,
 
-values: std.array_hash_map.Auto(IdentId, InstId) = .empty,
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
 
 unresolved_jumps: std.ArrayList(UnresolvedJump) = .empty,
+block_states: std.ArrayList(BlockState) = .empty,
 
 current_block: u32 = 0,
 
@@ -156,12 +174,17 @@ jump_ref: IdentId = 0,
 text_ref: u32 = 0,
 
 pub fn deinit(ssa: *Ssa) void {
-    ssa.blocks.deinit(ssa.allocator);
-    ssa.instructions.deinit(ssa.allocator);
-    ssa.extra.deinit(ssa.allocator);
-    ssa.values.deinit(ssa.allocator);
-    ssa.jump_blocks.deinit(ssa.allocator);
-    ssa.unresolved_jumps.deinit(ssa.allocator);
+    const allocator = ssa.allocator;
+    ssa.blocks.deinit(allocator);
+    ssa.instructions.deinit(allocator);
+    ssa.extra.deinit(allocator);
+    ssa.jump_blocks.deinit(allocator);
+    ssa.unresolved_jumps.deinit(allocator);
+
+    for (ssa.block_states.items) |*state| {
+        state.deinit(allocator);
+    }
+    ssa.block_states.deinit(allocator);
 }
 
 pub fn generate(ssa: *Ssa) Error!GenSSA {
@@ -273,7 +296,7 @@ fn evalValue(ssa: *Ssa, node: Node) Error!InstId {
         },
         .var_ident => {
             const ident = ssa.nextIdent();
-            return ssa.values.get(ident) orelse unreachable;
+            return ssa.readVariable(ssa.current_block, ident);
         },
         .string => {
             const text_id = ssa.nextText();
@@ -316,6 +339,8 @@ fn createBlock(ssa: *Ssa) Error!BlockId {
         .inst_count = 0,
     });
 
+    try ssa.block_states.append(ssa.allocator, .{});
+
     return block_id;
 }
 
@@ -329,6 +354,23 @@ fn buildBlock(ssa: *Ssa, block: BlockId, start: u32, len: u32) Error!void {
     ssa.beginBlock(block);
 
     try ssa.stmtList(start, len);
+}
+
+fn writeVariable(ssa: *Ssa, block: BlockId, ident: IdentId, value: InstId) Error!void {
+    try ssa.block_states.items[block].definitions.put(
+        ssa.allocator, ident, value
+    );
+}
+
+fn readVariable(ssa: *Ssa, block: BlockId, ident: IdentId) Error!InstId {
+    const state = &ssa.block_states.items[block];
+
+    if (state.definitions.get(ident)) |value| {
+        return value;
+    }
+
+    // TODO: Replace this in favour of phi.
+    return 0;
 }
 
 fn stmtList(ssa: *Ssa, start: u32, len: u32) Error!void {
@@ -405,7 +447,7 @@ fn addStore(ssa: *Ssa, node: Node) Error!void {
     const value_node = ssa.ast.nodes.get(value_idx);
     const value = try ssa.evalValue(value_node);
 
-    try ssa.values.put(ssa.allocator, ident, value);
+    try ssa.writeVariable(ssa.current_block, ident, value);
 }
 
 fn addArith(ssa: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
@@ -414,7 +456,7 @@ fn addArith(ssa: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
 
     const ident = ssa.nextIdent();
 
-    const lhs = ssa.values.get(ident) orelse unreachable;
+    const lhs = try ssa.readVariable(ssa.current_block, ident);
     const rhs = try ssa.evalValue(value_node);
 
     _ = try ssa.emit(tag, .{
