@@ -1,8 +1,10 @@
 const std = @import("std");
 const frontend = @import("frontend");
-const sem = @import("middle").semantic;
+const middle = @import("middle");
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
+
+// TEMP
 const backend = @import("backend");
 
 const Io = std.Io;
@@ -17,13 +19,20 @@ const Ast = tree.Ast;
 
 const SourceFile = frontend.source_file.SourceFile;
 
-const Symbol = sem.Symbol;
+const sem = middle.semantic;
+
+const interner = middle.interner;
+const InternPool = interner.InternPool;
+const Span = interner.Span;
 
 const ErrorBundle = bundle.ErrorBundle;
 
 const dir = backend.ir;
 const Inst = dir.Inst;
 const InstId = dir.InstId;
+
+const optimize2 = backend.optimize2;
+const Optimize2 = optimize2.Optimize2;
 
 const remap = backend.remap;
 const NewIR = remap.NewIR;
@@ -32,22 +41,18 @@ pub const Compile = @This();
 
 instructions: []const Inst,
 extra: []const InstId,
-symbols: []const Symbol,
-bytes: []const u8,
-texts: []const u8,
+pool: InternPool,
 
 num_of_declar: u32,
 
 pub fn deinit(comp: *Compile, allocator: Allocator) void {
     allocator.free(comp.instructions);
     allocator.free(comp.extra);
-    allocator.free(comp.symbols);
-    allocator.free(comp.bytes);
-    allocator.free(comp.texts);
+    comp.pool.deinit(allocator);
 }
 
 // TODO: Get file_path instead of file_name.
-pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !Compile {
+pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void {
     // Generate AST from source
     var parse_tree = try tree.parse(init.gpa, source);
     defer parse_tree.deinit(init.gpa);
@@ -67,15 +72,36 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !Compi
         return error.SemanticError;
     }
 
-    var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
-    defer lower_result.deinit(init.gpa);
+    var ssa: backend.ssa.Ssa = .{
+        .allocator = init.gpa,
+        .ast = &parse_tree.ast,
+        .decorated = &decorated_ast.decorated,
+    };
+    defer ssa.deinit();
 
-    if (lower_result.errors.len > 0) {
-        try printSemanticErrorsToStderr(init, source_file, lower_result.errors, file_name);
-        return error.SemanticError;
-    }
+    // GenSSA is being deinit in optimize.
+    var completed_ssa = try ssa.generate();
 
-    return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
+    // THIS IS ONLY FOR DIAGNOSTICS.
+    // try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
+
+    var optimize: Optimize2 = .{
+        .allocator = init.gpa,
+        .ssa = &completed_ssa,
+        .decorated = &decorated_ast.decorated,
+    };
+
+    defer optimize.deinit();
+
+    // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
+    // defer lower_result.deinit(init.gpa);
+    //
+    // if (lower_result.errors.len > 0) {
+    //     try printSemanticErrorsToStderr(init, source_file, lower_result.errors, file_name);
+    //     return error.SemanticError;
+    // }
+    //
+    // return createCompile(init.gpa, &lower_result.ir, &decorated_ast.decorated);
 }
 
 fn printAstErrorsToStderr(init: Init, source_file: SourceFile, errors: []const Ast.Error, file_path: []const u8) !void {
@@ -101,27 +127,15 @@ fn printSemanticErrorsToStderr(init: Init, source_file: SourceFile, errors: []co
 }
 
 pub fn createCompile(gpa: Allocator, ir: *const NewIR, decorated: *const sem.DecoratedAst.Decorated) !Compile {
-    const instructions = try gpa.alloc(Inst, ir.instructions.len);
-    @memcpy(instructions, ir.instructions);
-
-    const extra = try gpa.alloc(InstId, ir.extra.len);
-    @memcpy(extra, ir.extra);
-
-    const symbols = try gpa.alloc(Symbol, decorated.symbols.len);
-    @memcpy(symbols, decorated.symbols);
-
-    const bytes = try gpa.alloc(u8, decorated.pool.bytes.len);
-    @memcpy(bytes, decorated.pool.bytes);
-
-    const texts = try gpa.alloc(u8, decorated.pool.texts.len);
-    @memcpy(texts, decorated.pool.texts);
-
     return .{
-        .instructions = instructions,
-        .extra = extra,
-        .symbols = symbols,
-        .bytes = bytes,
-        .texts = texts,
+        .instructions = try gpa.dupe(Inst, ir.instructions),
+        .extra = try gpa.dupe(InstId, ir.extra),
         .num_of_declar = ir.num_of_declar,
+        .pool = .{
+            .bytes = try gpa.dupe(u8, decorated.pool.bytes),
+            .ident_spans = try gpa.dupe(Span, decorated.pool.ident_spans),
+            .texts = try gpa.dupe(u8, decorated.pool.texts),
+            .text_spans = try gpa.dupe(Span, decorated.pool.text_spans),
+        }
     };
 }

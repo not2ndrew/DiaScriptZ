@@ -1,6 +1,7 @@
 const std = @import("std");
 const Semantic = @import("middle").semantic.Semantic;
 const frontend = @import("frontend");
+const ssa = @import("backend").ssa;
 
 const SourceFile = frontend.source_file.SourceFile;
 
@@ -12,6 +13,12 @@ const lexeme = tok.lexeme;
 const Ast = frontend.ast.Ast;
 
 const Tokens = std.MultiArrayList(Token).Slice;
+
+const Block = ssa.Block;
+const Blocks = std.MultiArrayList(Block).Slice;
+const Inst = ssa.Inst;
+const InstId = ssa.InstId;
+const invalid_block = ssa.invalid_block;
 
 const Allocator = std.mem.Allocator;
 const Writer = std.Io.Writer;
@@ -87,6 +94,9 @@ pub fn writeSemanticErrorMessage(sf: *const SourceFile, w: *Writer, err: Semanti
         },
         .division_by_zero => {
             return w.writeAll("Cannot divide by 0");
+        },
+        .unreachable_stmt => {
+            return w.writeAll("Unreachable code");
         },
         // TODO: This requires additional note to show where it is already initialized at.
         .ident_mismatch => {
@@ -282,3 +292,98 @@ pub const Diagnostic = struct {
         return dia.err_bytes[start .. end];
     }
 };
+
+pub fn printSsa(io: std.Io, blocks: Blocks, insts: []const Inst) !void {
+    // TODO: Replace 100 with a more defined constant.
+    var buffer: [100]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
+    defer io.unlockStderr();
+
+    const w = stderr.terminal().writer;
+
+    for (0 .. blocks.len) |block_idx| {
+        const first = blocks.items(.first_inst)[block_idx];
+        const count = blocks.items(.inst_count)[block_idx];
+
+        try w.print("block{d}:\n", .{block_idx});
+        
+        for (first .. first + count) |inst_idx| {
+            try w.print("    ", .{});
+            try printInst(w, insts, @intCast(inst_idx));
+            try w.writeByte('\n');
+        }
+    }
+}
+
+fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
+    const inst = insts[inst_idx];
+
+    switch (inst.tag) {
+        .constant => {
+            try w.print("%{d} = constant ", .{inst_idx});
+
+            switch (inst.data) {
+                .uint => |value| try w.print("{d}", .{value}),
+                .boolean => |value| try w.print("{}", .{value}),
+                .ident => |ident| try w.print("ident{d}", .{ident}),
+                else => unreachable,
+            }
+        },
+
+        .exit => try w.writeAll("exit"),
+        
+        .text => {
+            const range = inst.data.range;
+
+            try w.print("%{d} = text [{d} .. {d}]", .{
+                inst_idx, range.start, range.start + range.len
+            });
+        },
+
+        .speaker => {
+            try w.print("%{d} = speaker ident{d}", .{inst_idx, inst.data.ident});
+        },
+        .add,
+        .sub,
+        .mul,
+        .div,
+        .eql,
+        .not_eql,
+        .less,
+        .less_or_eql,
+        .greater,
+        .greater_or_eql,
+        .bool_or,
+        .bool_and,
+        => {
+            const binary = inst.data.binary;
+
+            try w.print("%{d} = {s} %{d}, %{d}", .{
+                inst_idx,
+                @tagName(inst.tag),
+                binary.lhs,
+                binary.rhs,
+            });
+        },
+        .jump => {
+            try w.print("jump block{d}", .{inst.data.jump});
+        },
+        .branch => {
+            const branch = inst.data.branch;
+            try w.print("branch %{d}, block{d}", .{ branch.cond, branch.then_block });
+
+            if (branch.else_block != invalid_block)
+                try w.print(", block{d}", .{ branch.else_block });
+        },
+        .choice_option => {
+            try w.writeAll("choice_option");
+        },
+        .choice => {
+            try w.print("%{d} = choice {d}", .{
+                inst_idx,
+                inst.data.uint,
+            });
+        },
+        else => unreachable,
+    }
+}

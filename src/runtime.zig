@@ -7,15 +7,23 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
 const sem = middle.semantic;
-const Symbol = sem.Symbol;
-const SymbolId = sem.SymbolId;
+const MAX_NUM_CHOICES = sem.MAX_NUM_CHOICES;
+
+const interner = middle.interner;
+const InternPool = interner.InternPool;
+const IdentId = interner.IdentId;
 
 const dir = backend.ir;
 const Inst = dir.Inst;
 const InstId = dir.InstId;
 const invalid_inst = dir.invalid_inst;
 
-pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
+pub const IoError = Io.Cancelable || Io.Writer.Error;
+pub const RunTimeError = Allocator.Error || IoError || error { Overflow, DivisionByZero, NoSpaceLeft };
+
+pub const DIALOGUE_SIZE = 100;
+// For an u8 integer, the maximum value is 255. Thus, the max digits is 3.
+const MAX_DIGITS = 3;
 
 // ───────────────────────────────
 //            RUNTIME
@@ -50,34 +58,37 @@ pub const RunTimeError = Allocator.Error || error { Overflow, DivisionByZero };
 pub const Runtime = @This();
 
 allocator: Allocator,
-io: Io,
 instructions: []const Inst,
 extra: []const InstId,
-symbols: []const Symbol,
-bytes: []const u8,
-texts: []const u8,
+pool: InternPool,
 
-declarations: std.array_hash_map.Auto(SymbolId, u8) = .empty,
+declarations: std.array_hash_map.Auto(IdentId, u8) = .empty,
 
 pub fn runProgram(io: Io, allocator: Allocator, comp: Compile) RunTimeError!void {
     var runtime: Runtime = .{
         .allocator = allocator,
-        .io = io,
+        // .io = io,
         .instructions = comp.instructions,
         .extra = comp.extra,
-        .symbols = comp.symbols,
-        .bytes = comp.bytes,
-        .texts = comp.texts,
+        .pool = comp.pool,
     };
     defer runtime.deinit();
 
     try runtime.declarations.ensureTotalCapacity(allocator, comp.num_of_declar);
     
-    try runtime.run();
+    try runtime.run(io);
 }
 
 pub fn deinit(ru: *Runtime) void {
     ru.declarations.deinit(ru.allocator);
+}
+
+fn appendSlice(buffer: []u8, pos: *usize, text: []const u8) RunTimeError!void {
+    if (pos.* + text.len > buffer.len)
+        return RunTimeError.OutOfMemory;
+
+    @memcpy(buffer[pos.* .. pos.* + text.len], text);
+    pos.* += text.len;
 }
 
 fn fold(tag: Inst.Tag, lhs: u8, rhs: u8) RunTimeError!u8 {
@@ -141,8 +152,7 @@ fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     return switch (inst.tag) {
         .constant => inst.data.uint,
         .load => {
-            const symbol_id = inst.data.load;
-            return ru.declarations.get(symbol_id) orelse unreachable;
+            return ru.declarations.get(inst.data.ident) orelse unreachable;
         },
         .add, .sub, .mul, .div => {
             const b = inst.data.binary;
@@ -155,28 +165,61 @@ fn eval(ru: *Runtime, inst_idx: InstId) RunTimeError!u8 {
     };
 }
 
-fn run(ru: *Runtime) RunTimeError!void {
+fn printDialogue(io: Io, text: []u8, len: usize) RunTimeError!void {
+    // TODO: Depending on the Operating System (Windows, Linux),
+    // there may be additional characters
+    // For example:
+    //    Windows has \r\n
+    //    Linux only has \n
+    //
+    // Best solution is to create a customizer for dialogue system.
+    // Do +1 for '\n'
+    var buffer: [DIALOGUE_SIZE + 1]u8 = undefined;
+    const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
+    defer io.unlockStderr();
+
+    const writer = stderr.terminal().writer;
+
+    for (0 .. len) |i| {
+        try writer.print("{c}", .{text[i]});
+        try io.sleep(.fromMilliseconds(100), .awake);
+
+        try writer.flush();
+    }
+
+    try writer.writeByte('\n');
+    try writer.flush();
+}
+
+fn printChoices(io: Io, text: []u8, len: usize) RunTimeError!void {
+    _ = io;
+    _ = text;
+    _ = len;
+}
+
+fn run(ru: *Runtime, io: Io) RunTimeError!void {
     const root_inst = ru.instructions[ru.instructions.len - 1];
     const range = root_inst.data.range;
 
-    try ru.block(range.start, range.len);
+    try ru.block(io, range.start, range.len);
 }
 
-fn block(ru: *Runtime, start: u32, len: u32) RunTimeError!void {
+fn block(ru: *Runtime, io: Io, start: u32, len: u32) RunTimeError!void {
     const end = start + len;
     for (start .. end) |idx| {
         const stmt_idx = ru.extra[idx];
-        try ru.stmt(stmt_idx);
+        try ru.stmt(io, stmt_idx);
     }
 }
 
-fn stmt(ru: *Runtime, inst_idx: InstId) RunTimeError!void {
+fn stmt(ru: *Runtime, io: Io, inst_idx: InstId) RunTimeError!void {
     const inst = ru.instructions[inst_idx];
-    std.debug.print("Inst tag: {t}\n", .{inst.tag});
     return switch (inst.tag) {
         .declaration => ru.declaration(inst),
         .store => ru.storeValue(inst),
-        .branch =>ru.branch(inst),
+        .branch =>ru.branch(io, inst),
+        .dialogue => ru.dialogue(io, inst),
+        .label_block => std.debug.print("Hello\n", .{}),
         else => unreachable,
     };
 }
@@ -184,20 +227,18 @@ fn stmt(ru: *Runtime, inst_idx: InstId) RunTimeError!void {
 fn declaration(ru: *Runtime, inst: Inst) RunTimeError!void {
     const store = inst.data.store;
     const value = try ru.eval(store.value);
-    ru.declarations.putAssumeCapacityNoClobber(store.symbol_id, value);
+    ru.declarations.putAssumeCapacityNoClobber(store.ident, value);
 }
 
 fn storeValue(ru: *Runtime, inst: Inst) RunTimeError!void {
     const store = inst.data.store;
     const value = try ru.eval(store.value);
 
-    const entry = ru.declarations.getEntry(store.symbol_id) orelse unreachable;
+    const entry = ru.declarations.getEntry(store.ident) orelse unreachable;
     entry.value_ptr.* = value;
-
-    std.debug.print("The value is: {d}\n", .{value});
 }
 
-fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
+fn branch(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
     const range = inst.data.range;
     const cond = ru.extra[range.start];
     const then_block = ru.extra[range.start + 1];
@@ -208,25 +249,109 @@ fn branch(ru: *Runtime, inst: Inst) RunTimeError!void {
     if (branch_result) {
         const then_inst = ru.instructions[then_block];
         const t_range = then_inst.data.range;
-        try ru.block(t_range.start, t_range.len);
+        try ru.block(io, t_range.start, t_range.len);
     } else {
         const else_inst = ru.instructions[else_block];
         const e_range = else_inst.data.range;
-        try ru.block(e_range.start, e_range.len);
+        try ru.block(io, e_range.start, e_range.len);
     }
 }
 
-// TODO: Using IO, run the dialogue char by char in the terminal.
-// This can be done using io.sleep
-// Using a loop, print one char at a time and sleep for x amount of milliseconds.
-// fn dialogue(ru: *Runtime, inst: Inst) RunTimeError!void {
-//     const range = inst.data.range;
+// MAJOR TODO: Replace Inst jump identId with an InstId
+// pointing to Label inst.
 //
-//     const speaker = ru.extra[range.start];
+// MAJOR TODO: Determine whether label blocks should be scanned
+// during runtime.
+// - From the root_node, label blocks are considered.
+// - Maybe consider moving label id outside of regular instructions?
 //
-//     if (speaker != invalid_inst) {
-//         // TODO: I need a way to extract speaker name.
-//         // Extract interner's bytes and text slice to this struct.
-//         const speaker_inst = ru.instructions[speaker];
-//     }
-// }
+// Labels can only be accessed by dialogue jumps.
+//
+// A solution is to insert labels into a new array.
+// dialogue jumps are indexed by LabelId.
+//
+// Other than the change of jump IdentId to LabelId,
+// everything else remains the same.
+//
+// Label's stmts inside can be stored inside extra just like an
+// if branch block.
+//
+// Solution 2:
+// Simply replace IdentId to InstId where InstId points 
+// to the corresponding Label's instruction.
+// In dia_ir.zig, create an identId -> Label InstId mapping.
+//
+// For any label encountered during scanning, insert label's identId and return
+// the InstId.
+//
+// Next, we create unresolved arraylist. During scanning for dialogue,
+// we use the hashmap to determine if jump is referenced before or after label.
+//
+// If found, insert label instId to jump. InstId is inserted AFTER the creation
+// of the label instruction.
+// Otherwise, append dialogue to unresolved arraylist.
+//
+// After scanning the whole ast, go over the unresolved arraylist.
+// Now repeat the hashmap scan for each unresolved jump and
+// substitute their undefined value with the label InstId.
+//
+// Based on semantic.zig, there should be no unreachable error.
+//
+// Drawback is we would have to repeat an unresolved scan twice
+// once in semantic.zig and one in dia_ir.zig
+fn dialogue(ru: *Runtime, io: Io, inst: Inst) RunTimeError!void {
+    var buffer: [DIALOGUE_SIZE]u8 = undefined;
+    var len: usize = 0;
+
+    const range = inst.data.range;
+    const start = range.start;
+    const end = range.start + range.len;
+
+    const speaker = ru.extra[start];
+    const jump = ru.extra[end - 1];
+
+    if (speaker != invalid_inst) {
+        const speaker_inst = ru.instructions[speaker];
+        const name = ru.pool.getIdent(speaker_inst.data.ident);
+
+        // TODO: This is inefficient. Using @memcpy twice.
+        try appendSlice(&buffer, &len, name);
+        try appendSlice(&buffer, &len, ": ");
+
+    }
+
+    // start + 1 to avoid scanning speaker
+    // end - 1 to avoid parts handling jump
+    try ru.dialogueParts(&buffer, &len, start + 1, end - 1);
+    try printDialogue(io, &buffer, len);
+
+    // TODO: I need a connection between jump and label.
+    if (jump != invalid_inst) {}
+}
+
+fn dialogueParts(ru: *Runtime, buffer: []u8, len: *usize, start: u32, end: u32) RunTimeError!void {
+    for (start .. end) |idx| {
+        const extra = ru.extra[idx];
+        const inst = ru.instructions[extra];
+
+        switch (inst.tag) {
+            .text => {
+                const span = inst.data.range;
+                const text = ru.pool.texts[span.start .. span.start + span.len];
+                try appendSlice(buffer, len, text);
+            },
+            .constant => {
+                var buf: [MAX_DIGITS]u8 = undefined;
+                const str = try std.fmt.bufPrint(&buf, "{d}", .{ inst.data.uint });
+                try appendSlice(buffer, len, str);
+            },
+            .load => {
+                var buf: [MAX_DIGITS]u8 = undefined;
+                const num = ru.declarations.get(inst.data.ident) orelse unreachable;
+                const str = try std.fmt.bufPrint(&buf, "{d}", .{ num });
+                try appendSlice(buffer, len, str);
+            },
+            else => unreachable,
+        }
+    }
+}

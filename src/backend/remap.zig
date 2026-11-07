@@ -194,7 +194,7 @@ fn rebuildStmt(re: *Remap, old_id: InstId) Error!InstId {
         .store => re.rebuildStore(old_id),
         .branch => re.rebuildBranch(old_id),
         .dialogue, .choice => re.rebuildDialogue(old_id),
-        // .label_block => re.rebuildLabel(old_id),
+        .label_block => re.rebuildLabel(old_id),
         // .choice_block => re.rebuildChoiceBlock(old_id),
         else => unreachable,
     };
@@ -297,7 +297,7 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) InstId {
 
     return new_id;
 }
-//
+
 // fn rebuildChoiceBlock(re: *Remap, old_id: InstId) InstId {
 //     const old = re.instructions[old_id];
 //     const range = old.data.range;
@@ -331,40 +331,40 @@ fn rebuildDialogue(re: *Remap, old_id: InstId) InstId {
 //
 //     return new_id;
 // }
-//
-// fn rebuildLabel(re: *Remap, old_id: InstId) Error!InstId {
-//     var new_inst = re.instructions[old_id];
-//     const range = new_inst.data.range;
-//     const new_start: InstId = @intCast(re.new_extra.items.len);
-//
-//     const label_id = re.extra[range.start];
-//     const label = re.rebuildExpr(label_id);
-//
-//     re.num_of_declar += 1;
-//     re.new_extra.appendAssumeCapacity(label);
-//
-//     // Skip the first
-//     for (range.start + 1 .. range.start + range.len) |i| {
-//         const stmt_id = re.extra[i];
-//
-//         if (!re.live.contains(stmt_id))
-//             continue;
-//
-//         const new_stmt = try re.rebuildStmt(stmt_id);
-//         re.new_extra.appendAssumeCapacity(new_stmt);
-//     }
-//
-//     const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
-//     const new_id: InstId = @intCast(re.new_instructions.items.len);
-//
-//     new_inst.data.range.start = new_start;
-//     new_inst.data.range.len = new_len;
-//
-//     re.old_to_new_inst.items[old_id] = new_id;
-//     re.new_instructions.appendAssumeCapacity(new_inst);
-//
-//     return new_id;
-// }
+
+fn rebuildLabel(re: *Remap, old_id: InstId) Error!InstId {
+    var new_inst = re.instructions[old_id];
+    const range = new_inst.data.range;
+    const new_start: InstId = @intCast(re.new_extra.items.len);
+
+    const label_id = re.extra[range.start];
+    const label = re.rebuildExpr(label_id);
+
+    re.num_of_declar += 1;
+    re.new_extra.appendAssumeCapacity(label);
+
+    // Skip the first
+    for (range.start + 1 .. range.start + range.len) |i| {
+        const stmt_id = re.extra[i];
+
+        if (!re.live.contains(stmt_id))
+            continue;
+
+        const new_stmt = try re.rebuildStmt(stmt_id);
+        re.new_extra.appendAssumeCapacity(new_stmt);
+    }
+
+    const new_len: InstId = @intCast(re.new_extra.items.len - new_start);
+    const new_id: InstId = @intCast(re.new_instructions.items.len);
+
+    new_inst.data.range.start = new_start;
+    new_inst.data.range.len = new_len;
+
+    re.old_to_new_inst.items[old_id] = new_id;
+    re.new_instructions.appendAssumeCapacity(new_inst);
+
+    return new_id;
+}
 
 fn rebuildBlockContents(re: *Remap, block_id: InstId) Error!void {
     const block_inst = re.instructions[block_id];
