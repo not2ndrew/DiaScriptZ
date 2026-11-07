@@ -21,7 +21,7 @@ const IntError = error {
     DivisionByZero,
 };
 
-const Error = Allocator.Error;
+const Error = Allocator.Error || IntError;
 
 pub const Value = union(enum) {
     unknown,
@@ -124,41 +124,49 @@ fn nextKind(opt: *Optimize2) sem.SymbolKind {
 }
 
 pub fn optimizeRoot(opt: *Optimize2) Error!void {
-    const root_idx: u32 = @intCast(opt.ssa.instructions.len - 1);
-    const root_inst = opt.instructions[root_idx];
-    const range = root_inst.data.range;
+    const range = opt.ssa.blocks.get(0);
 
     // Pass 1: Constant fold and propagate.
-    try opt.block(range.start, range.len);
-
-    // Pass 2: Dead Code elimination
-    // var dce: DCE = .{ .opt = opt };
-    // defer dce.deinit();
-    //
-    // try dce.run(root_idx);
+    try opt.block(range.first_inst, range.inst_count);
 }
 
 fn block(opt: *Optimize2, start: u32, len: u32) Error!void {
     const end = start + len;
     for (start..end) |idx| {
-        const stmt_idx = opt.ssa.extra[idx];
-        try opt.stmt(stmt_idx);
+        try opt.stmt(@intCast(idx));
     }
 }
 
 fn stmt(opt: *Optimize2, inst_idx: InstId) Error!void {
-    const inst = opt.instructions[inst_idx];
-    _ = inst;
-    // return switch (inst.tag) {
-    //     .store => opt.storeValue(inst),
-    //     .declaration => opt.declaration(inst_idx),
-    //     .branch => opt.foldBranch(inst_idx),
-    //     .dialogue, .choice => opt.foldDialogue(inst),
-    //     .label_block => opt.foldLabel(inst),
-    //     .choice_block => {
-    //         const range = inst.data.range;
-    //         try opt.block(range.start, range.len);
-    //     },
-    //     else => unreachable,
-    // };
+    const inst = opt.ssa.instructions[inst_idx];
+    // std.debug.print("Tag: {t}\n", .{inst.tag});
+    return switch (inst.tag) {
+        .constant, .exit => {},
+        .add, .sub, .mul, .div => _ = try opt.constantFold(inst_idx),
+        else => unreachable,
+    };
+}
+
+// To perform comptime declaration,
+// 1) Variable must be "const"
+// 2) Variable must be assigned a number.
+// Anything else is a runtime variable.
+fn constantFold(opt: *Optimize2, inst_idx: InstId) Error!u8 {
+    const inst = opt.ssa.instructions[inst_idx];
+    switch (inst.tag) {
+        .constant => return inst.data.uint,
+        .add, .sub, .mul, .div => {
+            const binary = inst.data.binary;
+            const lhs = try opt.constantFold(binary.lhs);
+            const rhs = try opt.constantFold(binary.rhs);
+
+            const num = try fold(inst.tag, lhs, rhs);
+            opt.ssa.instructions[inst_idx] = .{
+                .tag = .constant,
+                .data = .{ .uint = num },
+            };
+            return num;
+        },
+        else => unreachable,
+    }
 }

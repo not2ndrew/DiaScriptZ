@@ -142,8 +142,8 @@ pub const Inst = struct {
 
 pub const GenSSA = struct {
     blocks: std.MultiArrayList(Block).Slice,
-    instructions: []const Inst,
-    extra: []const u32,
+    instructions: []Inst,
+    extra: []u32,
 
     pub fn deinit(ssa: *GenSSA, allocator: Allocator) void {
         ssa.blocks.deinit(allocator);
@@ -160,6 +160,8 @@ decorated: *const Decorated,
 
 blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
+// TODO: Determine whether I need this.
+// I may need this for storing phi idx.
 extra: std.ArrayList(u32) = .empty,
 
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,

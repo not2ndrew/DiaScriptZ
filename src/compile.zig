@@ -83,7 +83,7 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     var completed_ssa = try ssa.generate();
 
     // THIS IS ONLY FOR DIAGNOSTICS.
-    // try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
+    try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
 
     var optimize: Optimize2 = .{
         .allocator = init.gpa,
@@ -92,6 +92,8 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     };
 
     defer optimize.deinit();
+
+    try optimize.optimizeRoot();
 
     // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
     // defer lower_result.deinit(init.gpa);
