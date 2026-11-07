@@ -3,6 +3,8 @@ const frontend = @import("frontend");
 const middle = @import("middle");
 const low = @import("lower.zig");
 const bundle = @import("error_bundle.zig");
+
+// TEMP
 const backend = @import("backend");
 
 const Io = std.Io;
@@ -28,6 +30,9 @@ const ErrorBundle = bundle.ErrorBundle;
 const dir = backend.ir;
 const Inst = dir.Inst;
 const InstId = dir.InstId;
+
+const optimize2 = backend.optimize2;
+const Optimize2 = optimize2.Optimize2;
 
 const remap = backend.remap;
 const NewIR = remap.NewIR;
@@ -74,24 +79,19 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     };
     defer ssa.deinit();
 
+    // GenSSA is being deinit in optimize.
     var completed_ssa = try ssa.generate();
-    defer completed_ssa.deinit(init.gpa);
 
     // THIS IS ONLY FOR DIAGNOSTICS.
-    try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
+    // try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
 
-    // var diaIR: dir.DiaIR = .{
-    //     .allocator = init.gpa,
-    //     .ast = &parse_tree.ast,
-    //     .decorated = &decorated_ast.decorated,
-    // };
-    // defer diaIR.deinit();
-    //
-    // try diaIR.generate();
-    //
-    // for (diaIR.instructions.items) |inst| {
-    //     std.debug.print("tag: {t}\n", .{inst.tag});
-    // }
+    var optimize: Optimize2 = .{
+        .allocator = init.gpa,
+        .ssa = &completed_ssa,
+        .decorated = &decorated_ast.decorated,
+    };
+
+    defer optimize.deinit();
 
     // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
     // defer lower_result.deinit(init.gpa);

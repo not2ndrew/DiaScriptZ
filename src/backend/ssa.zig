@@ -432,10 +432,10 @@ fn addStmt(ssa: *Ssa, node: Node) Error!void {
 
         .dialogue => ssa.addDialogue(node),
 
+        // TODO: Implement them properly.
         // Blocks
         // .label => ssa.addLabel(node),
-
-        .if_stmt => ssa.addBranch(node),
+        // .if_stmt => ssa.addBranch(node),
         else => unreachable,
     };
 }
