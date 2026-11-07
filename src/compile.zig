@@ -79,21 +79,21 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     };
     defer ssa.deinit();
 
-    // GenSSA is being deinit in optimize.
     var completed_ssa = try ssa.generate();
+    defer completed_ssa.deinit(init.gpa);
 
     // THIS IS ONLY FOR DIAGNOSTICS.
     try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
 
-    var optimize: Optimize2 = .{
-        .allocator = init.gpa,
-        .ssa = &completed_ssa,
-        .decorated = &decorated_ast.decorated,
-    };
-
-    defer optimize.deinit();
-
-    try optimize.optimizeRoot();
+    // var optimize: Optimize2 = .{
+    //     .allocator = init.gpa,
+    //     .ssa = &completed_ssa,
+    //     .decorated = &decorated_ast.decorated,
+    // };
+    //
+    // defer optimize.deinit();
+    //
+    // try optimize.optimizeRoot();
 
     // var lower_result = try low.lower(init.gpa, &parse_tree.ast, &decorated_ast.decorated);
     // defer lower_result.deinit(init.gpa);

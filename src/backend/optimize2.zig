@@ -139,7 +139,6 @@ fn block(opt: *Optimize2, start: u32, len: u32) Error!void {
 
 fn stmt(opt: *Optimize2, inst_idx: InstId) Error!void {
     const inst = opt.ssa.instructions[inst_idx];
-    // std.debug.print("Tag: {t}\n", .{inst.tag});
     return switch (inst.tag) {
         .constant, .exit => {},
         .add, .sub, .mul, .div => _ = try opt.constantFold(inst_idx),
@@ -170,3 +169,9 @@ fn constantFold(opt: *Optimize2, inst_idx: InstId) Error!u8 {
         else => unreachable,
     }
 }
+
+// ───────────────────────────────
+//      DEAD CODE ELIMINATION
+// ───────────────────────────────
+// Dead Code Elimination (DCE) marks all instructions that will be used
+// in the program. Any instruction that is NOT marked will be ignored.

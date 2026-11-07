@@ -384,6 +384,11 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
                 inst.data.uint,
             });
         },
+        // TODO: I need the predecessor blocks so I can retrieve its instruction.
+        .phi => {
+            // const phi = inst.data.phi;
+            try w.print("%{d} = phi {d}", .{ inst_idx, inst_idx });
+        },
         else => unreachable,
     }
 }

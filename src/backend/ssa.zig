@@ -42,9 +42,12 @@ pub const UnresolvedJump = struct {
     jump_id: InstId,
 };
 
+// TODO: Since we are handling removal of phi nodes
+// in the optimization phase, we can use the
+// inst idx of a phi instead of storing the block idx.
 pub const IncompletePhi = struct {
     ident: IdentId,
-    block: BlockId,
+    phi: InstId,
 };
 
 pub const BlockState = struct {
@@ -160,8 +163,12 @@ decorated: *const Decorated,
 
 blocks: std.MultiArrayList(Block) = .empty,
 instructions: std.ArrayList(Inst) = .empty,
-// TODO: Determine whether I need this.
-// I may need this for storing phi idx.
+// Extra stores phi nodes in the following format:
+// [
+//    predecessor BlockId 0, incoming InstId 0,
+//    predecessor BlockId 1, incoming InstId 1,
+//    ...
+// ]
 extra: std.ArrayList(u32) = .empty,
 
 jump_blocks: std.array_hash_map.Auto(IdentId, BlockId) = .empty,
@@ -287,6 +294,19 @@ fn emitJump(ssa: *Ssa) Error!InstId {
     return jump_id;
 }
 
+fn addPhi(ssa: *Ssa) Error!InstId {
+    const start: u32 = @intCast(ssa.extra.items.len);
+    return ssa.emit(.phi, .{
+        .phi = .{ .start = start, .len = 0 }
+    });
+}
+
+fn addPhiOperand(ssa: *Ssa, phi: InstId, pred: BlockId, value: InstId) Error!void {
+    try ssa.extra.appendSlice(ssa.allocator, &.{ pred, value });
+
+    ssa.instructions.items[phi].data.phi.len += 1;
+}
+
 fn evalValue(ssa: *Ssa, node: Node) Error!InstId {
     const token_pos = node.token_pos;
     switch (node.tag) {
@@ -371,8 +391,48 @@ fn readVariable(ssa: *Ssa, block: BlockId, ident: IdentId) Error!InstId {
         return value;
     }
 
-    // TODO: Replace this in favour of phi.
-    return 0;
+    return ssa.readVariableRecursive(block, ident);
+}
+
+fn readVariableRecursive(ssa: *Ssa, block: BlockId, ident: IdentId) Error!InstId {
+    const state = &ssa.block_states.items[block];
+
+    if (!state.sealed) {
+        const phi = try ssa.addPhi();
+
+        try ssa.writeVariable(block, ident, phi);
+        try state.incomplete_phis.append(ssa.allocator, .{
+            .ident = ident,
+            .phi = phi,
+        });
+        return phi;
+    }
+
+    if (state.predecessors.items.len == 0) {
+        // Undefined variable.
+        // Return an error
+        return 0;
+    }
+
+    if (state.predecessors.items.len == 1) {
+        const value = try ssa.readVariable(state.predecessors.items[0], ident);
+        try ssa.writeVariable(block, ident, value);
+
+        return value;
+    }
+
+    const phi = try ssa.addPhi();
+
+    // IMPORTANT: install the phi before recursively reading
+    // predecessors. This prevents infinite recursion in loops.
+    try ssa.writeVariable(block, ident, phi);
+
+    for (state.predecessors.items) |pred| {
+        const value = try ssa.readVariable(pred, ident);
+        try ssa.addPhiOperand(phi, pred, value);
+    }
+
+    return phi;
 }
 
 fn stmtList(ssa: *Ssa, start: u32, len: u32) Error!void {
@@ -437,7 +497,7 @@ fn addStmt(ssa: *Ssa, node: Node) Error!void {
         // TODO: Implement them properly.
         // Blocks
         // .label => ssa.addLabel(node),
-        // .if_stmt => ssa.addBranch(node),
+        .if_stmt => ssa.addBranch(node),
         else => unreachable,
     };
 }
@@ -461,13 +521,15 @@ fn addArith(ssa: *Ssa, node: Node, comptime tag: Inst.Tag) Error!void {
     const lhs = try ssa.readVariable(ssa.current_block, ident);
     const rhs = try ssa.evalValue(value_node);
 
-    _ = try ssa.emit(tag, .{
+    const value = try ssa.emit(tag, .{
         .binary = .{
             .token = node.token_pos,
             .lhs = lhs,
             .rhs = rhs
         }
     });
+
+    try ssa.writeVariable(ssa.current_block, ident, value);
 }
 
 fn addDialogue(ssa: *Ssa, node: Node) Error!void {
@@ -555,18 +617,6 @@ fn addLabel(ssa: *Ssa, node: Node, has_more: bool) Error!void {
 // instructions from ssa to SSA and making slight or no changes.
 //
 // It is more efficient to generate the phi node here.
-//
-// Remove the "store" and "load" instruction for pure SSA registers
-// and phi nodes.
-//
-// Solution?
-//
-// According to LLVM source code, it does not "look backwards" to find values.
-// Phi nodes represents values as flat list of pairs.
-//
-// Then they use addIncoming(Value *V, BasicBlock *BB),
-// getIncomingValue(unsigned i), and getIncomingBlock(unsigned i)
-// to retrieve the pair.
 fn addBranch(ssa: *Ssa, node: Node) Error!void {
     const range = node.data.range;
     const start = range.start;
