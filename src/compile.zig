@@ -83,7 +83,7 @@ pub fn compileFile(init: Init, source: []const u8, file_name: []const u8) !void 
     defer completed_ssa.deinit(init.gpa);
 
     // THIS IS ONLY FOR DIAGNOSTICS.
-    try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions);
+    try bundle.printSsa(init.io, completed_ssa.blocks, completed_ssa.instructions, completed_ssa.extra);
 
     // var optimize: Optimize2 = .{
     //     .allocator = init.gpa,

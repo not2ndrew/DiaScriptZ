@@ -293,7 +293,7 @@ pub const Diagnostic = struct {
     }
 };
 
-pub fn printSsa(io: std.Io, blocks: Blocks, insts: []const Inst) !void {
+pub fn printSsa(io: std.Io, blocks: Blocks, insts: []const Inst, extra: []InstId) !void {
     // TODO: Replace 100 with a more defined constant.
     var buffer: [100]u8 = undefined;
     const stderr = try io.lockStderr(&buffer, std.zig.Color.terminalMode(.off));
@@ -309,13 +309,13 @@ pub fn printSsa(io: std.Io, blocks: Blocks, insts: []const Inst) !void {
         
         for (first .. first + count) |inst_idx| {
             try w.print("    ", .{});
-            try printInst(w, insts, @intCast(inst_idx));
+            try printInst(w, insts, extra, @intCast(inst_idx));
             try w.writeByte('\n');
         }
     }
 }
 
-fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
+fn printInst(w: *std.Io.Writer, insts: []const Inst, extra: []InstId, inst_idx: InstId) !void {
     const inst = insts[inst_idx];
 
     switch (inst.tag) {
@@ -386,8 +386,20 @@ fn printInst(w: *std.Io.Writer, insts: []const Inst, inst_idx: InstId) !void {
         },
         // TODO: I need the predecessor blocks so I can retrieve its instruction.
         .phi => {
-            // const phi = inst.data.phi;
-            try w.print("%{d} = phi {d}", .{ inst_idx, inst_idx });
+            const phi = inst.data.phi;
+            try w.print("%{d} = phi ", .{ inst_idx });
+
+            for (0 .. phi.len) |i| {
+                if (i != 0) {
+                    try w.writeAll(", ");
+                }
+
+                const offset = phi.start + (i * 2);
+                const pred = extra[offset];
+                const value = extra[offset + 1];
+
+                try w.print("[block{d}, %{d}]", .{ pred, value });
+            }
         },
         else => unreachable,
     }

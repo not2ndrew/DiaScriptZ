@@ -435,6 +435,25 @@ fn readVariableRecursive(ssa: *Ssa, block: BlockId, ident: IdentId) Error!InstId
     return phi;
 }
 
+fn sealBlock(ssa: *Ssa, block: BlockId) Error!void {
+    const state = &ssa.block_states.items[block];
+
+    state.sealed = true;
+
+    for (state.incomplete_phis.items) |incomplete| {
+        for (state.predecessors.items) |pred| {
+            const value = try ssa.readVariable(pred, incomplete.ident);
+            try ssa.addPhiOperand(incomplete.phi, pred, value);
+        }
+    }
+
+    state.incomplete_phis.clearRetainingCapacity();
+}
+
+fn addPredecessor(ssa: *Ssa, block: BlockId, predecessor: BlockId) Error!void {
+    try ssa.block_states.items[block].predecessors.append(ssa.allocator, predecessor);
+}
+
 fn stmtList(ssa: *Ssa, start: u32, len: u32) Error!void {
     var i: u32 = start;
     const end = start + len;
@@ -618,6 +637,7 @@ fn addLabel(ssa: *Ssa, node: Node, has_more: bool) Error!void {
 //
 // It is more efficient to generate the phi node here.
 fn addBranch(ssa: *Ssa, node: Node) Error!void {
+    const current = ssa.current_block;
     const range = node.data.range;
     const start = range.start;
     
@@ -649,13 +669,28 @@ fn addBranch(ssa: *Ssa, node: Node) Error!void {
 
     // === THEN BLOCK ===
     try ssa.buildBranchBlock(then_extra, then_block, merge_block);
+    try ssa.addPredecessor(then_block, current);
+    try ssa.sealBlock(then_block);
 
     // === ELSE BLOCK ===
-    if (has_else)
+    if (has_else) {
         try ssa.buildBranchBlock(else_extra, else_block, merge_block);
+        try ssa.addPredecessor(else_block, current);
+        try ssa.sealBlock(else_block);
+    }
 
     // === MERGE ===
     ssa.beginBlock(merge_block);
+
+    try ssa.addPredecessor(merge_block, then_block);
+
+    if (has_else) {
+        try ssa.addPredecessor(merge_block, else_block);
+    } else {
+        try ssa.addPredecessor(merge_block, current);
+    }
+
+    try ssa.sealBlock(merge_block);
 }
 
 fn buildBranchBlock(ssa: *Ssa, extra_idx: u32, block: BlockId, jump_block: BlockId) Error!void {
