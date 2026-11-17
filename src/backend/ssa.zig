@@ -205,7 +205,10 @@ pub fn generate(ssa: *Ssa) Error!GenSSA {
     const block_id = try ssa.createBlock();
     try ssa.buildBlock(block_id, range.start, range.len);
 
-    // Terminate program.
+    // Terminate final block
+    // if (ssa.current_block != invalid_block) {
+    //     _ = try ssa.emit(.exit, .none);
+    // }
     _ = try ssa.emit(.exit, .none);
 
     for (ssa.unresolved_jumps.items) |unresolved| {
@@ -261,6 +264,31 @@ fn toInstTag(tag: Node.Tag) Inst.Tag {
         .bool_or => .bool_or,
         else => unreachable,
     };
+}
+
+fn isTerminator(tag: Inst.Tag) bool {
+    return switch (tag) {
+        .exit, .jump, .branch => true,
+        else => false,
+    };
+}
+
+fn isBlockTerminated(ssa: *const Ssa, block: BlockId) bool {
+    const first = ssa.blocks.items(.first_inst)[block];
+    const count = ssa.blocks.items(.inst_count)[block];
+
+    if (count == 0) return false;
+
+    const last = ssa.instructions.items[first + count - 1];
+    return isTerminator(last.tag);
+}
+
+fn ensureTerminator(ssa: *Ssa, block: BlockId) Error!void {
+    if (ssa.isBlockTerminated(block))
+        return;
+
+    ssa.current_block = block;
+    _ = try ssa.emit(.exit, .none);
 }
 
 fn emit(ssa: *Ssa, tag: Inst.Tag, data: Inst.Data) Error!InstId {
@@ -463,23 +491,18 @@ fn stmtList(ssa: *Ssa, start: u32, len: u32) Error!void {
         const node = ssa.ast.nodes.get(node_idx);
 
         if (node.tag != .choice) {
-            if (node.tag == .label) {
-                try ssa.addLabel(node, i + 1 < end);
-            } else {
-                try ssa.addStmt(node);
-            }
-
+            try ssa.addStmt(node);
             i += 1;
             continue;
         }
 
-        const choice_len = ssa.choiceGroupLen(i, end);
+        // const choice_len = ssa.choiceGroupLen(i, end);
+        //
+        // if (choice_len > 1) {
+        //     try ssa.addChoiceGroup(i, choice_len);
+        // }
 
-        if (choice_len > 1) {
-            try ssa.addChoiceGroup(i, choice_len);
-        }
-
-        i += choice_len;
+        // i += choice_len;
     }
 }
 
@@ -515,7 +538,7 @@ fn addStmt(ssa: *Ssa, node: Node) Error!void {
 
         // TODO: Implement them properly.
         // Blocks
-        // .label => ssa.addLabel(node),
+        .label => ssa.addLabel(node),
         .if_stmt => ssa.addBranch(node),
         else => unreachable,
     };
@@ -586,38 +609,9 @@ fn addDialogueParts(ssa: *Ssa, start: u32, len: u32) Error!void {
     ssa.beginBlock(new_block);
 }
 
-// TODO:
-// Ideally, jump instruction should only append if there is a block
-// in between the basic instructions.
-// Jump on every label is redundant.
-// I think I can optimize it.
-// Input:
-//
-// ~ A
-//    var i = 0
-// end
-//
-// var j = 1 
-//
-// Output:
-// block0:
-//     jump block1
-// block1:
-//     %3 = constant 1
-//     store v2, %3
-// block2:
-//     %1 = constant 0
-//     store v1, %1
-//
-fn addLabel(ssa: *Ssa, node: Node, has_more: bool) Error!void {
-    const continuation = if (has_more)
-        try ssa.createBlock()
-    else
-        invalid_block;
-
-    if (has_more) {
-        _ = try ssa.emit(.jump, .{ .jump = continuation });
-    }
+fn addLabel(ssa: *Ssa, node: Node) Error!void {
+    // Terminate the preceding block
+    try ssa.ensureTerminator(ssa.current_block);
 
     const label = ssa.nextIdent();
     const block = try ssa.createBlock();
@@ -625,10 +619,6 @@ fn addLabel(ssa: *Ssa, node: Node, has_more: bool) Error!void {
 
     const range = node.data.range;
     try ssa.buildBlock(block, range.start, range.len);
-
-    if (has_more) {
-        ssa.beginBlock(continuation);
-    }
 }
 
 // TODO: If the only difference between ssa and SSA is the phi node
@@ -668,131 +658,147 @@ fn addBranch(ssa: *Ssa, node: Node) Error!void {
     });
 
     // === THEN BLOCK ===
-    try ssa.buildBranchBlock(then_extra, then_block, merge_block);
+    const then_reaches = try ssa.buildBranchBlock(then_extra, then_block, merge_block);
+
     try ssa.addPredecessor(then_block, current);
     try ssa.sealBlock(then_block);
 
+    if (then_reaches)
+        try ssa.addPredecessor(merge_block, then_block);
+
     // === ELSE BLOCK ===
+    var else_reaches = !has_else;
+
     if (has_else) {
-        try ssa.buildBranchBlock(else_extra, else_block, merge_block);
+        else_reaches = try ssa.buildBranchBlock(else_extra, else_block, merge_block);
+
         try ssa.addPredecessor(else_block, current);
         try ssa.sealBlock(else_block);
-    }
 
-    // === MERGE ===
-    ssa.beginBlock(merge_block);
-
-    try ssa.addPredecessor(merge_block, then_block);
-
-    if (has_else) {
-        try ssa.addPredecessor(merge_block, else_block);
+        if (else_reaches)
+            try ssa.addPredecessor(merge_block, else_block);
     } else {
+        // The false condition reaches to the merge block directly.
         try ssa.addPredecessor(merge_block, current);
     }
 
+    // === MERGE ===
+    if (!then_reaches and !else_reaches) {
+        // Both paths terminate.
+        // There is no reachable continuation.
+        ssa.current_block = invalid_block;
+        return;
+    }
+
+    ssa.beginBlock(merge_block);
     try ssa.sealBlock(merge_block);
 }
 
-fn buildBranchBlock(ssa: *Ssa, extra_idx: u32, block: BlockId, jump_block: BlockId) Error!void {
+fn buildBranchBlock(ssa: *Ssa, extra_idx: u32, block: BlockId, merge_block: BlockId) Error!bool {
     const node = ssa.ast.nodes.get(extra_idx);
     const range = node.data.range;
+
     try ssa.buildBlock(block, range.start, range.len);
 
-    _ = try ssa.emit(.jump, .{ .jump = jump_block });
+    if (ssa.isBlockTerminated(block))
+        return false;
+
+    _ = try ssa.emit(.jump, .{ .jump = merge_block });
+    return true;
 }
 
-fn addChoiceGroup(ssa: *Ssa, start: u32, len: u32) Error!void {
-    const end = start + len;
-    const choice_blocks = try ssa.allocator.alloc(BlockId, len);
-    defer ssa.allocator.free(choice_blocks);
-
-    const continuation = try ssa.createBlock();
-
-    for (choice_blocks) |*block| {
-        block.* = try ssa.createBlock();
-    }
-
-    // === MENU CONTENT ===
-    for (start .. end) |i| {
-        const extra_idx = ssa.ast.extra_data[i];
-        const node = ssa.ast.nodes.get(extra_idx);
-        const range = node.data.range;
-
-        // Mark the beginning of a new option
-        _ = try ssa.emit(.choice_option, .none);
-        try ssa.handleChoiceText(range.start, range.len);
-    }
-
-    // Display the options and wait for a valid selection.
-    const selected = try ssa.emit(.choice, .{
-        .uint = @intCast(len)
-    });
-
-    // === DISPATCH ===
-    for (0 .. len - 1) |i| {
-        const expected = try ssa.emit(.constant, .{
-            .uint = @intCast(i + 1)
-        });
-
-        const choice_node_idx = ssa.ast.extra_data[start + i];
-        const choice_node = ssa.ast.nodes.get(choice_node_idx);
-
-        const matches = try ssa.emit(.eql, .{
-            .binary = .{
-                .token = choice_node.token_pos,
-                .lhs = selected,
-                .rhs = expected,
-            }
-        });
-
-        const next_check = try ssa.createBlock();
-
-        _ = try ssa.emit(.branch, .{
-            .branch = .{
-                .cond = matches,
-                .then_block = choice_blocks[i],
-                .else_block = next_check,
-            }
-        });
-
-        ssa.beginBlock(next_check);
-    }
-
-    // The final option is the remaining valid selection.
-    _ = try ssa.emit(.jump, .{
-        .jump = choice_blocks[len - 1],
-    });
-
-    // === OPTION DESTINATIONS ===
-    for (0 .. len) |i| {
-        const node_idx = ssa.ast.extra_data[start + i];
-        const node = ssa.ast.nodes.get(node_idx);
-        const range = node.data.range;
-
-        const goto_idx = ssa.ast.extra_data[
-            range.start + range.len - 1
-        ];
-
-        ssa.beginBlock(choice_blocks[i]);
-
-        if (goto_idx != invalid_node) {
-            _ = try ssa.emitJump();
-        } else {
-            _ = try ssa.emit(.jump, .{
-                .jump = continuation,
-            });
-        }
-    }
-
-    // Continue generating subsequent statements here.
-    ssa.beginBlock(continuation);
-}
-
-fn handleChoiceText(ssa: *Ssa, start: u33, len: u32) Error!void {
-    const end = start + len;
-    for (start + 1..end - 1) |idx| {
-        const text_idx = ssa.ast.extra_data[idx];
-        const text_node = ssa.ast.nodes.get(text_idx);
-        _ = try ssa.evalValue(text_node);
-    }
-}
+// fn addChoiceGroup(ssa: *Ssa, start: u32, len: u32) Error!void {
+//     const end = start + len;
+//     const choice_blocks = try ssa.allocator.alloc(BlockId, len);
+//     defer ssa.allocator.free(choice_blocks);
+//
+//     const continuation = try ssa.createBlock();
+//
+//     for (choice_blocks) |*block| {
+//         block.* = try ssa.createBlock();
+//     }
+//
+//     // === MENU CONTENT ===
+//     for (start .. end) |i| {
+//         const extra_idx = ssa.ast.extra_data[i];
+//         const node = ssa.ast.nodes.get(extra_idx);
+//         const range = node.data.range;
+//
+//         // Mark the beginning of a new option
+//         _ = try ssa.emit(.choice_option, .none);
+//         try ssa.handleChoiceText(range.start, range.len);
+//     }
+//
+//     // Display the options and wait for a valid selection.
+//     const selected = try ssa.emit(.choice, .{
+//         .uint = @intCast(len)
+//     });
+//
+//     // === DISPATCH ===
+//     for (0 .. len - 1) |i| {
+//         const expected = try ssa.emit(.constant, .{
+//             .uint = @intCast(i + 1)
+//         });
+//
+//         const choice_node_idx = ssa.ast.extra_data[start + i];
+//         const choice_node = ssa.ast.nodes.get(choice_node_idx);
+//
+//         const matches = try ssa.emit(.eql, .{
+//             .binary = .{
+//                 .token = choice_node.token_pos,
+//                 .lhs = selected,
+//                 .rhs = expected,
+//             }
+//         });
+//
+//         const next_check = try ssa.createBlock();
+//
+//         _ = try ssa.emit(.branch, .{
+//             .branch = .{
+//                 .cond = matches,
+//                 .then_block = choice_blocks[i],
+//                 .else_block = next_check,
+//             }
+//         });
+//
+//         ssa.beginBlock(next_check);
+//     }
+//
+//     // The final option is the remaining valid selection.
+//     _ = try ssa.emit(.jump, .{
+//         .jump = choice_blocks[len - 1],
+//     });
+//
+//     // === OPTION DESTINATIONS ===
+//     for (0 .. len) |i| {
+//         const node_idx = ssa.ast.extra_data[start + i];
+//         const node = ssa.ast.nodes.get(node_idx);
+//         const range = node.data.range;
+//
+//         const goto_idx = ssa.ast.extra_data[
+//             range.start + range.len - 1
+//         ];
+//
+//         ssa.beginBlock(choice_blocks[i]);
+//
+//         if (goto_idx != invalid_node) {
+//             _ = try ssa.emitJump();
+//         } else {
+//             _ = try ssa.emit(.jump, .{
+//                 .jump = continuation,
+//             });
+//         }
+//     }
+//
+//     // Continue generating subsequent statements here.
+//     ssa.beginBlock(continuation);
+// }
+//
+// fn handleChoiceText(ssa: *Ssa, start: u33, len: u32) Error!void {
+//     const end = start + len;
+//     for (start + 1..end - 1) |idx| {
+//         const text_idx = ssa.ast.extra_data[idx];
+//         const text_node = ssa.ast.nodes.get(text_idx);
+//         _ = try ssa.evalValue(text_node);
+//     }
+// }
