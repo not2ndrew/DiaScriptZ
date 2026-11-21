@@ -147,6 +147,7 @@ pub fn parseAll(p: *Parser) Error!void {
 fn parseStmt(p: *Parser) Error!NodeIndex {
     return try switch (p.peekTag()) {
         .keyword_const, .keyword_var => p.parseDeclar(),
+        .keyword_exit => p.parseExit(),
         .identifier => p.parseIdentStmt(),
         .keyword_if => p.parseIfStmt(),
         .choice_marker => p.parseChoice(),
@@ -222,6 +223,11 @@ fn parseAssignStmt(p: *Parser, assign_tag: Token.Tag, ident_pos: NodeIndex) Erro
     return try p.addNode(node_tag, assign_pos, .{
         .node_and_node = .{ ident_pos, expr }
     });
+}
+
+fn parseExit(p: *Parser) Error!NodeIndex {
+    const token_pos = try p.expect(.keyword_exit);
+    return try p.addNode(.exit, token_pos, undefined);
 }
 
 // if_stmt = "if" "(" condition ")" stmt_block [ else_block ] ;
@@ -442,13 +448,11 @@ fn parseLabel(p: *Parser) Error!NodeIndex {
     _ = try p.expect(.tilde);
 
     const ident_pos = p.token_pos;
-    const label = try p.parseGenericIdent(.label_ident);
-    try stmts.append(p.allocator, label);
-
+    _ = try p.parseGenericIdent(.label_ident);
     _ = try p.expect(.semi_colon);
 
     // label extra_data layout:
-    // [ label_pos, stmt_1, stmt_2, stmt_3, ... , stmt_n ]
+    // [ stmt_1, stmt_2, stmt_3, ... , stmt_n ]
     return p.addNode(.label, ident_pos, .{
         .range = try p.collectStmtUntil(.keyword_end, &stmts),
     });

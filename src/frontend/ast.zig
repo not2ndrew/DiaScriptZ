@@ -42,7 +42,6 @@ pub const Error = struct {
 
 pub const Ast = @This();
 
-allocator: Allocator,
 source_file: SourceFile,
 nodes: Nodes.Slice,
 // extra_data holds:
@@ -50,10 +49,10 @@ nodes: Nodes.Slice,
 // 2) Stores continuous ranges of NodeIndex values referenced by nodes.
 extra_data: []const u32,
 
-pub fn deinit(ast: *Ast) void {
-    ast.nodes.deinit(ast.allocator);
-    ast.source_file.tokens.deinit(ast.allocator);
-    ast.allocator.free(ast.extra_data);
+pub fn deinit(ast: *Ast, allocator: Allocator) void {
+    ast.nodes.deinit(allocator);
+    ast.source_file.tokens.deinit(allocator);
+    allocator.free(ast.extra_data);
 }
 
 pub const ParseResult = struct {
@@ -62,7 +61,7 @@ pub const ParseResult = struct {
 
     pub fn deinit(p: *ParseResult, allocator: Allocator) void {
         allocator.free(p.errors);
-        p.ast.deinit();
+        p.ast.deinit(allocator);
     }
 };
 
@@ -108,7 +107,6 @@ fn parseFromTokens(allocator: Allocator, source: []const u8, tokens: Tokens.Slic
             .source = source,
             .tokens = tokens,
         },
-        .allocator = allocator,
         .nodes = parser.nodes.toOwnedSlice(),
         .extra_data = try parser.extra_data.toOwnedSlice(allocator),
     };
